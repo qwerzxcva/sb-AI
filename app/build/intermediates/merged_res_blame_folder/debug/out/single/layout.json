@@ -1,0 +1,54 @@
+[
+    {
+        "merged": "com.sbai.app-mergeDebugResources-46:/layout/fragment_rule_editor.xml",
+        "source": "com.sbai.app-main-49:/layout/fragment_rule_editor.xml"
+    },
+    {
+        "merged": "/root/.gradle/daemon/8.14.2/com.sbai.app-mergeDebugResources-46:/layout/item_dns_group.xml",
+        "source": "/root/.gradle/daemon/8.14.2/com.sbai.app-main-49:/layout/item_dns_group.xml"
+    },
+    {
+        "merged": "/root/.gradle/daemon/8.14.2/com.sbai.app-mergeDebugResources-46:/layout/item_dns_server.xml",
+        "source": "/root/.gradle/daemon/8.14.2/com.sbai.app-main-49:/layout/item_dns_server.xml"
+    },
+    {
+        "merged": "/root/.gradle/daemon/8.14.2/com.sbai.app-mergeDebugResources-46:/layout/fragment_dns_group_editor.xml",
+        "source": "/root/.gradle/daemon/8.14.2/com.sbai.app-main-49:/layout/fragment_dns_group_editor.xml"
+    },
+    {
+        "merged": "/root/.gradle/daemon/8.14.2/com.sbai.app-mergeDebugResources-46:/layout/fragment_lb_rule_editor.xml",
+        "source": "/root/.gradle/daemon/8.14.2/com.sbai.app-main-49:/layout/fragment_lb_rule_editor.xml"
+    },
+    {
+        "merged": "/root/.gradle/daemon/8.14.2/com.sbai.app-mergeDebugResources-46:/layout/fragment_dns.xml",
+        "source": "/root/.gradle/daemon/8.14.2/com.sbai.app-main-49:/layout/fragment_dns.xml"
+    },
+    {
+        "merged": "/root/.gradle/daemon/8.14.2/com.sbai.app-mergeDebugResources-46:/layout/activity_main.xml",
+        "source": "/root/.gradle/daemon/8.14.2/com.sbai.app-main-49:/layout/activity_main.xml"
+    },
+    {
+        "merged": "/root/.gradle/daemon/8.14.2/com.sbai.app-mergeDebugResources-46:/layout/fragment_settings.xml",
+        "source": "/root/.gradle/daemon/8.14.2/com.sbai.app-main-49:/layout/fragment_settings.xml"
+    },
+    {
+        "merged": "/root/.gradle/daemon/8.14.2/com.sbai.app-mergeDebugResources-46:/layout/fragment_rule_editor.xml",
+        "source": "/root/.gradle/daemon/8.14.2/com.sbai.app-main-49:/layout/fragment_rule_editor.xml"
+    },
+    {
+        "merged": "/root/.gradle/daemon/8.14.2/com.sbai.app-mergeDebugResources-46:/layout/item_route_rule.xml",
+        "source": "/root/.gradle/daemon/8.14.2/com.sbai.app-main-49:/layout/item_route_rule.xml"
+    },
+    {
+        "merged": "/root/.gradle/daemon/8.14.2/com.sbai.app-mergeDebugResources-46:/layout/fragment_routing.xml",
+        "source": "/root/.gradle/daemon/8.14.2/com.sbai.app-main-49:/layout/fragment_routing.xml"
+    },
+    {
+        "merged": "/root/.gradle/daemon/8.14.2/com.sbai.app-mergeDebugResources-46:/layout/fragment_dns_server_editor.xml",
+        "source": "/root/.gradle/daemon/8.14.2/com.sbai.app-main-49:/layout/fragment_dns_server_editor.xml"
+    },
+    {
+        "merged": "/root/.gradle/daemon/8.14.2/com.sbai.app-mergeDebugResources-46:/layout/item_lb_rule.xml",
+        "source": "/root/.gradle/daemon/8.14.2/com.sbai.app-main-49:/layout/item_lb_rule.xml"
+    }
+]
