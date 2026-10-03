@@ -1,10 +1,28 @@
-.gradle/
+# ---- Build outputs ----
 build/
-.idea/
-*.dex
-*.aar
+app/build/
+.gradle/
+.cxx/
 *.apk
+*.aab
+*.ap_
+
+# ---- Local machine state ----
 local.properties
-.caches/
+.idea/
+*.iml
 .DS_Store
-Thumbs.db
+captures/
+
+# ---- Prebuilt sing-box core (downloaded by scripts/ci from AndroidLibBoxLite release) ----
+app/libs/libbox.aar
+
+# ---- Kotlin / Java ----
+*.class
+.kotlin/
+
+# ---- Signing (keystore is self-signed and intentionally committed for reproducible builds) ----
+# sbai-keystore.jks is tracked on purpose.
+
+# ---- Docs artifacts (source jars used for API reference) ----
+docs/*.jar
