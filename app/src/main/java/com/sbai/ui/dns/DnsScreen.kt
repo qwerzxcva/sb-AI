@@ -1,6 +1,7 @@
 package com.sbai.ui.dns
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -59,6 +60,7 @@ import com.sbai.data.RuleStore
 import com.sbai.service.SingBoxConfigGenerator
 import com.sbai.ui.components.BottomBarClearance
 import com.sbai.ui.components.DragDropLazyColumn
+import com.sbai.ui.components.FabBottomBarClearance
 import com.sbai.ui.components.SbBadge
 import com.sbai.ui.components.SbGroup
 import com.sbai.ui.components.SbItem
@@ -84,22 +86,24 @@ fun DnsScreen() {
 
     Scaffold(
         floatingActionButton = {
-            when (tab) {
-                0 -> ExtendedFloatingActionButton(
-                    onClick = { editingServer = DnsServer() },
-                    icon = { Icon(Icons.Filled.Add, contentDescription = null) },
-                    text = { Text("添加 DNS") },
-                )
-                1 -> ExtendedFloatingActionButton(
-                    onClick = { editingRule = DnsRule() },
-                    icon = { Icon(Icons.Filled.Add, contentDescription = null) },
-                    text = { Text("添加规则") },
-                )
-                else -> ExtendedFloatingActionButton(
-                    onClick = { editingGroup = DnsGroup() },
-                    icon = { Icon(Icons.Filled.Add, contentDescription = null) },
-                    text = { Text("添加 group") },
-                )
+            Box(Modifier.padding(bottom = FabBottomBarClearance)) {
+                when (tab) {
+                    0 -> ExtendedFloatingActionButton(
+                        onClick = { editingServer = DnsServer() },
+                        icon = { Icon(Icons.Filled.Add, contentDescription = null) },
+                        text = { Text("添加 DNS") },
+                    )
+                    1 -> ExtendedFloatingActionButton(
+                        onClick = { editingRule = DnsRule() },
+                        icon = { Icon(Icons.Filled.Add, contentDescription = null) },
+                        text = { Text("添加规则") },
+                    )
+                    else -> ExtendedFloatingActionButton(
+                        onClick = { editingGroup = DnsGroup() },
+                        icon = { Icon(Icons.Filled.Add, contentDescription = null) },
+                        text = { Text("添加 group") },
+                    )
+                }
             }
         },
     ) { padding ->

@@ -333,6 +333,10 @@ data class AppSettings(
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
     /** 外观：Material You 动态取色（Android 12+） */
     val dynamicColor: Boolean = true,
+    /** TUN IPv4 地址段（LxBox tun_address） */
+    val tunAddress: String = "172.18.0.1/30",
+    /** TUN IPv6 地址段（LxBox tun_address6） */
+    val tunAddress6: String = "fdfe:dcba:9876::1/126",
 )
 
 // ---------------------------------------------------------------------------

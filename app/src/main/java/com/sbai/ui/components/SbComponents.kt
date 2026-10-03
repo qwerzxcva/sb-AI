@@ -46,6 +46,9 @@ import com.sbai.ui.theme.LocalSbStyleTokens
  */
 val BottomBarClearance = 132.dp
 
+/** FAB 需要额外抬高的距离，使其落在悬浮玻璃底栏上方而不重叠。 */
+val FabBottomBarClearance = BottomBarClearance - 16.dp
+
 // ---------------------------------------------------------------------------
 // Kototoro 风格分组容器：组内条目 2dp 间距，首/尾条目大圆角，中间小圆角
 // ---------------------------------------------------------------------------

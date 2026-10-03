@@ -44,6 +44,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -187,6 +188,14 @@ fun HomeScreen() {
                     }
                 }
                 SbSpacer()
+            }
+
+            // ---- 实时流量卡（ClashFest 首页观感；运行中显示） ----
+            if (running) {
+                item {
+                    HomeTrafficCard(commandStatus)
+                    SbSpacer()
+                }
             }
 
             // ---- 代理出口（负载均衡内嵌，不再单独一页） ----
@@ -414,25 +423,17 @@ fun HomeScreen() {
                 SbGroup(title = "订阅源") {
                     state.subscriptions.forEach { sub ->
                         item {
-                            SbItem(
-                                title = sub.name.ifBlank { sub.url },
-                                subtitle = sub.lastError?.let { "错误: $it" }
-                                    ?: "${sub.nodeCount} 节点 · ${formatTime(sub.lastUpdatedAt)}",
-                                icon = Icons.Filled.CloudDownload,
-                                onClick = { editingSub = sub },
-                                trailing = {
-                                    if (refreshingId == sub.id) {
-                                        CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
-                                    } else {
-                                        IconButton(onClick = {
-                                            refreshingId = sub.id
-                                            scope.launch {
-                                                subManager.refresh(sub)
-                                                refreshingId = null
-                                            }
-                                        }) { Icon(Icons.Filled.Refresh, contentDescription = "更新") }
+                            SubscriptionCard(
+                                sub = sub,
+                                refreshing = refreshingId == sub.id,
+                                onRefresh = {
+                                    refreshingId = sub.id
+                                    scope.launch {
+                                        subManager.refresh(sub)
+                                        refreshingId = null
                                     }
                                 },
+                                onClick = { editingSub = sub },
                             )
                         }
                     }
@@ -654,6 +655,102 @@ private fun statusText(status: SbAiVpnService.ServiceStatus): String = when (sta
 private fun formatTime(epoch: Long): String =
     if (epoch <= 0) "未更新"
     else SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()).format(Date(epoch))
+
+// ---------------------------------------------------------------------------
+// ClashFest 风格首页卡片
+// ---------------------------------------------------------------------------
+
+@Composable
+private fun HomeTrafficCard(status: com.sbai.service.SbCommandClient.DashboardStatus) {
+    val colors = MaterialTheme.colorScheme
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        color = colors.primaryContainer,
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 16.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Column {
+                Text("实时流量", style = MaterialTheme.typography.labelMedium, color = colors.onPrimaryContainer.copy(alpha = 0.75f))
+                Text(
+                    "↑ ${com.sbai.ui.monitor.formatSpeed(status.uplink)}   ↓ ${com.sbai.ui.monitor.formatSpeed(status.downlink)}",
+                    style = MaterialTheme.typography.titleLarge,
+                    color = colors.onPrimaryContainer,
+                )
+            }
+            Column(horizontalAlignment = Alignment.End) {
+                Text("累计", style = MaterialTheme.typography.labelMedium, color = colors.onPrimaryContainer.copy(alpha = 0.75f))
+                Text(
+                    "↑ ${com.sbai.ui.monitor.formatBytes(status.uplinkTotal)}   ↓ ${com.sbai.ui.monitor.formatBytes(status.downlinkTotal)}",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = colors.onPrimaryContainer,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SubscriptionCard(
+    sub: Subscription,
+    refreshing: Boolean,
+    onRefresh: () -> Unit,
+    onClick: () -> Unit,
+) {
+    val colors = MaterialTheme.colorScheme
+    val used = sub.trafficUpload + sub.trafficDownload
+    val hasTraffic = sub.trafficTotal > 0
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(sub.name.ifBlank { sub.url }, style = MaterialTheme.typography.titleSmall, maxLines = 1)
+                Text(
+                    sub.lastError?.let { "错误: $it" }
+                        ?: "${sub.nodeCount} 节点 · ${formatTime(sub.lastUpdatedAt)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (refreshing) {
+                CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
+            } else {
+                IconButton(onClick = onRefresh) {
+                    Icon(Icons.Filled.Refresh, contentDescription = "更新")
+                }
+            }
+        }
+
+        if (hasTraffic) {
+            Spacer(Modifier.height(8.dp))
+            LinearProgressIndicator(
+                progress = { (used.toFloat() / sub.trafficTotal.toFloat()).coerceIn(0f, 1f) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(6.dp),
+                color = if (used.toFloat() / sub.trafficTotal > 0.9f) colors.error else colors.primary,
+                trackColor = colors.surfaceContainerHigh,
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "${com.sbai.ui.monitor.formatBytes(used)} / ${com.sbai.ui.monitor.formatBytes(sub.trafficTotal)}" +
+                    if (sub.trafficExpire > 0) {
+                        " · 到期 " + SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date(sub.trafficExpire * 1000))
+                    } else "",
+                style = MaterialTheme.typography.labelSmall,
+                color = colors.onSurfaceVariant,
+            )
+        }
+    }
+}
 
 private fun String.nodeSummary(): String = runCatching {
     val obj = Json.parseToJsonElement(this).jsonObject

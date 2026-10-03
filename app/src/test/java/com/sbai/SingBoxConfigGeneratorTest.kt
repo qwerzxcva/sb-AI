@@ -531,4 +531,75 @@ class SingBoxConfigGeneratorTest {
         assertEquals("or", rr["mode"]!!.jsonPrimitive.content)
         assertEquals(2, rr["rules"]!!.jsonArray.size)
     }
+
+    @Test
+    fun `inline url rule set auto-created and deduplicated`() {
+        val url1 = "https://example.com/geoip-cn.srs"
+        val url2 = "https://example.com/geosite-ads.srs"
+        val rule = RouteRule(
+            action = RuleAction.DIRECT,
+            ruleSetTags = listOf(url1, "existing-tag", url2, url1), // url1 重复
+        )
+        val state = AppState(routeRules = listOf(rule), routeRuleSets = listOf())
+        val cfg = parse(state)
+
+        // 路由规则里的 rule_set 应引用生成的 tag（不是原始 URL）
+        val rr = routeRules(cfg).last().jsonObject
+        val tags = rr["rule_set"]!!.jsonArray.map { it.jsonPrimitive.content }
+        assertTrue(tags.none { it.startsWith("http") })
+        assertTrue(tags.contains("existing-tag"))
+        assertEquals(2, tags.count { it.startsWith("url-") })  // 2 个不同 URL → 2 个 tag
+
+        // route.rule_set 里应自动创建 2 个 remote 规则集（去重后）
+        val ruleSets = cfg["route"]!!.jsonObject["rule_set"]!!.jsonArray
+        val urls = ruleSets.map { it.jsonObject["url"]?.jsonPrimitive?.content }
+        assertEquals(2, urls.count { it != null })
+        assertTrue(urls.contains(url1))
+        assertTrue(urls.contains(url2))
+        ruleSets.forEach { rs ->
+            assertEquals("remote", rs.jsonObject["type"]!!.jsonPrimitive.content)
+            assertEquals("source", rs.jsonObject["format"]!!.jsonPrimitive.content)
+        }
+    }
+
+    @Test
+    fun `inline url rule set works alongside manual domain and ip`() {
+        val rule = RouteRule(
+            action = RuleAction.DIRECT,
+            domains = listOf("a.com"),
+            ipCidrs = listOf("1.2.3.0/24"),
+            ruleSetTags = listOf("https://example.com/geoip-cn.srs"),
+        )
+        val cfg = parse(AppState(routeRules = listOf(rule)))
+        val rr = routeRules(cfg).last().jsonObject
+        // 域名/IP/规则集在同一条规则里（用户核心意图：不用创建多条规则）
+        assertEquals("a.com", rr["domain"]!!.jsonArray[0].jsonPrimitive.content)
+        assertEquals("1.2.3.0/24", rr["ip_cidr"]!!.jsonArray[0].jsonPrimitive.content)
+        assertTrue(rr["rule_set"]!!.jsonArray.isNotEmpty())
+    }
+
+    @Test
+    fun `custom tun addresses are used`() {
+        val cfg = parse(
+            AppState(
+                settings = com.sbai.data.AppSettings(
+                    tunAddress = "198.19.0.1/29",
+                    tunAddress6 = "fd00::1/64",
+                ),
+            ),
+        )
+        val tun = cfg["inbounds"]!!.jsonArray.first().jsonObject
+        val addrs = tun["address"]!!.jsonArray.map { it.jsonPrimitive.content }
+        assertEquals("198.19.0.1/29", addrs[0])
+        assertEquals("fd00::1/64", addrs[1])
+    }
+
+    @Test
+    fun `default tun addresses when not customized`() {
+        val cfg = parse(AppState())
+        val tun = cfg["inbounds"]!!.jsonArray.first().jsonObject
+        val addrs = tun["address"]!!.jsonArray.map { it.jsonPrimitive.content }
+        assertEquals("172.18.0.1/30", addrs[0])
+        assertEquals("fdfe:dcba:9876::1/126", addrs[1])
+    }
 }

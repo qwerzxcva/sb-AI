@@ -1,6 +1,7 @@
 package com.sbai.ui.routes
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -59,6 +60,7 @@ import com.sbai.data.RuleStore
 import com.sbai.service.RouteRuleJsonCodec
 import com.sbai.ui.components.BottomBarClearance
 import com.sbai.ui.components.DragDropLazyColumn
+import com.sbai.ui.components.FabBottomBarClearance
 import com.sbai.ui.components.SbBadge
 import com.sbai.ui.components.SbGroup
 import com.sbai.ui.components.SbItem
@@ -88,11 +90,13 @@ fun RouteRulesScreen() {
 
     Scaffold(
         floatingActionButton = {
-            ExtendedFloatingActionButton(
-                onClick = { editingRule = RouteRule() },
-                icon = { Icon(Icons.Filled.Add, contentDescription = null) },
-                text = { Text("添加规则") },
-            )
+            Box(Modifier.padding(bottom = FabBottomBarClearance)) {
+                ExtendedFloatingActionButton(
+                    onClick = { editingRule = RouteRule() },
+                    icon = { Icon(Icons.Filled.Add, contentDescription = null) },
+                    text = { Text("添加规则") },
+                )
+            }
         },
     ) { padding ->
         DragDropLazyColumn(
@@ -393,7 +397,7 @@ private fun RouteRuleEditorDialog(
                 MultiLineField("域名正则（一行一条）", regexes) { regexes = it }
                 MultiLineField("IP / CIDR（一行一条）", ipCidrs) { ipCidrs = it }
                 MultiLineField(
-                    "规则集 tag（一行一条）${if (ruleSetTags.isNotEmpty()) "，已有：${ruleSetTags.joinToString()}" else ""}",
+                    "规则集 tag 或 URL（一行一条；URL 会自动创建远程规则集）",
                     sets,
                 ) { sets = it }
                 TextButton(onClick = onCreateRuleSet) { Text("＋ 新建规则集") }

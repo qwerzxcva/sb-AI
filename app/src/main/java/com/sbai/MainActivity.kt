@@ -141,20 +141,25 @@ private fun GlassBottomBar(
             .fillMaxWidth()
             .clip(CircleShape)
             .hazeChild(hazeState) {
-                blurRadius = 24.dp
-                backgroundColor = colors.surfaceContainer.copy(alpha = 0.72f)
-                tints = listOf(HazeTint(colors.surfaceContainer.copy(alpha = 0.30f)))
+                // 玻璃磨砂通透质感：足够模糊 + 低不透明度背景/色调 + 微噪点
+                blurRadius = 28.dp
+                noiseFactor = 0.08f
+                backgroundColor = colors.surface.copy(alpha = 0.55f)
+                tints = listOf(
+                    HazeTint(colors.surfaceContainer.copy(alpha = 0.22f)),
+                    HazeTint(colors.primary.copy(alpha = 0.04f)),
+                )
             }
             .border(
-                width = 1.dp,
-                color = colors.outlineVariant.copy(alpha = 0.30f),
+                width = 0.8.dp,
+                color = colors.outlineVariant.copy(alpha = 0.45f),
                 shape = CircleShape,
             ),
         shape = CircleShape,
         color = Color.Transparent,
         contentColor = colors.onSurface,
         tonalElevation = 0.dp,
-        shadowElevation = 8.dp,
+        shadowElevation = 10.dp,
     ) {
         NavigationBar(
             containerColor = Color.Transparent,

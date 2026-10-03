@@ -166,6 +166,7 @@ object SingBoxConfigGenerator {
             putJsonObject("route") {
                 putJsonArray("rules") { routeRules.forEach(::add) }
                 putJsonArray("rule_set") {
+                    // 显式规则集
                     state.routeRuleSets.filter { it.enabled && it.tag.isNotBlank() }.forEach { rs ->
                         add(buildJsonObject {
                             put("tag", rs.tag)
@@ -188,6 +189,15 @@ object SingBoxConfigGenerator {
                             }
                         })
                     }
+                    // Karing 风格：路由规则里直接写 URL 的远程规则集（自动创建，去重）
+                    inlineUrlRuleSets(state).forEach { (tag, url) ->
+                        add(buildJsonObject {
+                            put("tag", tag)
+                            put("type", "remote")
+                            put("format", "source")
+                            put("url", url)
+                        })
+                    }
                 }
                 put("final", state.settings.finalOutbound.ifBlank { entryTag })
                 put("auto_detect_interface", state.settings.autoDetectInterface)
@@ -200,8 +210,10 @@ object SingBoxConfigGenerator {
                     put("type", "tun")
                     put("tag", "tun-in")
                     putJsonArray("address") {
-                        add("172.18.0.1/30")
-                        if (state.settings.ipv6Route) add("fdfe:dcba:9876::1/126")
+                        add(state.settings.tunAddress.ifBlank { "172.18.0.1/30" })
+                        if (state.settings.ipv6Route) {
+                            add(state.settings.tunAddress6.ifBlank { "fdfe:dcba:9876::1/126" })
+                        }
                     }
                     put("mtu", state.settings.mtu)
                     put("auto_route", true)
@@ -308,6 +320,41 @@ object SingBoxConfigGenerator {
     // Route rules
     // ------------------------------------------------------------------
 
+    /**
+     * Karing 风格：路由规则的 ruleSetTags 里可直接写远程规则集 URL。
+     * 把所有 URL 形态的条目映射为自动生成的 tag（url- + 8 位 hash），去重后返回。
+     * 返回 LinkedHashMap 保证顺序稳定。
+     */
+    internal fun inlineUrlRuleSets(state: AppState): Map<String, String> {
+        val map = LinkedHashMap<String, String>()
+        state.routeRules.filter { it.enabled }.forEach { rule ->
+            rule.ruleSetTags.forEach { entry ->
+                val trimmed = entry.trim()
+                if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+                    map.getOrPut(urlRuleSetTag(trimmed)) { trimmed }
+                }
+            }
+        }
+        return map
+    }
+
+    /** 由 URL 生成稳定的规则集 tag */
+    private fun urlRuleSetTag(url: String): String {
+        val hash = url.hashCode().toUInt().toString(16)
+        return "url-$hash"
+    }
+
+    /** 把路由规则的 ruleSetTags 里的 URL 映射为自动 tag，其余原样保留；结果去重 */
+    private fun resolveRuleSetTags(rule: RouteRule): List<String> =
+        rule.ruleSetTags.map { entry ->
+            val trimmed = entry.trim()
+            if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+                urlRuleSetTag(trimmed)
+            } else {
+                trimmed
+            }
+        }.distinct()
+
     private fun buildRouteRules(state: AppState, entryTag: String): List<JsonObject> {
         val rules = mutableListOf<JsonObject>()
         rules.add(buildJsonObject { put("action", "sniff") })
@@ -366,7 +413,9 @@ object SingBoxConfigGenerator {
         }
         if (ip) {
             if (r.ipCidrs.isNotEmpty()) putJsonArray("ip_cidr") { r.ipCidrs.forEach(::add) }
-            if (r.ruleSetTags.isNotEmpty()) putJsonArray("rule_set") { r.ruleSetTags.forEach(::add) }
+            // Karing 风格：ruleSetTags 里的 URL 自动映射为生成的 tag
+            val tags = resolveRuleSetTags(r)
+            if (tags.isNotEmpty()) putJsonArray("rule_set") { tags.forEach(::add) }
         }
         if (transport) {
             if (r.networks.isNotEmpty()) putJsonArray("network") { r.networks.forEach(::add) }

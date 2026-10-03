@@ -203,6 +203,29 @@ fun SettingsScreen() {
                             )
                         }
                     }
+                    // TUN 地址段自定义（LxBox tun_address / tun_address6）
+                    item {
+                        Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                            Text("TUN 地址段", style = MaterialTheme.typography.labelLarge)
+                            Spacer(Modifier.height(8.dp))
+                            OutlinedTextField(
+                                value = settings.tunAddress,
+                                onValueChange = { store.updateSettings(settings.copy(tunAddress = it.trim())) },
+                                label = { Text("IPv4 段（如 172.18.0.1/30）") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            OutlinedTextField(
+                                value = settings.tunAddress6,
+                                onValueChange = { store.updateSettings(settings.copy(tunAddress6 = it.trim())) },
+                                label = { Text("IPv6 段（如 fdfe:dcba:9876::1/126）") },
+                                singleLine = true,
+                                enabled = settings.ipv6Route,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+                    }
                 }
                 SbSpacer()
             }
