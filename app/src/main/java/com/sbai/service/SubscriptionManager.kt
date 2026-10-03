@@ -92,33 +92,48 @@ class SubscriptionManager(private val store: RuleStore) {
     )
 
     private fun httpGet(url: String, userAgent: String?): Pair<String, TrafficInfo> {
-        val conn = URL(url).openConnection() as HttpURLConnection
-        return try {
-            conn.connectTimeout = 15_000
-            conn.readTimeout = 15_000
-            conn.setRequestProperty("User-Agent", userAgent?.takeIf { it.isNotBlank() } ?: UA)
-            conn.requestMethod = "GET"
-            val code = conn.responseCode
-            if (code !in 200..299) error("HTTP $code")
-
-            val userinfo = parseUserinfo(conn.getHeaderField("subscription-userinfo"))
-            val text = conn.inputStream.bufferedReader(Charsets.UTF_8).use { reader ->
-                val sb = StringBuilder()
-                val buf = CharArray(8192)
-                var total = 0
-                while (true) {
-                    val n = reader.read(buf)
-                    if (n < 0) break
-                    total += n
-                    if (total > MAX_BODY_CHARS) error("订阅内容超过 4MB，已中止")
-                    sb.append(buf, 0, n)
+        // 禁用自动重定向：https 订阅可被 302 降级到 http 明文（节点凭据泄露面）。
+        // 手动跟随且只允许 https 目标。
+        var current = url
+        repeat(MAX_REDIRECTS) { hop ->
+            val conn = URL(current).openConnection() as HttpURLConnection
+            try {
+                conn.instanceFollowRedirects = false
+                conn.connectTimeout = 15_000
+                conn.readTimeout = 15_000
+                conn.setRequestProperty("User-Agent", userAgent?.takeIf { it.isNotBlank() } ?: UA)
+                conn.requestMethod = "GET"
+                val code = conn.responseCode
+                if (code in 300..399) {
+                    val location = conn.getHeaderField("Location")
+                        ?: error("重定向缺少 Location 头")
+                    val next = URL(URL(current), location).toExternalForm()
+                    if (!next.startsWith("https://")) error("重定向目标非 https，已中止")
+                    current = next
+                    return@repeat
                 }
-                sb.toString()
+                if (code !in 200..299) error("HTTP $code")
+
+                val userinfo = parseUserinfo(conn.getHeaderField("subscription-userinfo"))
+                val text = conn.inputStream.bufferedReader(Charsets.UTF_8).use { reader ->
+                    val sb = StringBuilder()
+                    val buf = CharArray(8192)
+                    var total = 0
+                    while (true) {
+                        val n = reader.read(buf)
+                        if (n < 0) break
+                        total += n
+                        if (total > MAX_BODY_CHARS) error("订阅内容超过 4MB，已中止")
+                        sb.append(buf, 0, n)
+                    }
+                    sb.toString()
+                }
+                return text to userinfo
+            } finally {
+                conn.disconnect()
             }
-            text to userinfo
-        } finally {
-            conn.disconnect()
         }
+        error("重定向次数过多（>$MAX_REDIRECTS）")
     }
 
     /** 解析 subscription-userinfo: upload=..; download=..; total=..; expire=.. */
@@ -138,5 +153,6 @@ class SubscriptionManager(private val store: RuleStore) {
         const val TAG = "SubscriptionManager"
         const val UA = "sb-AI/1.0 (sing-box)"
         const val MAX_BODY_CHARS = 4 * 1024 * 1024
+        const val MAX_REDIRECTS = 5
     }
 }

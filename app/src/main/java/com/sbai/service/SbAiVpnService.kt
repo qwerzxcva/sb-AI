@@ -158,7 +158,13 @@ class SbAiVpnService : VpnService() {
     }
 
     override fun onDestroy() {
+        // 服务被系统销毁/回收时，必须复位共享状态：
+        // 否则 _status 停留在 Running，重入守卫会让用户永远无法再次启动。
+        SbCommandClient.disconnect()
         runCatching { runtime?.stop() }
+        runtime = null
+        platformInterface = null
+        _status.value = ServiceStatus.Stopped
         scope.cancel()
         super.onDestroy()
     }

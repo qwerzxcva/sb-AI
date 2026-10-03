@@ -86,7 +86,7 @@ fun SettingsScreen() {
     var showOverridePreview by remember { mutableStateOf(false) }
     var backupMessage by remember { mutableStateOf<String?>(null) }
 
-    val backupJson = Json { prettyPrint = true; encodeDefaults = true }
+    val backupJson = Json { prettyPrint = true; encodeDefaults = true; ignoreUnknownKeys = true }
 
     val exportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/json"),
@@ -105,8 +105,19 @@ fun SettingsScreen() {
     ) { uri: Uri? ->
         uri ?: return@rememberLauncherForActivityResult
         runCatching {
-            val text = context.contentResolver.openInputStream(uri)?.use {
-                it.readBytes().toString(Charsets.UTF_8)
+            val text = context.contentResolver.openInputStream(uri)?.use { input ->
+                // 上限 8MB，防止超大/畸形文件撑爆内存
+                val buf = ByteArray(8192)
+                val sb = StringBuilder()
+                var total = 0
+                while (true) {
+                    val n = input.read(buf)
+                    if (n < 0) break
+                    total += n
+                    if (total > MAX_BACKUP_BYTES) error("备份文件超过 8MB，已中止")
+                    sb.append(String(buf, 0, n, Charsets.UTF_8))
+                }
+                sb.toString()
             } ?: error("空文件")
             val imported = backupJson.decodeFromString(AppState.serializer(), text)
             store.replaceAll(imported)
@@ -387,7 +398,7 @@ fun SettingsScreen() {
                     item {
                         SbItem(
                             title = "sb-AI",
-                            subtitle = "基于 sing-box（AndroidLibBoxLite 内核）\nUI 风格参考 Kototoro；功能参考 LxBox / AsteriskBOX / ThroneForAndroid\n不集成 Root / Magisk 功能",
+                            subtitle = "基于 sing-box（LxBox 同款 sing-box-lx 内核，含 AWG2/XHTTP/balancer 扩展）\nUI 风格参考 Kototoro；功能参考 LxBox / AsteriskBOX / ThroneForAndroid\n不集成 Root / Magisk 功能",
                             icon = Icons.Filled.Info,
                         )
                     }
@@ -459,6 +470,8 @@ private const val OVERRIDE_SAMPLE = """{
     { "type": "direct", "tag": "warp-direct" }
   ]
 }"""
+
+private const val MAX_BACKUP_BYTES = 8 * 1024 * 1024
 
 // ---------------------------------------------------------------------------
 // 分应用代理：应用选择器

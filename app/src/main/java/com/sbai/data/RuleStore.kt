@@ -79,7 +79,21 @@ class RuleStore private constructor(context: Context) {
     }
 
     fun deleteRuleSet(id: String) = update { s ->
-        s.copy(routeRuleSets = s.routeRuleSets.filterNot { it.id == id })
+        val removedTag = s.routeRuleSets.firstOrNull { it.id == id }?.tag
+        s.copy(
+            routeRuleSets = s.routeRuleSets.filterNot { it.id == id },
+            // 级联清理：剔除所有规则对该规则集 tag 的引用，避免悬空 rule_set 导致 checkConfig 失败
+            routeRules = s.routeRules.map { r ->
+                if (removedTag != null && removedTag in r.ruleSetTags) {
+                    r.copy(ruleSetTags = r.ruleSetTags - removedTag)
+                } else r
+            },
+            dnsRules = s.dnsRules.map { r ->
+                if (removedTag != null && removedTag in r.ruleSetTags) {
+                    r.copy(ruleSetTags = r.ruleSetTags - removedTag)
+                } else r
+            },
+        )
     }
 
     // ---- DNS servers ----

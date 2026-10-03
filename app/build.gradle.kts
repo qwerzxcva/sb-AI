@@ -25,10 +25,22 @@ android {
 
     signingConfigs {
         create("release") {
+            // 自签可复现构建（开发/演示证书，非分发签名）。
+            // 口令优先取环境变量 / gradle 属性（CI secret），缺省回退到开发默认值；
+            // 真实分发请注入 SBAI_STORE_PASSWORD / SBAI_KEY_PASSWORD 并轮换密钥。
             storeFile = file("../sbai-keystore.jks")
-            storePassword = "sbai123456"
-            keyAlias = "sbai"
-            keyPassword = "sbai123456"
+            storePassword = providers.gradleProperty("SBAI_STORE_PASSWORD")
+                .orElse(providers.environmentVariable("SBAI_STORE_PASSWORD"))
+                .orElse("sbai123456")
+                .get()
+            keyAlias = providers.gradleProperty("SBAI_KEY_ALIAS")
+                .orElse(providers.environmentVariable("SBAI_KEY_ALIAS"))
+                .orElse("sbai")
+                .get()
+            keyPassword = providers.gradleProperty("SBAI_KEY_PASSWORD")
+                .orElse(providers.environmentVariable("SBAI_KEY_PASSWORD"))
+                .orElse("sbai123456")
+                .get()
         }
     }
 
@@ -103,8 +115,8 @@ dependencies {
         }
     }
 
-    // Prebuilt sing-box core (AndroidLibBoxLite, arm64-v8a only).
-    // Downloaded by scripts/fetch-libbox.sh or the CI workflow; not committed to git.
+    // Prebuilt sing-box core（LxBox 同款 fork：Leadaxe/sing-box-lx，arm64-v8a only）.
+    // 由 scripts/fetch-libbox.sh / CI 下载并裁剪；不提交进 git.
     implementation(files("libs/libbox.aar"))
 
     implementation(platform("androidx.compose:compose-bom:2024.12.01"))

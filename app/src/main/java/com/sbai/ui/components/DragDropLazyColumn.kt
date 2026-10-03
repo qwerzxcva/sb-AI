@@ -1,18 +1,17 @@
 package com.sbai.ui.components
 
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.foundation.layout.Box
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
@@ -21,14 +20,10 @@ import androidx.compose.ui.zIndex
 /**
  * 长按拖动排序的 LazyColumn（越靠上优先级越高）。
  *
- * 实现：记录被拖动项的 index 与累计位移；拖动过程中用 graphicsLayer 平移该项，
- * 当位移超过相邻项高度的一半时交换数据源顺序（回调 onMove），并把累计位移
- * 减去被交换项的高度，保证视觉连续。松手时提交最终顺序。
- *
- * @param items 数据源（顺序即优先级）
- * @param keyOf 稳定 key
- * @param onMove 拖动过程中交换 (from, to)
- * @param onDragEnd 松手，参数为最终顺序的 key 列表
+ * 实现要点（修复索引过期问题）：
+ *  - 以「key」而非「index」跟踪被拖项，重排后实时用 indexOfFirst 求当前索引，
+ *    避免 pointerInput 闭包捕获过期 index。
+ *  - 用 hasDragged 标记，仅真正拖过才在松手时提交顺序（首次组合/取消不触发落盘）。
  */
 @Composable
 fun <T> DragDropLazyColumn(
@@ -43,17 +38,11 @@ fun <T> DragDropLazyColumn(
     footer: (@Composable () -> Unit)? = null,
     itemContent: @Composable (index: Int, item: T, isDragging: Boolean) -> Unit,
 ) {
-    var draggingIndex by remember { mutableStateOf<Int?>(null) }
+    var draggingKey by remember { mutableStateOf<Any?>(null) }
     var dragOffset by remember { mutableFloatStateOf(0f) }
-    // 当前拖动项的可视高度（用于判定交换阈值）
-    var draggingHeight by remember { mutableFloatStateOf(0f) }
+    var hasDragged by remember { mutableStateOf(false) }
 
-    // 松手 / 列表变化时提交顺序
-    LaunchedEffect(draggingIndex) {
-        if (draggingIndex == null) {
-            onDragEnd(items.map(keyOf))
-        }
-    }
+    val draggingIndex = draggingKey?.let { k -> items.indexOfFirst { keyOf(it) == k } } ?: -1
 
     LazyColumn(
         state = listState,
@@ -67,7 +56,8 @@ fun <T> DragDropLazyColumn(
         if (header != null) item(key = "__header__") { header() }
 
         itemsIndexed(items, key = { _, item -> keyOf(item) }) { index, item ->
-            val isDragging = draggingIndex == index
+            val thisKey = keyOf(item)
+            val isDragging = draggingKey == thisKey
             val itemModifier = if (isDragging) {
                 Modifier
                     .zIndex(1f)
@@ -78,45 +68,48 @@ fun <T> DragDropLazyColumn(
 
             Box(
                 modifier = itemModifier
-                    .pointerInput(items.size) {
+                    .pointerInput(thisKey) {
                         detectDragGesturesAfterLongPress(
                             onDragStart = {
-                                draggingIndex = index
+                                draggingKey = thisKey
                                 dragOffset = 0f
+                                hasDragged = false
                             },
                             onDrag = { change, dragAmount ->
                                 change.consume()
-                                val current = draggingIndex ?: return@detectDragGesturesAfterLongPress
+                                val current = draggingIndex
+                                if (current < 0) return@detectDragGesturesAfterLongPress
                                 dragOffset += dragAmount.y
+                                hasDragged = true
 
-                                // 用布局信息推算相邻项高度（首次拖动时缓存）
                                 val info = listState.layoutInfo
+                                val offsetItems = if (header != null) 1 else 0
                                 val currentVisible = info.visibleItemsInfo
-                                    .firstOrNull { it.index == current + (if (header != null) 1 else 0) }
-                                if (currentVisible != null) {
-                                    draggingHeight = currentVisible.size.toFloat()
-                                }
-                                val threshold = if (draggingHeight > 0f) draggingHeight / 2f else 80f
+                                    .firstOrNull { it.index == current + offsetItems }
+                                val height = currentVisible?.size?.toFloat() ?: 0f
+                                val threshold = if (height > 0f) height / 2f else 80f
 
-                                // 向下越过阈值 → 与下一项交换
                                 if (dragOffset > threshold && current < items.lastIndex) {
                                     onMove(current, current + 1)
-                                    dragOffset -= if (draggingHeight > 0f) draggingHeight else threshold * 2
-                                    draggingIndex = current + 1
+                                    dragOffset -= if (height > 0f) height else threshold * 2
                                 } else if (dragOffset < -threshold && current > 0) {
-                                    // 向上越过阈值 → 与上一项交换
                                     onMove(current, current - 1)
-                                    dragOffset += if (draggingHeight > 0f) draggingHeight else threshold * 2
-                                    draggingIndex = current - 1
+                                    dragOffset += if (height > 0f) height else threshold * 2
                                 }
                             },
                             onDragEnd = {
-                                draggingIndex = null
+                                if (hasDragged) {
+                                    onDragEnd(items.map(keyOf))
+                                }
+                                draggingKey = null
                                 dragOffset = 0f
+                                hasDragged = false
                             },
                             onDragCancel = {
-                                draggingIndex = null
+                                // 取消不提交，仅复位
+                                draggingKey = null
                                 dragOffset = 0f
+                                hasDragged = false
                             },
                         )
                     },

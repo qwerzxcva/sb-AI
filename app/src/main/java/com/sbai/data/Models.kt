@@ -305,8 +305,8 @@ enum class OverridePriority(val displayName: String) {
 /**
  * 配置覆盖：导入完整 sing-box JSON，与 UI 生成的配置深度合并。
  * 合并规则：对象递归合并；数组按 tag/name 去重合并（同 key 时高优先级方胜出），
- * 无 key 的数组（如 route.rules）按「低优先级在前、高优先级在后」拼接，
- * 保证高优先级规则先匹配。
+ * 无 key 的数组（如 route.rules / dns.rules）按「高优先级在前、低优先级在后」拼接，
+ * 因为规则数组按顺序匹配，高优先级规则必须先命中。
  */
 @Serializable
 data class ConfigOverride(
