@@ -30,7 +30,8 @@ class SubscriptionManager(private val store: RuleStore) {
             require(subscription.url.startsWith("https://")) {
                 "订阅地址必须使用 https"
             }
-            val (body, userinfo) = httpGet(subscription.url, subscription.userAgent)
+            val settings = store.state.value.settings
+            val (body, userinfo) = httpGet(subscription.url, subscription.userAgent, settings)
 
             var parsed = ShareLinkParser.parseSubscription(body)
             if (parsed.isEmpty()) {
@@ -91,7 +92,11 @@ class SubscriptionManager(private val store: RuleStore) {
         val total: Long = 0, val expire: Long = 0,
     )
 
-    private fun httpGet(url: String, userAgent: String?): Pair<String, TrafficInfo> {
+    private fun httpGet(
+        url: String,
+        userAgent: String?,
+        settings: com.sbai.data.AppSettings,
+    ): Pair<String, TrafficInfo> {
         // 禁用自动重定向：https 订阅可被 302 降级到 http 明文（节点凭据泄露面）。
         // 手动跟随且只允许 https 目标。
         var current = url
@@ -101,7 +106,24 @@ class SubscriptionManager(private val store: RuleStore) {
                 conn.instanceFollowRedirects = false
                 conn.connectTimeout = 15_000
                 conn.readTimeout = 15_000
-                conn.setRequestProperty("User-Agent", userAgent?.takeIf { it.isNotBlank() } ?: UA)
+                // UA：订阅级 override > 全局 override > 品牌 UA
+                val ua = userAgent?.takeIf { it.isNotBlank() }
+                    ?: settings.subscriptionUserAgent.takeIf { it.isNotBlank() }
+                    ?: UA
+                conn.setRequestProperty("User-Agent", ua)
+                // HWID + device-meta（LxBox SubscriptionIdentity 基准，Remnawave 设备限制面板用）
+                if (settings.subscriptionSendHwid) {
+                    settings.subscriptionHwid.takeIf { it.isNotBlank() }
+                        ?.let { conn.setRequestProperty("x-hwid", it) }
+                    conn.setRequestProperty(
+                        "x-device-os",
+                        settings.subscriptionDeviceOs.takeIf { it.isNotBlank() } ?: "android",
+                    )
+                    settings.subscriptionVerOs.takeIf { it.isNotBlank() }
+                        ?.let { conn.setRequestProperty("x-ver-os", it) }
+                    settings.subscriptionDeviceModel.takeIf { it.isNotBlank() }
+                        ?.let { conn.setRequestProperty("x-device-model", it) }
+                }
                 conn.requestMethod = "GET"
                 val code = conn.responseCode
                 if (code in 300..399) {

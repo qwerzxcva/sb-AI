@@ -372,56 +372,97 @@ object SingBoxConfigGenerator {
         }
 
         // 按字段类别拆分为子条件（OR 模式用；AND 模式平铺）
-        val domainCond = buildJsonObject { putConditions(rule, domain = true, ip = false, transport = false) }
-        val ipCond = buildJsonObject { putConditions(rule, domain = false, ip = true, transport = false) }
-        val transportCond = buildJsonObject { putConditions(rule, domain = false, ip = false, transport = true) }
+        // 类别：domain / ip / source / transport / app / network-env
+        val domainCond = buildJsonObject { putConditions(rule, Cat.DOMAIN) }
+        val ipCond = buildJsonObject { putConditions(rule, Cat.IP) }
+        val sourceCond = buildJsonObject { putConditions(rule, Cat.SOURCE) }
+        val transportCond = buildJsonObject { putConditions(rule, Cat.TRANSPORT) }
+        val appCond = buildJsonObject { putConditions(rule, Cat.APP) }
+        val netEnvCond = buildJsonObject { putConditions(rule, Cat.NETENV) }
 
         return buildJsonObject {
             if (rule.logic == RuleLogic.OR) {
                 val children = buildJsonArray {
-                    listOf(domainCond, ipCond, transportCond).filter { it.isNotEmpty() }.forEach(::add)
+                    listOf(domainCond, ipCond, sourceCond, transportCond, appCond, netEnvCond)
+                        .filter { it.isNotEmpty() }.forEach(::add)
                 }
                 if (children.size == 0) {
-                    put("outbound", outbound)
+                    putActionOrOutbound(rule, outbound)
                 } else if (children.size == 1) {
-                    // 只有一个类别时 OR 与 AND 等价，直接平铺，避免无谓的 logical 包裹
                     children[0].jsonObject.forEach { (k, v) -> put(k, v) }
                     if (rule.invert) put("invert", true)
-                    put("outbound", outbound)
+                    putActionOrOutbound(rule, outbound)
                 } else {
                     put("type", "logical")
                     put("mode", "or")
                     put("rules", children)
                     if (rule.invert) put("invert", true)
-                    put("outbound", outbound)
+                    putActionOrOutbound(rule, outbound)
                 }
             } else {
                 // AND：所有字段平铺在一个 rule 对象里（sing-box 默认即 AND 语义）
-                putConditions(rule, domain = true, ip = true, transport = true)
+                putConditions(rule, Cat.DOMAIN, Cat.IP, Cat.SOURCE, Cat.TRANSPORT, Cat.APP, Cat.NETENV)
                 if (rule.invert) put("invert", true)
-                put("outbound", outbound)
+                putActionOrOutbound(rule, outbound)
             }
         }
     }
 
-    private fun JB.putConditions(r: RouteRule, domain: Boolean, ip: Boolean, transport: Boolean) {
-        if (domain) {
-            if (r.domains.isNotEmpty()) putJsonArray("domain") { r.domains.forEach(::add) }
-            if (r.domainSuffixes.isNotEmpty()) putJsonArray("domain_suffix") { r.domainSuffixes.forEach(::add) }
-            if (r.domainKeywords.isNotEmpty()) putJsonArray("domain_keyword") { r.domainKeywords.forEach(::add) }
-            if (r.domainRegexes.isNotEmpty()) putJsonArray("domain_regex") { r.domainRegexes.forEach(::add) }
+    /** BLOCK 动作用 action=reject（带 rejectMethod），其余用 outbound */
+    private fun JB.putActionOrOutbound(rule: RouteRule, outbound: String) {
+        if (rule.action == RuleAction.BLOCK) {
+            put("action", "reject")
+            if (rule.rejectMethod == "drop") put("reject_method", "drop")
+        } else {
+            put("outbound", outbound)
         }
-        if (ip) {
-            if (r.ipCidrs.isNotEmpty()) putJsonArray("ip_cidr") { r.ipCidrs.forEach(::add) }
-            // Karing 风格：ruleSetTags 里的 URL 自动映射为生成的 tag
-            val tags = resolveRuleSetTags(r)
-            if (tags.isNotEmpty()) putJsonArray("rule_set") { tags.forEach(::add) }
-        }
-        if (transport) {
-            if (r.networks.isNotEmpty()) putJsonArray("network") { r.networks.forEach(::add) }
-            if (r.protocols.isNotEmpty()) putJsonArray("protocol") { r.protocols.forEach(::add) }
-            if (r.ports.isNotEmpty()) putJsonArray("port") { r.ports.forEach(::add) }
-            if (r.portRanges.isNotEmpty()) putJsonArray("port_range") { r.portRanges.forEach(::add) }
+    }
+
+    private enum class Cat { DOMAIN, IP, SOURCE, TRANSPORT, APP, NETENV }
+
+    private fun JB.putConditions(r: RouteRule, vararg cats: Cat) {
+        cats.forEach { cat ->
+            when (cat) {
+                Cat.DOMAIN -> {
+                    if (r.domains.isNotEmpty()) putJsonArray("domain") { r.domains.forEach(::add) }
+                    if (r.domainSuffixes.isNotEmpty()) putJsonArray("domain_suffix") { r.domainSuffixes.forEach(::add) }
+                    if (r.domainKeywords.isNotEmpty()) putJsonArray("domain_keyword") { r.domainKeywords.forEach(::add) }
+                    if (r.domainRegexes.isNotEmpty()) putJsonArray("domain_regex") { r.domainRegexes.forEach(::add) }
+                }
+                Cat.IP -> {
+                    if (r.ipCidrs.isNotEmpty()) putJsonArray("ip_cidr") { r.ipCidrs.forEach(::add) }
+                    val tags = resolveRuleSetTags(r)
+                    if (tags.isNotEmpty()) putJsonArray("rule_set") { tags.forEach(::add) }
+                    if (r.ipIsPrivate) put("ip_is_private", true)
+                }
+                Cat.SOURCE -> {
+                    if (r.sourceIpCidrs.isNotEmpty()) putJsonArray("source_ip_cidr") { r.sourceIpCidrs.forEach(::add) }
+                    if (r.sourcePorts.isNotEmpty()) putJsonArray("source_port") { r.sourcePorts.forEach(::add) }
+                    if (r.sourcePortRanges.isNotEmpty()) putJsonArray("source_port_range") { r.sourcePortRanges.forEach(::add) }
+                    if (r.sourceIpIsPrivate) put("source_ip_is_private", true)
+                }
+                Cat.TRANSPORT -> {
+                    if (r.networks.isNotEmpty()) putJsonArray("network") { r.networks.forEach(::add) }
+                    if (r.protocols.isNotEmpty()) putJsonArray("protocol") { r.protocols.forEach(::add) }
+                    if (r.ports.isNotEmpty()) putJsonArray("port") { r.ports.forEach(::add) }
+                    if (r.portRanges.isNotEmpty()) putJsonArray("port_range") { r.portRanges.forEach(::add) }
+                }
+                Cat.APP -> {
+                    if (r.packageNames.isNotEmpty()) putJsonArray("package_name") { r.packageNames.forEach(::add) }
+                    if (r.processNames.isNotEmpty()) putJsonArray("process_name") { r.processNames.forEach(::add) }
+                    if (r.processPaths.isNotEmpty()) putJsonArray("process_path") { r.processPaths.forEach(::add) }
+                    if (r.users.isNotEmpty()) putJsonArray("user") { r.users.forEach(::add) }
+                    if (r.userIds.isNotEmpty()) putJsonArray("user_id") { r.userIds.forEach(::add) }
+                }
+                Cat.NETENV -> {
+                    if (r.networkTypes.isNotEmpty()) putJsonArray("network_type") { r.networkTypes.forEach(::add) }
+                    if (r.wifiSsids.isNotEmpty()) putJsonArray("wifi_ssid") { r.wifiSsids.forEach(::add) }
+                    if (r.wifiBssids.isNotEmpty()) putJsonArray("wifi_bssid") { r.wifiBssids.forEach(::add) }
+                    if (r.inbounds.isNotEmpty()) putJsonArray("inbound") { r.inbounds.forEach(::add) }
+                    if (r.clashMode.isNotBlank()) put("clash_mode", r.clashMode)
+                    if (r.networkIsExpensive) put("network_is_expensive", true)
+                }
+            }
         }
     }
 
@@ -471,7 +512,10 @@ object SingBoxConfigGenerator {
 
         // 1) 用户手动创建的 DNS 规则（按列表顺序 = 优先级）
         state.dnsRules.filter { it.enabled }.forEach { r ->
-            val server = resolveDnsTag(r.server, groupOfTag, state) ?: return@forEach
+            val server = resolveDnsTag(r.server, groupOfTag, state)
+            // route 动作必须有有效 server，否则整条跳过（避免悬空引用 / 残缺规则）
+            val needsServer = r.action.isBlank() || r.action == "route"
+            if (needsServer && server == null) return@forEach
             result.add(buildJsonObject {
                 if (r.domains.isNotEmpty()) putJsonArray("domain") { r.domains.forEach(::add) }
                 if (r.domainSuffixes.isNotEmpty()) putJsonArray("domain_suffix") { r.domainSuffixes.forEach(::add) }
@@ -482,11 +526,31 @@ object SingBoxConfigGenerator {
                 if (r.networks.isNotEmpty()) putJsonArray("network") { r.networks.forEach(::add) }
                 if (r.ports.isNotEmpty()) putJsonArray("port") { r.ports.forEach(::add) }
                 if (r.queryTypes.isNotEmpty()) putJsonArray("query_type") { r.queryTypes.forEach(::add) }
-                put("server", server)
                 if (r.ipStrategy.isNotBlank()) put("ip_strategy", r.ipStrategy)
                 if (r.disableCache) put("disable_cache", true)
                 r.rewriteTtl?.let { put("rewrite_ttl", it) }
                 r.clientSubnet?.takeIf { it.isNotBlank() }?.let { put("client_subnet", it) }
+                if (r.timeout.isNotBlank()) put("timeout", r.timeout)
+
+                // 动作（AsteriskBOX 基准）
+                when (r.action) {
+                    "reject" -> {
+                        put("action", "reject")
+                        if (r.rcode.isNotBlank() && r.rcode != "success") put("rcode", r.rcode)
+                    }
+                    "route-options" -> {
+                        put("action", "route-options")
+                        if (r.rcode.isNotBlank() && r.rcode != "success") put("rcode", r.rcode)
+                        if (r.answers.isNotEmpty()) putJsonArray("answer") { r.answers.forEach(::add) }
+                        if (r.ns.isNotEmpty()) putJsonArray("ns") { r.ns.forEach(::add) }
+                        if (r.extra.isNotEmpty()) putJsonArray("extra") { r.extra.forEach(::add) }
+                    }
+                    "pre-defined" -> put("action", "pre-defined")
+                    else -> {
+                        // route：server 已在上面校验非空
+                        put("server", server!!)
+                    }
+                }
             })
         }
 

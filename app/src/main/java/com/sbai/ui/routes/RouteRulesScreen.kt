@@ -296,7 +296,7 @@ private fun ruleSummary(rule: RouteRule): String = buildList {
 }.joinToString(" ").ifBlank { "（空规则 = 匹配全部）" }
 
 // ---------------------------------------------------------------------------
-// 路由规则编辑器
+// 路由规则编辑器（AsteriskBOX 全量字段，按类别折叠）
 // ---------------------------------------------------------------------------
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
@@ -319,6 +319,25 @@ private fun RouteRuleEditorDialog(
     var sets by remember { mutableStateOf(initial.ruleSetTags.joinToString("\n")) }
     var networks by remember { mutableStateOf(initial.networks.toSet()) }
     var protocols by remember { mutableStateOf(initial.protocols.toSet()) }
+    var ports by remember { mutableStateOf(initial.ports.joinToString("\n")) }
+    var portRanges by remember { mutableStateOf(initial.portRanges.joinToString("\n")) }
+    var sourceIpCidrs by remember { mutableStateOf(initial.sourceIpCidrs.joinToString("\n")) }
+    var sourcePorts by remember { mutableStateOf(initial.sourcePorts.joinToString("\n")) }
+    var sourcePortRanges by remember { mutableStateOf(initial.sourcePortRanges.joinToString("\n")) }
+    var packageNames by remember { mutableStateOf(initial.packageNames.joinToString("\n")) }
+    var processNames by remember { mutableStateOf(initial.processNames.joinToString("\n")) }
+    var processPaths by remember { mutableStateOf(initial.processPaths.joinToString("\n")) }
+    var users by remember { mutableStateOf(initial.users.joinToString("\n")) }
+    var userIds by remember { mutableStateOf(initial.userIds.joinToString("\n")) }
+    var networkTypes by remember { mutableStateOf(initial.networkTypes.toSet()) }
+    var wifiSsids by remember { mutableStateOf(initial.wifiSsids.joinToString("\n")) }
+    var wifiBssids by remember { mutableStateOf(initial.wifiBssids.joinToString("\n")) }
+    var inbounds by remember { mutableStateOf(initial.inbounds.joinToString("\n")) }
+    var clashMode by remember { mutableStateOf(initial.clashMode) }
+    var sourceIpIsPrivate by remember { mutableStateOf(initial.sourceIpIsPrivate) }
+    var ipIsPrivate by remember { mutableStateOf(initial.ipIsPrivate) }
+    var networkIsExpensive by remember { mutableStateOf(initial.networkIsExpensive) }
+    var rejectMethod by remember { mutableStateOf(initial.rejectMethod) }
     var logic by remember { mutableStateOf(initial.logic) }
     var invert by remember { mutableStateOf(initial.invert) }
     var ipv4 by remember { mutableStateOf(initial.ipv4) }
@@ -332,20 +351,22 @@ private fun RouteRuleEditorDialog(
     val ipOnly = !hasDomains && (ipCidrs.isNotBlank() || sets.isNotBlank())
 
     fun applyAll(r: RouteRule) {
-        name = r.name
-        action = r.action
-        domains = r.domains.joinToString("\n")
-        suffixes = r.domainSuffixes.joinToString("\n")
-        keywords = r.domainKeywords.joinToString("\n")
-        regexes = r.domainRegexes.joinToString("\n")
-        ipCidrs = r.ipCidrs.joinToString("\n")
-        sets = r.ruleSetTags.joinToString("\n")
-        networks = r.networks.toSet()
-        protocols = r.protocols.toSet()
-        logic = r.logic
-        invert = r.invert
-        ipv4 = r.ipv4
-        ipv6 = r.ipv6
+        name = r.name; action = r.action
+        domains = r.domains.joinToString("\n"); suffixes = r.domainSuffixes.joinToString("\n")
+        keywords = r.domainKeywords.joinToString("\n"); regexes = r.domainRegexes.joinToString("\n")
+        ipCidrs = r.ipCidrs.joinToString("\n"); sets = r.ruleSetTags.joinToString("\n")
+        networks = r.networks.toSet(); protocols = r.protocols.toSet()
+        ports = r.ports.joinToString("\n"); portRanges = r.portRanges.joinToString("\n")
+        sourceIpCidrs = r.sourceIpCidrs.joinToString("\n"); sourcePorts = r.sourcePorts.joinToString("\n")
+        sourcePortRanges = r.sourcePortRanges.joinToString("\n")
+        packageNames = r.packageNames.joinToString("\n"); processNames = r.processNames.joinToString("\n")
+        processPaths = r.processPaths.joinToString("\n"); users = r.users.joinToString("\n")
+        userIds = r.userIds.joinToString("\n"); networkTypes = r.networkTypes.toSet()
+        wifiSsids = r.wifiSsids.joinToString("\n"); wifiBssids = r.wifiBssids.joinToString("\n")
+        inbounds = r.inbounds.joinToString("\n"); clashMode = r.clashMode
+        sourceIpIsPrivate = r.sourceIpIsPrivate; ipIsPrivate = r.ipIsPrivate
+        networkIsExpensive = r.networkIsExpensive; rejectMethod = r.rejectMethod
+        logic = r.logic; invert = r.invert; ipv4 = r.ipv4; ipv6 = r.ipv6
         dnsTag = r.dnsTag ?: ""
     }
 
@@ -390,81 +411,146 @@ private fun RouteRuleEditorDialog(
                         }
                     }
                 }
-
-                MultiLineField("域名（一行一条）", domains) { domains = it }
-                MultiLineField("域名后缀（一行一条）", suffixes) { suffixes = it }
-                MultiLineField("域名关键词（一行一条）", keywords) { keywords = it }
-                MultiLineField("域名正则（一行一条）", regexes) { regexes = it }
-                MultiLineField("IP / CIDR（一行一条）", ipCidrs) { ipCidrs = it }
-                MultiLineField(
-                    "规则集 tag 或 URL（一行一条；URL 会自动创建远程规则集）",
-                    sets,
-                ) { sets = it }
-                TextButton(onClick = onCreateRuleSet) { Text("＋ 新建规则集") }
-
-                Text("network（可多选：tcp / udp / icmp）", style = MaterialTheme.typography.labelLarge)
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    NETWORK_OPTIONS.forEach { opt ->
-                        FilterChip(
-                            selected = opt in networks,
-                            onClick = { networks = if (opt in networks) networks - opt else networks + opt },
-                            label = { Text(opt) },
-                        )
+                if (isBlock) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("拦截方式：", style = MaterialTheme.typography.labelLarge)
+                        Spacer(Modifier.size(8.dp))
+                        FilterChip(selected = rejectMethod == "default", onClick = { rejectMethod = "default" }, label = { Text("拒绝") })
+                        Spacer(Modifier.size(6.dp))
+                        FilterChip(selected = rejectMethod == "drop", onClick = { rejectMethod = "drop" }, label = { Text("丢弃") })
                     }
                 }
 
-                Text("protocol（可多选，依赖 sniff）", style = MaterialTheme.typography.labelLarge)
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    PROTOCOL_OPTIONS.forEach { opt ->
-                        FilterChip(
-                            selected = opt in protocols,
-                            onClick = { protocols = if (opt in protocols) protocols - opt else protocols + opt },
-                            label = { Text(opt) },
-                        )
+                EditorSection("域名") {
+                    MultiLineField("域名（一行一条）", domains) { domains = it }
+                    MultiLineField("域名后缀（一行一条）", suffixes) { suffixes = it }
+                    MultiLineField("域名关键词（一行一条）", keywords) { keywords = it }
+                    MultiLineField("域名正则（一行一条）", regexes) { regexes = it }
+                }
+
+                EditorSection("目标 IP / 规则集") {
+                    MultiLineField("目标 IP / CIDR（一行一条）", ipCidrs) { ipCidrs = it }
+                    MultiLineField("规则集 tag 或 URL（一行一条；URL 自动建远程规则集）", sets) { sets = it }
+                    TextButton(onClick = onCreateRuleSet) { Text("＋ 新建规则集") }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = ipIsPrivate, onCheckedChange = { ipIsPrivate = it })
+                        Text("目标 IP 是私有地址（ip_is_private）")
                     }
                 }
 
-                Text("逻辑运算", style = MaterialTheme.typography.labelLarge)
-                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                    RuleLogic.entries.forEachIndexed { i, l ->
-                        SegmentedButton(
-                            selected = logic == l,
-                            onClick = { logic = l },
-                            shape = SegmentedButtonDefaults.itemShape(index = i, count = RuleLogic.entries.size),
-                        ) { Text(if (l == RuleLogic.AND) "AND" else "OR") }
+                EditorSection("源（发起方）") {
+                    MultiLineField("源 IP / CIDR（一行一条）", sourceIpCidrs) { sourceIpCidrs = it }
+                    MultiLineField("源端口（一行一个）", sourcePorts) { sourcePorts = it }
+                    MultiLineField("源端口段（一行一条，如 8000:9000）", sourcePortRanges) { sourcePortRanges = it }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = sourceIpIsPrivate, onCheckedChange = { sourceIpIsPrivate = it })
+                        Text("源 IP 是私有地址")
                     }
                 }
-                Text(
-                    if (logic == RuleLogic.AND) {
-                        "AND：上面所有字段类别都要满足（sing-box 单条 rule 的默认语义）"
-                    } else {
-                        "OR：域名类 / IP类 / 传输类 三组条件中任一组满足即命中"
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(checked = invert, onCheckedChange = { invert = it })
-                    Text("invert（对整体取反）")
+
+                EditorSection("传输") {
+                    Text("network（可多选：tcp / udp / icmp）", style = MaterialTheme.typography.labelLarge)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        NETWORK_OPTIONS.forEach { opt ->
+                            FilterChip(
+                                selected = opt in networks,
+                                onClick = { networks = if (opt in networks) networks - opt else networks + opt },
+                                label = { Text(opt) },
+                            )
+                        }
+                    }
+                    Text("protocol（可多选，依赖 sniff）", style = MaterialTheme.typography.labelLarge)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        PROTOCOL_OPTIONS.forEach { opt ->
+                            FilterChip(
+                                selected = opt in protocols,
+                                onClick = { protocols = if (opt in protocols) protocols - opt else protocols + opt },
+                                label = { Text(opt) },
+                            )
+                        }
+                    }
+                    MultiLineField("目标端口（一行一个）", ports) { ports = it }
+                    MultiLineField("目标端口段（一行一条，如 8000:9000）", portRanges) { portRanges = it }
                 }
 
-                Text("IP 版本（影响 DNS 解析策略，默认全选）", style = MaterialTheme.typography.labelLarge)
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(checked = ipv4, onCheckedChange = { ipv4 = it })
-                    Text("IPv4")
-                    Spacer(Modifier.padding(8.dp))
-                    Checkbox(checked = ipv6, onCheckedChange = { ipv6 = it })
-                    Text("IPv6")
+                EditorSection("应用 / 进程") {
+                    MultiLineField("应用包名（一行一条）", packageNames) { packageNames = it }
+                    MultiLineField("进程名（一行一条）", processNames) { processNames = it }
+                    MultiLineField("进程路径（一行一条）", processPaths) { processPaths = it }
+                    MultiLineField("用户名（一行一条）", users) { users = it }
+                    MultiLineField("用户 ID（一行一个）", userIds) { userIds = it }
                 }
 
-                if (!isBlock && !ipOnly) {
-                    DnsDropdown(value = dnsTag, options = dnsOptions, onChange = { dnsTag = it })
+                EditorSection("网络环境") {
+                    Text("网络类型（可多选）", style = MaterialTheme.typography.labelLarge)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf("wifi", "cellular", "ethernet").forEach { opt ->
+                            FilterChip(
+                                selected = opt in networkTypes,
+                                onClick = { networkTypes = if (opt in networkTypes) networkTypes - opt else networkTypes + opt },
+                                label = { Text(opt) },
+                            )
+                        }
+                    }
+                    MultiLineField("WiFi SSID（一行一条）", wifiSsids) { wifiSsids = it }
+                    MultiLineField("WiFi BSSID（一行一条）", wifiBssids) { wifiBssids = it }
+                    MultiLineField("入站 tag（一行一条）", inbounds) { inbounds = it }
+                    OutlinedTextField(
+                        value = clashMode, onValueChange = { clashMode = it },
+                        label = { Text("Clash 模式（可选，如 rule/global/direct）") },
+                        singleLine = true, modifier = Modifier.fillMaxWidth(),
+                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = networkIsExpensive, onCheckedChange = { networkIsExpensive = it })
+                        Text("计费网络（network_is_expensive）")
+                    }
+                }
+
+                EditorSection("逻辑运算") {
+                    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                        RuleLogic.entries.forEachIndexed { i, l ->
+                            SegmentedButton(
+                                selected = logic == l,
+                                onClick = { logic = l },
+                                shape = SegmentedButtonDefaults.itemShape(index = i, count = RuleLogic.entries.size),
+                            ) { Text(if (l == RuleLogic.AND) "AND" else "OR") }
+                        }
+                    }
                     Text(
-                        "选择 DNS / DNS group 后将自动为本规则生成一条 DNS 规则；" +
-                            "若同时取消 IPv4/IPv6 之一，也只生成一条合并规则。",
+                        if (logic == RuleLogic.AND) {
+                            "AND：上面所有字段类别都要满足（sing-box 单条 rule 的默认语义）"
+                        } else {
+                            "OR：各类别条件中任一类满足即命中"
+                        },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = invert, onCheckedChange = { invert = it })
+                        Text("invert（对整体取反）")
+                    }
+                }
+
+                EditorSection("IP 版本（影响 DNS 解析策略，默认全选）") {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = ipv4, onCheckedChange = { ipv4 = it })
+                        Text("IPv4")
+                        Spacer(Modifier.padding(8.dp))
+                        Checkbox(checked = ipv6, onCheckedChange = { ipv6 = it })
+                        Text("IPv6")
+                    }
+                }
+
+                if (!isBlock && !ipOnly) {
+                    EditorSection("DNS 联动") {
+                        DnsDropdown(value = dnsTag, options = dnsOptions, onChange = { dnsTag = it })
+                        Text(
+                            "选择 DNS / DNS group 后将自动为本规则生成一条 DNS 规则；" +
+                                "若同时取消 IPv4/IPv6 之一，也只生成一条合并规则。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 } else if (isBlock) {
                     Text("拦截类规则不生成 DNS 联动规则。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 } else {
@@ -486,6 +572,25 @@ private fun RouteRuleEditorDialog(
                         ruleSetTags = sets.toLines(),
                         networks = networks.toList().sorted(),
                         protocols = protocols.toList().sorted(),
+                        ports = ports.toLines().mapNotNull { it.toIntOrNull() },
+                        portRanges = portRanges.toLines(),
+                        sourceIpCidrs = sourceIpCidrs.toLines(),
+                        sourcePorts = sourcePorts.toLines().mapNotNull { it.toIntOrNull() },
+                        sourcePortRanges = sourcePortRanges.toLines(),
+                        packageNames = packageNames.toLines(),
+                        processNames = processNames.toLines(),
+                        processPaths = processPaths.toLines(),
+                        users = users.toLines(),
+                        userIds = userIds.toLines().mapNotNull { it.toIntOrNull() },
+                        networkTypes = networkTypes.toList().sorted(),
+                        wifiSsids = wifiSsids.toLines(),
+                        wifiBssids = wifiBssids.toLines(),
+                        inbounds = inbounds.toLines(),
+                        clashMode = clashMode.trim(),
+                        sourceIpIsPrivate = sourceIpIsPrivate,
+                        ipIsPrivate = ipIsPrivate,
+                        networkIsExpensive = networkIsExpensive,
+                        rejectMethod = rejectMethod,
                         logic = logic,
                         invert = invert,
                         ipv4 = ipv4,
@@ -513,6 +618,35 @@ private fun RouteRuleEditorDialog(
             },
             error = jsonError,
         )
+    }
+}
+
+/** 编辑器内的可折叠分类区块 */
+@Composable
+private fun EditorSection(title: String, content: @Composable () -> Unit) {
+    var expanded by remember { mutableStateOf(true) }
+    Column(Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                title,
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(onClick = { expanded = !expanded }) {
+                Text(if (expanded) "收起" else "展开")
+            }
+        }
+        if (expanded) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                content()
+            }
+        }
     }
 }
 

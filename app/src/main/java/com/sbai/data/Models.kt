@@ -35,15 +35,35 @@ data class RouteRule(
     val domainSuffixes: List<String> = emptyList(),   // 域名后缀
     val domainKeywords: List<String> = emptyList(),   // 域名关键词
     val domainRegexes: List<String> = emptyList(),    // 域名正则
-    val ipCidrs: List<String> = emptyList(),          // IP / CIDR（IP 规则）
-    val ruleSetTags: List<String> = emptyList(),      // 引用的规则集（含远程 IP 规则集）
+    val ipCidrs: List<String> = emptyList(),          // 目标 IP / CIDR（IP 规则）
+    val ruleSetTags: List<String> = emptyList(),      // 引用的规则集（含远程 IP 规则集 / URL）
 
     // network / protocol 允许多选
-    val networks: List<String> = emptyList(),         // tcp / udp
-    val protocols: List<String> = emptyList(),        // http / tls / quic / dns / bittorrent / stun ...
+    val networks: List<String> = emptyList(),         // tcp / udp / icmp
+    val protocols: List<String> = emptyList(),        // http / tls / quic / dns / ...
 
-    val ports: List<Int> = emptyList(),
-    val portRanges: List<String> = emptyList(),       // "8000:9000"
+    val ports: List<Int> = emptyList(),               // 目标端口
+    val portRanges: List<String> = emptyList(),       // 目标端口段 "8000:9000"
+
+    // ---- AsteriskBOX 全量字段（源侧 / 进程 / 应用 / 网络环境） ----
+    val sourceIpCidrs: List<String> = emptyList(),    // 源 IP / CIDR
+    val sourcePorts: List<Int> = emptyList(),         // 源端口
+    val sourcePortRanges: List<String> = emptyList(), // 源端口段
+    val packageNames: List<String> = emptyList(),     // 应用包名
+    val processNames: List<String> = emptyList(),     // 进程名
+    val processPaths: List<String> = emptyList(),     // 进程路径
+    val users: List<String> = emptyList(),            // 用户名
+    val userIds: List<Int> = emptyList(),             // 用户 ID
+    val networkTypes: List<String> = emptyList(),     // wifi / cellular / ethernet
+    val wifiSsids: List<String> = emptyList(),        // WiFi SSID
+    val wifiBssids: List<String> = emptyList(),       // WiFi BSSID
+    val inbounds: List<String> = emptyList(),         // 入站 tag
+    val clashMode: String = "",                       // Clash 模式（rule/global/direct）
+    val sourceIpIsPrivate: Boolean = false,           // 源 IP 是私有地址
+    val ipIsPrivate: Boolean = false,                 // 目标 IP 是私有地址
+    val networkIsExpensive: Boolean = false,          // 计费网络
+    /** 拦截方式（仅 BLOCK）：default=返回拒绝 / drop=直接丢弃 */
+    val rejectMethod: String = "default",
 
     val logic: RuleLogic = RuleLogic.AND,
     val invert: Boolean = false,                      // 逻辑运算 invert
@@ -159,6 +179,18 @@ data class DnsRule(
     val rewriteTtl: Int? = null,
     /** 本条规则级别的 ECS 覆盖 */
     val clientSubnet: String? = null,
+    /** 规则动作（AsteriskBOX 基准）：route=路由到 server / route-options=改写应答 / reject=拒绝 / pre-defined=预定义 */
+    val action: String = "route",
+    /** reject 方式的 rcode（route-options / reject 时用）：success / refused / formerror / notimp / nxdomain */
+    val rcode: String = "",
+    /** route-options：覆盖应答 A 记录（一行一个 IPv4） */
+    val answers: List<String> = emptyList(),
+    /** route-options：覆盖应答 NS 记录 */
+    val ns: List<String> = emptyList(),
+    /** route-options：覆盖应答 EXTRA 记录 */
+    val extra: List<String> = emptyList(),
+    /** 查询超时（sing-box duration，如 "4s"） */
+    val timeout: String = "",
 )
 
 // ---------------------------------------------------------------------------
@@ -337,6 +369,20 @@ data class AppSettings(
     val tunAddress: String = "172.18.0.1/30",
     /** TUN IPv6 地址段（LxBox tun_address6） */
     val tunAddress6: String = "fdfe:dcba:9876::1/126",
+
+    // ---- 订阅身份（LxBox SubscriptionIdentity 基准：UA + HWID + device-meta） ----
+    /** 全局订阅 User-Agent override；空 = 品牌 UA `sb-AI/<ver>` */
+    val subscriptionUserAgent: String = "",
+    /** 是否发送 x-hwid + device-meta 头（Remnawave 设备限制面板用；默认关） */
+    val subscriptionSendHwid: Boolean = false,
+    /** x-hwid（UUIDv4，懒生成，可被用户改写） */
+    val subscriptionHwid: String = "",
+    /** x-device-os override；空 = "android" */
+    val subscriptionDeviceOs: String = "",
+    /** x-ver-os override；空 = Build.VERSION.RELEASE */
+    val subscriptionVerOs: String = "",
+    /** x-device-model override；空 = Build.MODEL */
+    val subscriptionDeviceModel: String = "",
 )
 
 // ---------------------------------------------------------------------------

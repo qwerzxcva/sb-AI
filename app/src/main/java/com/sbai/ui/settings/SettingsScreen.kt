@@ -23,18 +23,22 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.Article
+import androidx.compose.material.icons.filled.Badge
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.EditNote
+import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.Height
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.NetworkCheck
 import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.Preview
 import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Route
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.VpnKey
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -85,6 +89,7 @@ fun SettingsScreen() {
     var showCustomConfigEditor by remember { mutableStateOf(false) }
     var showOverridePreview by remember { mutableStateOf(false) }
     var backupMessage by remember { mutableStateOf<String?>(null) }
+    var editingText by remember { mutableStateOf<Triple<String, String, (String) -> Unit>?>(null) }
 
     val backupJson = Json { prettyPrint = true; encodeDefaults = true; ignoreUnknownKeys = true }
 
@@ -374,6 +379,80 @@ fun SettingsScreen() {
                 SbSpacer()
             }
 
+            // ---- 订阅身份（LxBox SubscriptionIdentity 基准） ----
+            item {
+                SbGroup(title = "订阅身份") {
+                    item {
+                        SbItem(
+                            title = "全局 User-Agent",
+                            subtitle = settings.subscriptionUserAgent.ifBlank { "默认 sb-AI/<版本>" },
+                            icon = Icons.Filled.Badge,
+                            onClick = {
+                                editingText = Triple("全局 User-Agent", settings.subscriptionUserAgent) { v ->
+                                    store.updateSettings(settings.copy(subscriptionUserAgent = v.trim()))
+                                }
+                            },
+                        )
+                    }
+                    item {
+                        SbSwitchItem(
+                            title = "发送 HWID + 设备信息",
+                            subtitle = "x-hwid / x-device-os / x-ver-os / x-device-model（Remnawave 设备限制面板用）",
+                            icon = Icons.Filled.Fingerprint,
+                            checked = settings.subscriptionSendHwid,
+                        ) { enabled ->
+                            // 开启时若 hwid 为空则懒生成 UUIDv4
+                            val hwid = if (enabled && settings.subscriptionHwid.isBlank()) {
+                                java.util.UUID.randomUUID().toString()
+                            } else settings.subscriptionHwid
+                            store.updateSettings(
+                                settings.copy(subscriptionSendHwid = enabled, subscriptionHwid = hwid),
+                            )
+                        }
+                    }
+                    if (settings.subscriptionSendHwid) {
+                        item {
+                            SbItem(
+                                title = "HWID（x-hwid）",
+                                subtitle = settings.subscriptionHwid.ifBlank { "（开启时自动生成）" },
+                                icon = Icons.Filled.VpnKey,
+                                onClick = {
+                                    editingText = Triple("HWID（留空则重新生成）", settings.subscriptionHwid) { v ->
+                                        val newHwid = v.trim().ifBlank { java.util.UUID.randomUUID().toString() }
+                                        store.updateSettings(settings.copy(subscriptionHwid = newHwid))
+                                    }
+                                },
+                            )
+                        }
+                        item {
+                            SbItem(
+                                title = "设备型号（x-device-model）",
+                                subtitle = settings.subscriptionDeviceModel.ifBlank { android.os.Build.MODEL },
+                                icon = Icons.Filled.PhoneAndroid,
+                                onClick = {
+                                    editingText = Triple("x-device-model", settings.subscriptionDeviceModel) { v ->
+                                        store.updateSettings(settings.copy(subscriptionDeviceModel = v.trim()))
+                                    }
+                                },
+                            )
+                        }
+                        item {
+                            SbItem(
+                                title = "系统版本（x-ver-os）",
+                                subtitle = settings.subscriptionVerOs.ifBlank { android.os.Build.VERSION.RELEASE },
+                                icon = Icons.Filled.Badge,
+                                onClick = {
+                                    editingText = Triple("x-ver-os", settings.subscriptionVerOs) { v ->
+                                        store.updateSettings(settings.copy(subscriptionVerOs = v.trim()))
+                                    }
+                                },
+                            )
+                        }
+                    }
+                }
+                SbSpacer()
+            }
+
             // ---- 备份与恢复 ----
             item {
                 SbGroup(title = "备份与恢复") {
@@ -480,6 +559,15 @@ fun SettingsScreen() {
             confirmButton = { TextButton(onClick = { showOverridePreview = false }) { Text("关闭") } },
         )
     }
+
+    editingText?.let { (title, initialValue, onDone) ->
+        SettingsTextEditDialog(
+            title = title,
+            initial = initialValue,
+            onDismiss = { editingText = null },
+            onDone = { onDone(it); editingText = null },
+        )
+    }
 }
 
 /** 覆盖示例：常用「UI 没有生成的补充项」写法 */
@@ -495,6 +583,28 @@ private const val OVERRIDE_SAMPLE = """{
 }"""
 
 private const val MAX_BACKUP_BYTES = 8 * 1024 * 1024
+
+@Composable
+private fun SettingsTextEditDialog(
+    title: String,
+    initial: String,
+    onDismiss: () -> Unit,
+    onDone: (String) -> Unit,
+) {
+    var value by remember { mutableStateOf(initial) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            OutlinedTextField(
+                value = value, onValueChange = { value = it },
+                singleLine = true, modifier = Modifier.fillMaxWidth(),
+            )
+        },
+        confirmButton = { TextButton(onClick = { onDone(value) }) { Text("确定") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
+}
 
 // ---------------------------------------------------------------------------
 // 分应用代理：应用选择器

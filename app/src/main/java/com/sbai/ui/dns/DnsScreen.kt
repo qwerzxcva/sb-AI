@@ -36,6 +36,9 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
@@ -618,6 +621,12 @@ private fun DnsRuleEditorDialog(
     var disableCache by remember { mutableStateOf(initial.disableCache) }
     var rewriteTtl by remember { mutableStateOf(initial.rewriteTtl?.toString() ?: "") }
     var clientSubnet by remember { mutableStateOf(initial.clientSubnet ?: "") }
+    var ruleAction by remember { mutableStateOf(initial.action.ifBlank { "route" }) }
+    var rcode by remember { mutableStateOf(initial.rcode) }
+    var answers by remember { mutableStateOf(initial.answers.joinToString("\n")) }
+    var ns by remember { mutableStateOf(initial.ns.joinToString("\n")) }
+    var extra by remember { mutableStateOf(initial.extra.joinToString("\n")) }
+    var timeout by remember { mutableStateOf(initial.timeout) }
     var serverExpanded by remember { mutableStateOf(false) }
     var strategyExpanded by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -663,33 +672,69 @@ private fun DnsRuleEditorDialog(
                     }
                 }
 
-                ExposedDropdownMenuBox(expanded = serverExpanded, onExpandedChange = { serverExpanded = it }) {
-                    OutlinedTextField(
-                        value = server.ifBlank { "（必选）" }, onValueChange = {}, readOnly = true,
-                        label = { Text("目标 DNS / group") },
-                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(serverExpanded) },
-                        modifier = Modifier.menuAnchor().fillMaxWidth(),
-                    )
-                    ExposedDropdownMenu(expanded = serverExpanded, onDismissRequest = { serverExpanded = false }) {
-                        serverOptions.forEach { opt ->
-                            DropdownMenuItem(text = { Text(opt) }, onClick = { server = opt; serverExpanded = false })
+                // 动作（AsteriskBOX 基准）
+                Text("动作", style = MaterialTheme.typography.labelLarge)
+                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                    listOf("route" to "路由", "route-options" to "改写应答", "reject" to "拒绝", "pre-defined" to "预定义")
+                        .forEachIndexed { i, (v, label) ->
+                            SegmentedButton(
+                                selected = ruleAction == v,
+                                onClick = { ruleAction = v },
+                                shape = SegmentedButtonDefaults.itemShape(index = i, count = 4),
+                            ) { Text(label) }
+                        }
+                }
+
+                if (ruleAction == "route") {
+                    ExposedDropdownMenuBox(expanded = serverExpanded, onExpandedChange = { serverExpanded = it }) {
+                        OutlinedTextField(
+                            value = server.ifBlank { "（必选）" }, onValueChange = {}, readOnly = true,
+                            label = { Text("目标 DNS / group") },
+                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(serverExpanded) },
+                            modifier = Modifier.menuAnchor().fillMaxWidth(),
+                        )
+                        ExposedDropdownMenu(expanded = serverExpanded, onDismissRequest = { serverExpanded = false }) {
+                            serverOptions.forEach { opt ->
+                                DropdownMenuItem(text = { Text(opt) }, onClick = { server = opt; serverExpanded = false })
+                            }
                         }
                     }
                 }
 
-                ExposedDropdownMenuBox(expanded = strategyExpanded, onExpandedChange = { strategyExpanded = it }) {
-                    OutlinedTextField(
-                        value = ipStrategy.ifBlank { "（不设置）" }, onValueChange = {}, readOnly = true,
-                        label = { Text("IP 解析策略（可选）") },
-                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(strategyExpanded) },
-                        modifier = Modifier.menuAnchor().fillMaxWidth(),
-                    )
-                    ExposedDropdownMenu(expanded = strategyExpanded, onDismissRequest = { strategyExpanded = false }) {
-                        IP_STRATEGIES.forEach { s ->
-                            DropdownMenuItem(
-                                text = { Text(if (s.isBlank()) "（不设置）" else s) },
-                                onClick = { ipStrategy = s; strategyExpanded = false },
+                if (ruleAction == "reject" || ruleAction == "route-options") {
+                    Text("rcode", style = MaterialTheme.typography.labelLarge)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf("success", "refused", "formerror", "notimp", "nxdomain").forEach { rc ->
+                            FilterChip(
+                                selected = rcode == rc,
+                                onClick = { rcode = if (rcode == rc) "" else rc },
+                                label = { Text(rc) },
                             )
+                        }
+                    }
+                }
+
+                if (ruleAction == "route-options") {
+                    MultiLine("覆盖应答 A 记录（一行一个 IPv4）", answers) { answers = it }
+                    MultiLine("覆盖应答 NS 记录（一行一条）", ns) { ns = it }
+                    MultiLine("覆盖应答 EXTRA 记录（一行一条）", extra) { extra = it }
+                }
+
+                if (ruleAction == "route" || ruleAction == "route-options") {
+                    ExposedDropdownMenuBox(expanded = strategyExpanded, onExpandedChange = { strategyExpanded = it }) {
+                        OutlinedTextField(
+                            value = ipStrategy.ifBlank { "（不设置）" }, onValueChange = {}, readOnly = true,
+                            label = { Text("IP 解析策略（可选）") },
+                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(strategyExpanded) },
+                            modifier = Modifier.menuAnchor().fillMaxWidth(),
+                        )
+                        ExposedDropdownMenu(expanded = strategyExpanded, onDismissRequest = { strategyExpanded = false }) {
+                            IP_STRATEGIES.forEach { s ->
+                                DropdownMenuItem(
+                                    text = { Text(if (s.isBlank()) "（不设置）" else s) },
+                                    onClick = { ipStrategy = s; strategyExpanded = false },
+                                )
+                            }
                         }
                     }
                 }
@@ -707,12 +752,16 @@ private fun DnsRuleEditorDialog(
                     value = clientSubnet, onValueChange = { clientSubnet = it },
                     label = { Text("本条规则 ECS client_subnet（可选）") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
                 )
+                OutlinedTextField(
+                    value = timeout, onValueChange = { timeout = it },
+                    label = { Text("查询超时（如 4s，可选）") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+                )
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             }
         },
         confirmButton = {
             TextButton(onClick = {
-                if (server.isBlank()) { error = "请选择目标 DNS / group"; return@TextButton }
+                if (ruleAction == "route" && server.isBlank()) { error = "route 动作必须选择目标 DNS / group"; return@TextButton }
                 onSave(
                     initial.copy(
                         name = name.trim(),
@@ -727,6 +776,12 @@ private fun DnsRuleEditorDialog(
                         disableCache = disableCache,
                         rewriteTtl = rewriteTtl.toIntOrNull(),
                         clientSubnet = clientSubnet.ifBlank { null },
+                        action = ruleAction,
+                        rcode = rcode,
+                        answers = answers.toLines(),
+                        ns = ns.toLines(),
+                        extra = extra.toLines(),
+                        timeout = timeout.trim(),
                     ),
                 )
             }) { Text("保存") }

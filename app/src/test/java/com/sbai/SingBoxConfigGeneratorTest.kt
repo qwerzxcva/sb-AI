@@ -150,7 +150,8 @@ class SingBoxConfigGeneratorTest {
         val cfg = parse(state)
         assertEquals(0, dnsRules(cfg).size)
         val rr = routeRules(cfg).last().jsonObject
-        assertEquals("block", rr["outbound"]!!.jsonPrimitive.content)
+        // BLOCK 现在用 action=reject（sing-box-lx fork 语义），不再用 outbound=block
+        assertEquals("reject", rr["action"]!!.jsonPrimitive.content)
     }
 
     @Test
@@ -601,5 +602,126 @@ class SingBoxConfigGeneratorTest {
         val addrs = tun["address"]!!.jsonArray.map { it.jsonPrimitive.content }
         assertEquals("172.18.0.1/30", addrs[0])
         assertEquals("fdfe:dcba:9876::1/126", addrs[1])
+    }
+
+    @Test
+    fun `block action emits reject with method not outbound`() {
+        val rule = RouteRule(action = RuleAction.BLOCK, domains = listOf("ad.com"), rejectMethod = "drop")
+        val cfg = parse(AppState(routeRules = listOf(rule)))
+        val rr = routeRules(cfg).last().jsonObject
+        assertEquals("reject", rr["action"]!!.jsonPrimitive.content)
+        assertEquals("drop", rr["reject_method"]!!.jsonPrimitive.content)
+        assertNull(rr["outbound"])
+    }
+
+    @Test
+    fun `block default method emits reject without method`() {
+        val rule = RouteRule(action = RuleAction.BLOCK, domains = listOf("ad.com"))
+        val cfg = parse(AppState(routeRules = listOf(rule)))
+        val rr = routeRules(cfg).last().jsonObject
+        assertEquals("reject", rr["action"]!!.jsonPrimitive.content)
+        assertNull(rr["reject_method"])
+    }
+
+    @Test
+    fun `source and app and network-env fields emitted in AND mode`() {
+        val rule = RouteRule(
+            action = RuleAction.DIRECT,
+            sourceIpCidrs = listOf("192.168.0.0/16"),
+            sourcePorts = listOf(8080),
+            packageNames = listOf("com.example.app"),
+            processNames = listOf("chrome"),
+            users = listOf("root"),
+            networkTypes = listOf("wifi"),
+            wifiSsids = listOf("HomeWiFi"),
+            clashMode = "rule",
+            sourceIpIsPrivate = true,
+            ipIsPrivate = true,
+            networkIsExpensive = true,
+        )
+        val cfg = parse(AppState(routeRules = listOf(rule)))
+        val rr = routeRules(cfg).last().jsonObject
+        assertEquals("192.168.0.0/16", rr["source_ip_cidr"]!!.jsonArray[0].jsonPrimitive.content)
+        assertEquals("8080", rr["source_port"]!!.jsonArray[0].jsonPrimitive.content)
+        assertEquals("com.example.app", rr["package_name"]!!.jsonArray[0].jsonPrimitive.content)
+        assertEquals("chrome", rr["process_name"]!!.jsonArray[0].jsonPrimitive.content)
+        assertEquals("root", rr["user"]!!.jsonArray[0].jsonPrimitive.content)
+        assertEquals("wifi", rr["network_type"]!!.jsonArray[0].jsonPrimitive.content)
+        assertEquals("HomeWiFi", rr["wifi_ssid"]!!.jsonArray[0].jsonPrimitive.content)
+        assertEquals("rule", rr["clash_mode"]!!.jsonPrimitive.content)
+        assertEquals("true", rr["source_ip_is_private"]!!.jsonPrimitive.content)
+        assertEquals("true", rr["ip_is_private"]!!.jsonPrimitive.content)
+        assertEquals("true", rr["network_is_expensive"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `or logic splits into six categories`() {
+        val rule = RouteRule(
+            action = RuleAction.DIRECT,
+            domains = listOf("a.com"),
+            sourceIpCidrs = listOf("10.0.0.0/8"),
+            packageNames = listOf("com.x"),
+            logic = RuleLogic.OR,
+        )
+        val cfg = parse(AppState(routeRules = listOf(rule)))
+        val rr = routeRules(cfg).last().jsonObject
+        assertEquals("logical", rr["type"]!!.jsonPrimitive.content)
+        assertEquals("or", rr["mode"]!!.jsonPrimitive.content)
+        // domain + source + app = 3 个非空类别
+        assertEquals(3, rr["rules"]!!.jsonArray.size)
+    }
+
+    @Test
+    fun `manual dns rule route-options emits override answers`() {
+        val rule = DnsRule(
+            name = "rewrite",
+            domains = listOf("example.com"),
+            server = "d1",
+            action = "route-options",
+            answers = listOf("1.2.3.4"),
+            ns = listOf("ns1.example.com"),
+            timeout = "4s",
+        )
+        val state = AppState(
+            dnsRules = listOf(rule),
+            dnsServers = listOf(DnsServer(tag = "d1", type = DnsServerType.UDP, address = "223.5.5.5")),
+        )
+        val dr = parse(state)["dns"]!!.jsonObject["rules"]!!.jsonArray.first().jsonObject
+        assertEquals("route-options", dr["action"]!!.jsonPrimitive.content)
+        assertEquals("1.2.3.4", dr["answer"]!!.jsonArray[0].jsonPrimitive.content)
+        assertEquals("ns1.example.com", dr["ns"]!!.jsonArray[0].jsonPrimitive.content)
+        assertEquals("4s", dr["timeout"]!!.jsonPrimitive.content)
+        // route-options 不写 server
+        assertNull(dr["server"])
+    }
+
+    @Test
+    fun `manual dns rule reject emits action and rcode without server`() {
+        val rule = DnsRule(
+            name = "block-ads",
+            domainSuffixes = listOf("ads.com"),
+            server = "",
+            action = "reject",
+            rcode = "nxdomain",
+        )
+        val state = AppState(
+            dnsRules = listOf(rule),
+            dnsServers = listOf(DnsServer(tag = "d1", type = DnsServerType.UDP, address = "223.5.5.5")),
+        )
+        val dr = parse(state)["dns"]!!.jsonObject["rules"]!!.jsonArray.first().jsonObject
+        assertEquals("reject", dr["action"]!!.jsonPrimitive.content)
+        assertEquals("nxdomain", dr["rcode"]!!.jsonPrimitive.content)
+        assertNull(dr["server"])
+    }
+
+    @Test
+    fun `manual dns route rule with empty server is skipped`() {
+        val rule = DnsRule(name = "bad", domains = listOf("a.com"), server = "", action = "route")
+        val state = AppState(
+            dnsRules = listOf(rule),
+            dnsServers = listOf(DnsServer(tag = "d1", type = DnsServerType.UDP, address = "223.5.5.5")),
+        )
+        val rules = parse(state)["dns"]!!.jsonObject["rules"]!!.jsonArray
+        assertEquals(0, rules.size)   // route 无有效 server → 整条跳过
     }
 }

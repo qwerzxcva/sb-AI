@@ -50,8 +50,9 @@ android {
             signingConfig = signingConfigs.getByName("release")
         }
         release {
-            isMinifyEnabled = false
-            isShrinkResources = false
+            // R8 压缩 + 资源裁剪：移除未用代码与 material-icons-extended 未用图标
+            isMinifyEnabled = true
+            isShrinkResources = true
             signingConfig = signingConfigs.getByName("release")
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
@@ -92,7 +93,9 @@ android {
             )
         }
         jniLibs {
-            useLegacyPackaging = false
+            // 与 LxBox 一致：.so 用 DEFLATE 压缩存储（APK 体积 89MB → ~40MB）。
+            // 代价：安装后 .so 解压到磁盘（设备存储占用略增），但下载体积小。
+            useLegacyPackaging = true
         }
     }
 }

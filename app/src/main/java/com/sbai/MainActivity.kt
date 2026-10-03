@@ -141,25 +141,22 @@ private fun GlassBottomBar(
             .fillMaxWidth()
             .clip(CircleShape)
             .hazeChild(hazeState) {
-                // 玻璃磨砂通透质感：足够模糊 + 低不透明度背景/色调 + 微噪点
-                blurRadius = 28.dp
-                noiseFactor = 0.08f
-                backgroundColor = colors.surface.copy(alpha = 0.55f)
-                tints = listOf(
-                    HazeTint(colors.surfaceContainer.copy(alpha = 0.22f)),
-                    HazeTint(colors.primary.copy(alpha = 0.04f)),
-                )
+                // Kototoro 玻璃参数基准：适中模糊 + 半透 surface + 微噪点
+                blurRadius = 16.dp
+                noiseFactor = 0.05f
+                backgroundColor = colors.surface.copy(alpha = 0.50f)
+                tints = listOf(HazeTint(colors.surfaceContainer.copy(alpha = 0.18f)))
             }
             .border(
-                width = 0.8.dp,
-                color = colors.outlineVariant.copy(alpha = 0.45f),
+                width = 0.5.dp,
+                color = colors.outlineVariant.copy(alpha = 0.24f),
                 shape = CircleShape,
             ),
         shape = CircleShape,
         color = Color.Transparent,
         contentColor = colors.onSurface,
         tonalElevation = 0.dp,
-        shadowElevation = 10.dp,
+        shadowElevation = 4.dp,
     ) {
         NavigationBar(
             containerColor = Color.Transparent,
