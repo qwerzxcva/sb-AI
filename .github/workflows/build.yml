@@ -9,6 +9,9 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      # ubuntu-latest 镜像预装 Android SDK
+      ANDROID_HOME: /usr/local/lib/android/sdk
     steps:
       - uses: actions/checkout@v4
 
@@ -18,17 +21,25 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
       - name: Fetch libbox core (arm64-v8a)
         run: bash scripts/fetch-libbox.sh
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      - name: Unit tests (config generator)
+        run: ./gradlew :app:testDebugUnitTest -Pandroid.builder.sdkDownload=true --stacktrace
+
       - name: Build release APK (arm64-v8a)
-        run: ./gradlew :app:assembleRelease --stacktrace
+        run: ./gradlew :app:assembleRelease -Pandroid.builder.sdkDownload=true --stacktrace
+
+      - name: Verify ABI (arm64-v8a only)
+        run: |
+          APK=$(ls app/build/outputs/apk/release/*.apk | head -1)
+          echo "APK: $APK"
+          unzip -l "$APK" | grep -E '^\s+[0-9]+.*lib/' | awk '{print $4}' | cut -d/ -f2 | sort -u > /tmp/abis.txt
+          cat /tmp/abis.txt
+          test "$(cat /tmp/abis.txt)" = "arm64-v8a"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
