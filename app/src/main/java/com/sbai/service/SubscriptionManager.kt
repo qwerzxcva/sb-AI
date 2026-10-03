@@ -6,6 +6,8 @@ import com.sbai.data.RuleStore
 import com.sbai.data.Subscription
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import java.net.HttpURLConnection
 import java.net.URL
 
@@ -51,11 +53,19 @@ class SubscriptionManager(private val store: RuleStore) {
                 }
             }
 
-            if (parsed.isEmpty()) {
-                return@withContext fail(subscription, "关键字过滤后无剩余节点")
+            // Throne SubscriptionOptions 基准：后处理
+            if (subscription.removeInsecure) {
+                parsed = parsed.filter { !isInsecureNode(it.outboundJson) }
             }
-
-            val nodes = parsed.map { p ->
+            if (parsed.isEmpty()) {
+                return@withContext fail(subscription, "过滤后无剩余节点")
+            }
+            val nodes = (if (subscription.removeDuplicates) {
+                // 去重：同名节点保留第一个
+                parsed.distinctBy { it.name }
+            } else {
+                parsed
+            }).map { p ->
                 ProxyNode(
                     name = p.name,
                     outboundJson = p.outboundJson,
@@ -86,6 +96,18 @@ class SubscriptionManager(private val store: RuleStore) {
         store.upsertSubscription(subscription.copy(lastError = message))
         return Result.Failure(message)
     }
+
+    /** 判定不安全节点：无加密手段的明文代理（ss 无密码 / trojan 无 tls / http 明文） */
+    private fun isInsecureNode(outboundJson: String): Boolean = runCatching {
+        val obj = kotlinx.serialization.json.Json.parseToJsonElement(outboundJson)
+            .jsonObject
+        when (obj["type"]?.jsonPrimitive?.content) {
+            "trojan" -> obj["tls"]?.jsonObject?.get("enabled")?.jsonPrimitive?.content != "true"
+            "shadowsocks" -> obj["password"]?.jsonPrimitive?.content.isNullOrBlank()
+            "http" -> true   // 明文 http 代理视为不安全
+            else -> false
+        }
+    }.getOrDefault(false)
 
     private data class TrafficInfo(
         val upload: Long = 0, val download: Long = 0,

@@ -58,6 +58,7 @@ import com.sbai.data.RuleLogic
 import com.sbai.data.RuleSetType
 import com.sbai.data.RuleStore
 import com.sbai.service.RouteRuleJsonCodec
+import com.sbai.ui.components.AppPickerDialog
 import com.sbai.ui.components.BottomBarClearance
 import com.sbai.ui.components.DragDropLazyColumn
 import com.sbai.ui.components.FabBottomBarClearance
@@ -345,6 +346,7 @@ private fun RouteRuleEditorDialog(
     var dnsTag by remember { mutableStateOf(initial.dnsTag ?: "") }
     var showJsonPaste by remember { mutableStateOf(false) }
     var jsonError by remember { mutableStateOf<String?>(null) }
+    var showAppPicker by remember { mutableStateOf(false) }
 
     val isBlock = action == RuleAction.BLOCK
     val hasDomains = listOf(domains, suffixes, keywords, regexes).any { it.isNotBlank() }
@@ -474,7 +476,28 @@ private fun RouteRuleEditorDialog(
                 }
 
                 EditorSection("应用 / 进程") {
-                    MultiLineField("应用包名（一行一条）", packageNames) { packageNames = it }
+                    // 应用包名：改为选择器（不再手动复制粘贴包名）
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                "应用包名（${packageNames.toLines().size}）",
+                                style = MaterialTheme.typography.labelLarge,
+                            )
+                            if (packageNames.isNotBlank()) {
+                                Text(
+                                    packageNames.toLines().take(3).joinToString(", ") +
+                                        if (packageNames.toLines().size > 3) " …" else "",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 2,
+                                )
+                            }
+                        }
+                        Button(onClick = { showAppPicker = true }) { Text("选择应用") }
+                    }
                     MultiLineField("进程名（一行一条）", processNames) { processNames = it }
                     MultiLineField("进程路径（一行一条）", processPaths) { processPaths = it }
                     MultiLineField("用户名（一行一条）", users) { users = it }
@@ -619,6 +642,18 @@ private fun RouteRuleEditorDialog(
             error = jsonError,
         )
     }
+
+    if (showAppPicker) {
+        AppPickerDialog(
+            title = "选择应用",
+            selected = packageNames.toLines().toSet(),
+            onDismiss = { showAppPicker = false },
+            onSave = { pkgs ->
+                packageNames = pkgs.joinToString("\n")
+                showAppPicker = false
+            },
+        )
+    }
 }
 
 /** 编辑器内的可折叠分类区块 */
@@ -661,10 +696,14 @@ private fun JsonPasteDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("粘贴规则 JSON 片段") },
+        // 用更大的面板，粘贴区更高、等宽字体，便于查看与编辑
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 4.dp),
         text = {
             Column {
                 Text(
-                    "只需 route.rules 里的单个规则对象，例如：\n" +
+                    "只需 route.rules 里的单个规则对象（或含 rules 的数组），例如：\n" +
                         "{\"domain_suffix\":[\"example.com\"],\"network\":[\"tcp\"],\"outbound\":\"proxy\"}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -675,8 +714,11 @@ private fun JsonPasteDialog(
                     onValueChange = { text = it },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(220.dp),
-                    textStyle = MaterialTheme.typography.bodySmall,
+                        .height(420.dp),
+                    textStyle = MaterialTheme.typography.bodySmall.copy(
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                    ),
+                    maxLines = Int.MAX_VALUE,
                 )
                 error?.let {
                     Spacer(Modifier.height(6.dp))

@@ -51,7 +51,7 @@ import com.sbai.ui.components.SbGroup
 import com.sbai.ui.components.SbItem
 import com.sbai.ui.theme.LocalSbStyleTokens
 
-/** 监控页：内核状态 / 实时日志（libbox CommandClient 通道） */
+/** 监控页：内核状态 / 实时日志 / 连接（libbox CommandClient 通道） */
 @Composable
 fun MonitorScreen() {
     val context = LocalContext.current
@@ -64,17 +64,41 @@ fun MonitorScreen() {
     val connected by SbCommandClient.connectedToService.collectAsState()
     var query by remember { mutableStateOf("") }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(horizontal = tokens.screenHorizontalPadding),
-    ) {
-        Spacer(Modifier.height(16.dp))
-        TabRow(selectedTabIndex = tab) {
-            Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("状态") })
-            Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("连接（${connections.size}）") })
-            Tab(selected = tab == 2, onClick = { tab = 2 }, text = { Text("日志（${logs.size}）") })
-        }
+    Box(modifier = Modifier.fillMaxSize()) {
+        // 背景渐变，避免一片死黑
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(260.dp)
+                .background(
+                    androidx.compose.ui.graphics.Brush.verticalGradient(
+                        listOf(
+                            MaterialTheme.colorScheme.surfaceContainerHigh,
+                            MaterialTheme.colorScheme.surface.copy(alpha = 0f),
+                        ),
+                    ),
+                ),
+        )
+
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = tokens.screenHorizontalPadding),
+        ) {
+            Spacer(Modifier.height(16.dp))
+            Text("监控", style = MaterialTheme.typography.headlineLarge)
+            Text(
+                if (connected) "sing-box 内核实时状态" else "启动 VPN 后显示内核数据",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(12.dp))
+
+            TabRow(selectedTabIndex = tab) {
+                Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("状态") })
+                Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("连接（${connections.size}）") })
+                Tab(selected = tab == 2, onClick = { tab = 2 }, text = { Text("日志（${logs.size}）") })
+            }
 
         if (tab == 0) {
             LazyColumn {
@@ -211,6 +235,7 @@ fun MonitorScreen() {
                                 line.text.startsWith("[0]") || line.text.startsWith("[1]") || line.text.startsWith("[2]") ->
                                     MaterialTheme.colorScheme.error
                                 line.text.startsWith("[3]") -> MaterialTheme.colorScheme.tertiary
+                                line.text.startsWith("[4]") -> MaterialTheme.colorScheme.onSurface
                                 else -> MaterialTheme.colorScheme.onSurfaceVariant
                             },
                         )
@@ -219,6 +244,7 @@ fun MonitorScreen() {
                 }
             }
         }
+    }
     }
 }
 

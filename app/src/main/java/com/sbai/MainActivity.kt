@@ -141,22 +141,30 @@ private fun GlassBottomBar(
             .fillMaxWidth()
             .clip(CircleShape)
             .hazeChild(hazeState) {
-                // Kototoro 玻璃参数基准：适中模糊 + 半透 surface + 微噪点
-                blurRadius = 16.dp
-                noiseFactor = 0.05f
-                backgroundColor = colors.surface.copy(alpha = 0.50f)
-                tints = listOf(HazeTint(colors.surfaceContainer.copy(alpha = 0.18f)))
+                // 磨砂玻璃：用更亮的 surfaceContainer 层（深色模式下不发黑）+ 强调色 tint
+                blurRadius = 18.dp
+                noiseFactor = 0.04f
+                backgroundColor = colors.surfaceContainerHigh.copy(alpha = 0.62f)
+                tints = listOf(
+                    HazeTint(colors.surfaceContainerHighest.copy(alpha = 0.30f)),
+                    HazeTint(colors.primary.copy(alpha = 0.10f)),
+                )
             }
             .border(
-                width = 0.5.dp,
-                color = colors.outlineVariant.copy(alpha = 0.24f),
+                width = 1.dp,
+                brush = androidx.compose.ui.graphics.Brush.linearGradient(
+                    listOf(
+                        colors.surfaceContainerHighest.copy(alpha = 0.55f),
+                        colors.outlineVariant.copy(alpha = 0.35f),
+                    ),
+                ),
                 shape = CircleShape,
             ),
         shape = CircleShape,
         color = Color.Transparent,
         contentColor = colors.onSurface,
         tonalElevation = 0.dp,
-        shadowElevation = 4.dp,
+        shadowElevation = 6.dp,
     ) {
         NavigationBar(
             containerColor = Color.Transparent,
@@ -172,6 +180,7 @@ private fun GlassBottomBar(
                     label = { Text(screen.title, maxLines = 1) },
                     alwaysShowLabel = true,
                     colors = NavigationBarItemDefaults.colors(
+                        // Kototoro：无 indicator 背景，选中仅换强调色
                         indicatorColor = Color.Transparent,
                         selectedIconColor = colors.primary,
                         selectedTextColor = colors.onSurface,

@@ -18,12 +18,14 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.DragIndicator
 import androidx.compose.material.icons.filled.GroupWork
 import androidx.compose.material.icons.filled.Rule
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -60,6 +62,7 @@ import com.sbai.data.DnsRule
 import com.sbai.data.DnsServer
 import com.sbai.data.DnsServerType
 import com.sbai.data.RuleStore
+import com.sbai.service.DnsRuleJsonCodec
 import com.sbai.service.SingBoxConfigGenerator
 import com.sbai.ui.components.BottomBarClearance
 import com.sbai.ui.components.DragDropLazyColumn
@@ -630,6 +633,23 @@ private fun DnsRuleEditorDialog(
     var serverExpanded by remember { mutableStateOf(false) }
     var strategyExpanded by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    var showJsonPaste by remember { mutableStateOf(false) }
+    var jsonError by remember { mutableStateOf<String?>(null) }
+
+    fun applyAll(r: DnsRule) {
+        name = r.name
+        domains = r.domains.joinToString("\n"); suffixes = r.domainSuffixes.joinToString("\n")
+        keywords = r.domainKeywords.joinToString("\n"); regexes = r.domainRegexes.joinToString("\n")
+        ipCidrs = r.ipCidrs.joinToString("\n"); sets = r.ruleSetTags.joinToString("\n")
+        networks = r.networks.joinToString("\n"); portsText = r.ports.joinToString("\n")
+        queryTypes = r.queryTypes.toSet(); server = r.server
+        ipStrategy = r.ipStrategy; disableCache = r.disableCache
+        rewriteTtl = r.rewriteTtl?.toString() ?: ""
+        clientSubnet = r.clientSubnet ?: ""
+        ruleAction = r.action.ifBlank { "route" }; rcode = r.rcode
+        answers = r.answers.joinToString("\n"); ns = r.ns.joinToString("\n")
+        extra = r.extra.joinToString("\n"); timeout = r.timeout
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -648,7 +668,18 @@ private fun DnsRuleEditorDialog(
                         color = MaterialTheme.colorScheme.tertiary,
                     )
                 }
-                OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("规则名称") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(
+                        value = name, onValueChange = { name = it },
+                        label = { Text("规则名称") }, singleLine = true,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Spacer(Modifier.size(8.dp))
+                    Button(onClick = { showJsonPaste = true }) {
+                        Icon(Icons.Filled.ContentPaste, contentDescription = null)
+                        Text("粘贴 JSON")
+                    }
+                }
                 MultiLine("域名（一行一条）", domains) { domains = it }
                 MultiLine("域名后缀（一行一条）", suffixes) { suffixes = it }
                 MultiLine("域名关键词（一行一条）", keywords) { keywords = it }
@@ -794,6 +825,68 @@ private fun DnsRuleEditorDialog(
                 TextButton(onClick = onDismiss) { Text("取消") }
             }
         },
+    )
+
+    if (showJsonPaste) {
+        DnsJsonPasteDialog(
+            onDismiss = { showJsonPaste = false },
+            onApply = { text ->
+                when (val r = DnsRuleJsonCodec.fromJson(text)) {
+                    is DnsRuleJsonCodec.ParseResult.Success -> {
+                        applyAll(r.rule.copy(id = initial.id, autoFromRouteRuleId = initial.autoFromRouteRuleId))
+                        jsonError = null
+                        showJsonPaste = false
+                    }
+                    is DnsRuleJsonCodec.ParseResult.Failure -> jsonError = r.message
+                }
+            },
+            error = jsonError,
+        )
+    }
+}
+
+/** 粘贴 sing-box dns rule JSON 片段 */
+@Composable
+private fun DnsJsonPasteDialog(
+    onDismiss: () -> Unit,
+    onApply: (String) -> Unit,
+    error: String?,
+) {
+    var text by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("粘贴 DNS 规则 JSON 片段") },
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 4.dp),
+        text = {
+            Column {
+                Text(
+                    "只需 dns.rules 里的单个规则对象，例如：\n" +
+                        "{\"domain_suffix\":[\"example.com\"],\"server\":\"dns-remote\"}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(420.dp),
+                    textStyle = MaterialTheme.typography.bodySmall.copy(
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                    ),
+                    maxLines = Int.MAX_VALUE,
+                )
+                error?.let {
+                    Spacer(Modifier.height(6.dp))
+                    Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = { onApply(text) }) { Text("解析并回填") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
     )
 }
 

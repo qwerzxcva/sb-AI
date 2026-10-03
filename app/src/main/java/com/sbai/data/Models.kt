@@ -297,6 +297,19 @@ data class Subscription(
     val trafficDownload: Long = 0L,
     val trafficTotal: Long = 0L,
     val trafficExpire: Long = 0L,
+    // ---- Throne SubscriptionOptions 基准：节点后处理 ----
+    /** 去重（按节点名/tag） */
+    val removeDuplicates: Boolean = true,
+    /** 去除不安全节点（如无加密的 ss / 无 tls 的 trojan） */
+    val removeInsecure: Boolean = false,
+    /** 保留不可达分组（urlTest 后仍有可用节点才移除） */
+    val keepWorking: Boolean = false,
+    /** 更新后自动测速（需内核运行；测速后可移除不可用节点/按延迟排序） */
+    val urlTestAfterUpdate: Boolean = false,
+    /** 移除不可用节点（仅 urlTestAfterUpdate 开启时生效） */
+    val removeUnavailable: Boolean = false,
+    /** 按延迟排序（仅 urlTestAfterUpdate 开启时生效） */
+    val sortByLatency: Boolean = false,
 )
 
 // ---------------------------------------------------------------------------

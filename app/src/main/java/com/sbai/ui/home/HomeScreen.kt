@@ -656,6 +656,19 @@ private fun formatTime(epoch: Long): String =
     if (epoch <= 0) "未更新"
     else SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()).format(Date(epoch))
 
+/** 订阅选项开关行 */
+@Composable
+private fun SubOptionSwitch(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Switch(checked = checked, onCheckedChange = onChange)
+        Spacer(Modifier.size(8.dp))
+        Text(label, style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
 // ---------------------------------------------------------------------------
 // ClashFest 风格首页卡片
 // ---------------------------------------------------------------------------
@@ -833,6 +846,11 @@ private fun SubscriptionEditorDialog(
     var userAgent by remember { mutableStateOf(initial.userAgent ?: "") }
     var includeKw by remember { mutableStateOf(initial.includeKeyword) }
     var excludeKw by remember { mutableStateOf(initial.excludeKeyword) }
+    var removeDuplicates by remember { mutableStateOf(initial.removeDuplicates) }
+    var removeInsecure by remember { mutableStateOf(initial.removeInsecure) }
+    var urlTestAfterUpdate by remember { mutableStateOf(initial.urlTestAfterUpdate) }
+    var removeUnavailable by remember { mutableStateOf(initial.removeUnavailable) }
+    var sortByLatency by remember { mutableStateOf(initial.sortByLatency) }
     var error by remember { mutableStateOf<String?>(null) }
 
     AlertDialog(
@@ -872,6 +890,19 @@ private fun SubscriptionEditorDialog(
                     label = { Text("排除关键字（空格分隔，可选）") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
                 )
 
+                // ---- 节点后处理（Throne SubscriptionOptions 基准） ----
+                Text("节点后处理", style = MaterialTheme.typography.labelLarge)
+                SubOptionSwitch("去重（同名节点保留第一个）", removeDuplicates) { removeDuplicates = it }
+                SubOptionSwitch("去除不安全节点（明文/无加密）", removeInsecure) { removeInsecure = it }
+                SubOptionSwitch("更新后自动测速（urltest）", urlTestAfterUpdate) {
+                    urlTestAfterUpdate = it
+                    if (!it) { removeUnavailable = false; sortByLatency = false }
+                }
+                if (urlTestAfterUpdate) {
+                    SubOptionSwitch("移除不可用节点", removeUnavailable) { removeUnavailable = it }
+                    SubOptionSwitch("按延迟排序", sortByLatency) { sortByLatency = it }
+                }
+
                 // 流量信息展示（来自 subscription-userinfo 头）
                 if (initial.trafficTotal > 0) {
                     val used = initial.trafficUpload + initial.trafficDownload
@@ -901,6 +932,11 @@ private fun SubscriptionEditorDialog(
                         userAgent = userAgent.ifBlank { null },
                         includeKeyword = includeKw.trim(),
                         excludeKeyword = excludeKw.trim(),
+                        removeDuplicates = removeDuplicates,
+                        removeInsecure = removeInsecure,
+                        urlTestAfterUpdate = urlTestAfterUpdate,
+                        removeUnavailable = removeUnavailable && urlTestAfterUpdate,
+                        sortByLatency = sortByLatency && urlTestAfterUpdate,
                     ),
                 )
             }) { Text("保存") }

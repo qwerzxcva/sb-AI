@@ -69,6 +69,7 @@ import com.sbai.data.PerAppProxyMode
 import com.sbai.data.RuleStore
 import com.sbai.service.SingBoxConfigGenerator
 import com.sbai.data.ThemeMode
+import com.sbai.ui.components.AppPickerDialog
 import com.sbai.ui.components.SbGroup
 import com.sbai.ui.components.SbItem
 import com.sbai.ui.components.SbSpacer
@@ -518,7 +519,8 @@ fun SettingsScreen() {
     }
 
     if (showAppPicker) {
-        PerAppPickerDialog(
+        AppPickerDialog(
+            title = "选择应用",
             selected = settings.perAppProxy.packages.toSet(),
             onDismiss = { showAppPicker = false },
             onSave = { pkgs ->
@@ -610,77 +612,8 @@ private fun SettingsTextEditDialog(
 // 分应用代理：应用选择器
 // ---------------------------------------------------------------------------
 
-private data class AppInfo(val packageName: String, val label: String)
-
-@Composable
-private fun PerAppPickerDialog(
-    selected: Set<String>,
-    onDismiss: () -> Unit,
-    onSave: (Set<String>) -> Unit,
-) {
-    val context = LocalContext.current
-    var query by remember { mutableStateOf("") }
-    var current by remember { mutableStateOf(selected) }
-
-    val apps = remember {
-        val pm = context.packageManager
-        pm.getInstalledApplications(0)
-            .filter { it.flags and ApplicationInfo.FLAG_SYSTEM == 0 || it.packageName == context.packageName }
-            .map { AppInfo(it.packageName, it.loadLabel(pm).toString()) }
-            .sortedBy { it.label.lowercase() }
-    }
-    val filtered = remember(query, apps) {
-        if (query.isBlank()) apps else apps.filter {
-            it.label.contains(query, true) || it.packageName.contains(query, true)
-        }
-    }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("选择应用（${current.size}）") },
-        text = {
-            Column {
-                OutlinedTextField(
-                    value = query,
-                    onValueChange = { query = it },
-                    label = { Text("搜索应用") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Spacer(Modifier.height(8.dp))
-                LazyColumn(
-                    modifier = Modifier.heightIn(max = 420.dp),
-                    verticalArrangement = Arrangement.spacedBy(2.dp),
-                ) {
-                    items(filtered, key = { it.packageName }) { app ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Checkbox(
-                                checked = app.packageName in current,
-                                onCheckedChange = { checked ->
-                                    current = if (checked) current + app.packageName else current - app.packageName
-                                },
-                            )
-                            Column {
-                                Text(app.label, style = MaterialTheme.typography.bodyLarge)
-                                Text(app.packageName, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = { onSave(current) }) { Text("保存（${current.size}）") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
-    )
-}
-
+// ---------------------------------------------------------------------------
+// 自定义配置编辑器
 // ---------------------------------------------------------------------------
 // 自定义配置编辑器
 // ---------------------------------------------------------------------------
