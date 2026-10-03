@@ -162,12 +162,14 @@ fun SbSwitchItem(
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
 ) {
+    // 修复双击 bug：Switch 的 onCheckedChange 置 null（仅展示），整行 onClick 统一处理 toggle，
+    // 避免「点开关时行点击和开关回调各触发一次、互相抵消」导致开关弹回/看似无效。
     SbItem(
         title = title,
         subtitle = subtitle,
         icon = icon,
         onClick = { onCheckedChange(!checked) },
-        trailing = { Switch(checked = checked, onCheckedChange = onCheckedChange) },
+        trailing = { Switch(checked = checked, onCheckedChange = null, enabled = true) },
     )
 }
 

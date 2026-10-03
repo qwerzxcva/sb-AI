@@ -17,4 +17,4 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "sb-AI"
-include(":app")
+include(":app", ":backdrop")

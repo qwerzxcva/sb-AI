@@ -184,6 +184,18 @@ class RuleStore private constructor(context: Context) {
     // ---- Settings ----
     fun updateSettings(settings: AppSettings) = update { s -> s.copy(settings = settings) }
 
+    // ---- 静态 hosts 映射 ----
+    fun upsertHostsEntry(entry: HostsEntry) = update { s ->
+        val list = s.customHosts.toMutableList()
+        val idx = list.indexOfFirst { it.id == entry.id }
+        if (idx >= 0) list[idx] = entry else list.add(entry)
+        s.copy(customHosts = list)
+    }
+
+    fun deleteHostsEntry(id: String) = update { s ->
+        s.copy(customHosts = s.customHosts.filterNot { it.id == id })
+    }
+
     /** 备份导入：整体替换应用状态 */
     fun replaceAll(state: AppState) = persist(state)
 

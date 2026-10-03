@@ -10,7 +10,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     env:
-      # ubuntu-latest 镜像预装 Android SDK
+      # ubuntu-latest 镜像预装 Android SDK（含 android-35 平台）
       ANDROID_HOME: /usr/local/lib/android/sdk
     steps:
       - uses: actions/checkout@v4
@@ -21,13 +21,13 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Fetch libbox core (arm64-v8a)
+      - name: Fetch libbox core (sing-box-lx, arm64-v8a)
         run: bash scripts/fetch-libbox.sh
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Unit tests (config generator)
+      - name: Unit tests (config generator + parsers)
         run: ./gradlew :app:testDebugUnitTest -Pandroid.builder.sdkDownload=true --stacktrace
 
       - name: Build release APK (arm64-v8a)
@@ -36,14 +36,26 @@ jobs:
       - name: Verify ABI (arm64-v8a only)
         run: |
           APK=$(ls app/build/outputs/apk/release/*.apk | head -1)
-          echo "APK: $APK"
+          echo "APK: $APK ($(du -h "$APK" | cut -f1))"
           unzip -l "$APK" | grep -E '^\s+[0-9]+.*lib/' | awk '{print $4}' | cut -d/ -f2 | sort -u > /tmp/abis.txt
           cat /tmp/abis.txt
           test "$(cat /tmp/abis.txt)" = "arm64-v8a"
 
-      - name: Upload APK
+      - name: Upload APK (release, self-signed)
         uses: actions/upload-artifact@v4
         with:
           name: sb-AI-arm64-v8a-release
           path: app/build/outputs/apk/release/*.apk
+          retention-days: 30
+
+      - name: Upload APK (debug, for quick testing)
+        if: success()
+        run: ./gradlew :app:assembleDebug -Pandroid.builder.sdkDownload=true --stacktrace
+
+      - name: Upload debug APK artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sb-AI-arm64-v8a-debug
+          path: app/build/outputs/apk/debug/*.apk
           retention-days: 14

@@ -55,7 +55,38 @@ class SingBoxConfigGeneratorTest {
         assertEquals(2, rr["domain"]!!.jsonArray.size)
         assertEquals(2, rr["network"]!!.jsonArray.size)
         assertEquals(2, rr["protocol"]!!.jsonArray.size)
-        assertEquals("direct", rr["outbound"]!!.jsonPrimitive.content) // 无节点时代理入口回退为 direct
+        // 自动模式默认开启（与负载均衡解耦），入口为 auto（urltest 优选）
+        assertEquals("auto", rr["outbound"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `auto mode works independently of load balance`() {
+        // 关掉负载均衡、只开自动模式：entryTag 应为 auto，且 outbounds 里有 auto
+        val node = ProxyNode(
+            name = "n1",
+            outboundJson = """{"type":"vless","tag":"n1","server":"1.2.3.4","server_port":443,"uuid":"x"}""",
+        )
+        val state = AppState(
+            proxyNodes = listOf(node),
+            loadBalance = LoadBalanceConfig(enabled = false, autoEnabled = true),
+        )
+        val cfg = parse(state)
+        assertEquals("auto", cfg["route"]!!.jsonObject["final"]!!.jsonPrimitive.content)
+        val tags = outbounds(cfg).map { it.jsonObject["tag"]!!.jsonPrimitive.content }
+        assertTrue("auto" in tags)
+        // 不应有 lb / lb-selector（负载均衡关闭）
+        assertTrue("lb" !in tags && "lb-selector" !in tags)
+    }
+
+    @Test
+    fun `disabling auto and lb falls back to direct`() {
+        val rule = RouteRule(action = RuleAction.PROXY, domains = listOf("a.com"))
+        val state = AppState(
+            routeRules = listOf(rule),
+            loadBalance = LoadBalanceConfig(enabled = false, autoEnabled = false),
+        )
+        val rr = parse(state)["route"]!!.jsonObject["rules"]!!.jsonArray.last().jsonObject
+        assertEquals("direct", rr["outbound"]!!.jsonPrimitive.content)
     }
 
     @Test

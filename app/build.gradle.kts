@@ -101,23 +101,6 @@ android {
 }
 
 dependencies {
-    // haze（Compose Multiplatform）的 Gradle 元数据会强制拉高 androidx 版本，
-    // 统一 force 回与 compileSdk 34 兼容的版本。
-    configurations.all {
-        resolutionStrategy {
-            force(
-                "androidx.activity:activity:1.9.3",
-                "androidx.activity:activity-ktx:1.9.3",
-                "androidx.activity:activity-compose:1.9.3",
-                "androidx.lifecycle:lifecycle-runtime:2.8.7",
-                "androidx.lifecycle:lifecycle-runtime-ktx:2.8.7",
-                "androidx.lifecycle:lifecycle-common:2.8.7",
-                "androidx.core:core:1.13.1",
-                "androidx.core:core-ktx:1.13.1",
-            )
-        }
-    }
-
     // Prebuilt sing-box core（LxBox 同款 fork：Leadaxe/sing-box-lx，arm64-v8a only）.
     // 由 scripts/fetch-libbox.sh / CI 下载并裁剪；不提交进 git.
     implementation(files("libs/libbox.aar"))
@@ -140,8 +123,8 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 
-    // Kototoro 风格悬浮玻璃底栏：内容 backdrop blur
-    implementation("dev.chrisbanes.haze:haze:1.5.2")
+    // Kototoro 同款液态玻璃内核（vendored io.github.kyant0:backdrop:2.0.0，见 backdrop/UPSTREAM.md）
+    implementation(project(":backdrop"))
 
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")

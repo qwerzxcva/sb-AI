@@ -137,6 +137,14 @@ enum class DnsServerType(val wireName: String) {
     FAKEIP("fakeip"),
 }
 
+/** 静态 hosts 映射条目（host → IP 列表），供 hosts 类型 DNS 服务器使用 */
+@Serializable
+data class HostsEntry(
+    val id: String = UUID.randomUUID().toString(),
+    val host: String = "",
+    val ips: List<String> = emptyList(),
+)
+
 /** DNS group：一组 DNS server 的命名集合（无需指定出口） */
 @Serializable
 data class DnsGroup(
@@ -413,5 +421,7 @@ data class AppState(
     val loadBalance: LoadBalanceConfig = LoadBalanceConfig(),
     val proxyNodes: List<ProxyNode> = emptyList(),
     val subscriptions: List<Subscription> = emptyList(),
+    /** 静态 hosts 映射（hosts 类型 DNS 服务器使用，单独编辑，不在 DNS 服务器创建里） */
+    val customHosts: List<HostsEntry> = emptyList(),
     val settings: AppSettings = AppSettings(),
 )

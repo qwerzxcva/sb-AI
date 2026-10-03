@@ -198,7 +198,7 @@ fun HomeScreen() {
                 }
             }
 
-            // ---- 代理出口（负载均衡内嵌，不再单独一页） ----
+            // ---- 代理出口（负载均衡内嵌；自动模式与负载均衡解耦，可单独开） ----
             item {
                 SbGroup(title = "代理出口") {
                     item {
@@ -220,15 +220,6 @@ fun HomeScreen() {
                             )
                         }
                         item {
-                            SbSwitchItem(
-                                title = "自动模式",
-                                subtitle = "在负载均衡组之上自动优选最优出口",
-                                icon = Icons.Filled.Sync,
-                                checked = lb.autoEnabled,
-                                onCheckedChange = { store.updateLoadBalance(lb.copy(autoEnabled = it)) },
-                            )
-                        }
-                        item {
                             SbItem(
                                 title = "参与节点",
                                 subtitle = if (lb.outbounds.isEmpty()) "全部节点" else lb.outbounds.joinToString(),
@@ -236,6 +227,16 @@ fun HomeScreen() {
                                 onClick = { showNodesPicker = true },
                             )
                         }
+                    }
+                    // 自动模式独立于负载均衡：关掉负载均衡后仍可单独开启自动优选
+                    item {
+                        SbSwitchItem(
+                            title = "自动模式",
+                            subtitle = "自动优选延迟最低的出口（可与负载均衡搭配，也可单独使用）",
+                            icon = Icons.Filled.Sync,
+                            checked = lb.autoEnabled,
+                            onCheckedChange = { store.updateLoadBalance(lb.copy(autoEnabled = it)) },
+                        )
                     }
                     item {
                         SbItem(

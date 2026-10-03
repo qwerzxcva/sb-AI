@@ -78,7 +78,9 @@ object SingBoxConfigGenerator {
             nodeTags.size == 1 -> nodeTags[0]
             else -> "direct"
         }
-        val entryTag = if (lb.enabled && lb.autoEnabled) "auto" else finalProxyTag
+        // 自动模式与负载均衡解耦：auto（urltest 优选）可在关掉负载均衡后单独使用。
+        // entryTag = auto 开启时套一层 auto，否则直连出口。
+        val entryTag = if (lb.autoEnabled) "auto" else finalProxyTag
 
         val dnsServers = buildDnsServers(state, entryTag)
         val defaultDnsTag = state.dnsServers.firstOrNull { it.enabled && it.tag.isNotBlank() }?.tag
@@ -130,7 +132,8 @@ object SingBoxConfigGenerator {
                 })
             }
 
-            if (lb.enabled && lb.autoEnabled) {
+            // 自动模式独立于负载均衡：开启即在最外层套一层 urltest 优选（可与 LB 搭配，也可单独用）
+            if (lb.autoEnabled) {
                 add(buildJsonObject {
                     put("type", "urltest")
                     put("tag", "auto")
@@ -269,7 +272,15 @@ object SingBoxConfigGenerator {
                 put("tag", s.tag)
                 when (s.type) {
                     DnsServerType.LOCAL -> put("type", "local")
-                    DnsServerType.HOSTS -> put("type", "hosts")
+                    DnsServerType.HOSTS -> {
+                        // sing-box hosts 类型 DNS server 需要 predefined 映射表；
+                        // 映射从全局 customHosts 读取（单独编辑），不在服务器创建里填写
+                        put("type", "hosts")
+                        putJsonObject("predefined") {
+                            state.customHosts.filter { it.host.isNotBlank() && it.ips.isNotEmpty() }
+                                .forEach { entry -> putJsonArray(entry.host) { entry.ips.forEach(::add) } }
+                        }
+                    }
                     DnsServerType.FAKEIP -> {
                         put("type", "fakeip")
                         put("inet4_range", "198.18.0.0/15")

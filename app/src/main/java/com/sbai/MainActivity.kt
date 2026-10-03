@@ -21,11 +21,6 @@ import androidx.compose.material.icons.filled.MonitorHeart
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationBarItemDefaults
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -33,8 +28,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -42,18 +35,17 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import com.kyant.backdrop.backdrops.layerBackdrop
+import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import com.sbai.data.RuleStore
+import com.sbai.ui.components.SbGlassBottomBar
+import com.sbai.ui.components.SbNavItem
 import com.sbai.ui.dns.DnsScreen
 import com.sbai.ui.home.HomeScreen
 import com.sbai.ui.monitor.MonitorScreen
 import com.sbai.ui.routes.RouteRulesScreen
 import com.sbai.ui.settings.SettingsScreen
 import com.sbai.ui.theme.SbAiTheme
-import dev.chrisbanes.haze.ExperimentalHazeApi
-import dev.chrisbanes.haze.HazeState
-import dev.chrisbanes.haze.HazeTint
-import dev.chrisbanes.haze.haze
-import dev.chrisbanes.haze.hazeChild
 
 sealed class Screen(val route: String, val title: String, val icon: ImageVector) {
     data object Home : Screen("home", "首页", Icons.Filled.Home)
@@ -87,8 +79,8 @@ private fun MainScaffold() {
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
 
-    // Kototoro 风格：悬浮玻璃底栏（内容 backdrop blur）
-    val hazeState = remember { HazeState() }
+    // Kototoro 同款液态玻璃底栏：页面内容捕获为 LayerBackdrop，底栏采样折射
+    val pageBackdrop = rememberLayerBackdrop()
 
     Box(modifier = Modifier.fillMaxSize()) {
         NavHost(
@@ -96,7 +88,7 @@ private fun MainScaffold() {
             startDestination = Screen.Home.route,
             modifier = Modifier
                 .fillMaxSize()
-                .haze(hazeState),
+                .layerBackdrop(pageBackdrop),
         ) {
             composable(Screen.Home.route) { HomeScreen() }
             composable(Screen.Routes.route) { RouteRulesScreen() }
@@ -105,9 +97,9 @@ private fun MainScaffold() {
             composable(Screen.Settings.route) { SettingsScreen() }
         }
 
-        GlassBottomBar(
-            hazeState = hazeState,
-            items = items,
+        SbGlassBottomBar(
+            pageBackdrop = pageBackdrop,
+            items = items.map { SbNavItem(it.route, it.title, it.icon) },
             currentRoute = currentRoute,
             onSelect = { route ->
                 navController.navigate(route) {
@@ -117,6 +109,7 @@ private fun MainScaffold() {
                 }
             },
             modifier = Modifier
+                .fillMaxWidth()
                 .align(Alignment.BottomCenter)
                 .navigationBarsPadding()
                 .padding(horizontal = 20.dp)
@@ -125,70 +118,3 @@ private fun MainScaffold() {
     }
 }
 
-/** Kototoro 风格悬浮玻璃底栏：胶囊形、backdrop 模糊、细描边、无 indicator 背景 */
-@OptIn(ExperimentalHazeApi::class)
-@Composable
-private fun GlassBottomBar(
-    hazeState: HazeState,
-    items: List<Screen>,
-    currentRoute: String?,
-    onSelect: (String) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val colors = MaterialTheme.colorScheme
-    Surface(
-        modifier = modifier
-            .fillMaxWidth()
-            .clip(CircleShape)
-            .hazeChild(hazeState) {
-                // 磨砂玻璃：用更亮的 surfaceContainer 层（深色模式下不发黑）+ 强调色 tint
-                blurRadius = 18.dp
-                noiseFactor = 0.04f
-                backgroundColor = colors.surfaceContainerHigh.copy(alpha = 0.62f)
-                tints = listOf(
-                    HazeTint(colors.surfaceContainerHighest.copy(alpha = 0.30f)),
-                    HazeTint(colors.primary.copy(alpha = 0.10f)),
-                )
-            }
-            .border(
-                width = 1.dp,
-                brush = androidx.compose.ui.graphics.Brush.linearGradient(
-                    listOf(
-                        colors.surfaceContainerHighest.copy(alpha = 0.55f),
-                        colors.outlineVariant.copy(alpha = 0.35f),
-                    ),
-                ),
-                shape = CircleShape,
-            ),
-        shape = CircleShape,
-        color = Color.Transparent,
-        contentColor = colors.onSurface,
-        tonalElevation = 0.dp,
-        shadowElevation = 6.dp,
-    ) {
-        NavigationBar(
-            containerColor = Color.Transparent,
-            tonalElevation = 0.dp,
-            windowInsets = androidx.compose.foundation.layout.WindowInsets(0),
-        ) {
-            items.forEach { screen ->
-                val selected = currentRoute == screen.route
-                NavigationBarItem(
-                    selected = selected,
-                    onClick = { onSelect(screen.route) },
-                    icon = { Icon(screen.icon, contentDescription = screen.title) },
-                    label = { Text(screen.title, maxLines = 1) },
-                    alwaysShowLabel = true,
-                    colors = NavigationBarItemDefaults.colors(
-                        // Kototoro：无 indicator 背景，选中仅换强调色
-                        indicatorColor = Color.Transparent,
-                        selectedIconColor = colors.primary,
-                        selectedTextColor = colors.onSurface,
-                        unselectedIconColor = colors.onSurfaceVariant,
-                        unselectedTextColor = colors.onSurfaceVariant,
-                    ),
-                )
-            }
-        }
-    }
-}
