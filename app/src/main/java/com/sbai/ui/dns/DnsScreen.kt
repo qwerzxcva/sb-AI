@@ -93,6 +93,48 @@ fun DnsScreen() {
     // 路由规则自动推导的 DNS 规则（只读展示）
     val autoRules = SingBoxConfigGenerator.autoDnsRules(state)
 
+    // 编辑器全部为整页（二级页面），提前 return 覆盖列表页
+    editingServer?.let { server ->
+        DnsServerEditorDialog(
+            initial = server,
+            existingServers = state.dnsServers.map { it.tag },
+            onDismiss = { editingServer = null },
+            onSave = { store.upsertDnsServer(it); editingServer = null },
+            onDelete = if (server.tag.isNotBlank()) {
+                { store.deleteDnsServer(server.id); editingServer = null }
+            } else null,
+        )
+        return
+    }
+
+    editingGroup?.let { group ->
+        DnsGroupEditorDialog(
+            initial = group,
+            serverTags = state.dnsServers.filter { it.enabled }.map { it.tag },
+            onDismiss = { editingGroup = null },
+            onSave = { store.upsertDnsGroup(it); editingGroup = null },
+            onDelete = if (group.name.isNotBlank()) {
+                { store.deleteDnsGroup(group.id); editingGroup = null }
+            } else null,
+        )
+        return
+    }
+
+    editingRule?.let { rule ->
+        DnsRuleEditorDialog(
+            initial = rule,
+            serverOptions = state.dnsServers.filter { it.enabled }.map { it.tag } +
+                    state.dnsGroups.map { it.name },
+            ruleSetTags = state.routeRuleSets.filter { it.enabled }.map { it.tag },
+            onDismiss = { editingRule = null },
+            onSave = { store.upsertDnsRule(it); editingRule = null },
+            onDelete = if (rule.autoFromRouteRuleId == null && rule.name.isNotBlank()) {
+                { store.deleteDnsRule(rule.id); editingRule = null }
+            } else null,
+        )
+        return
+    }
+
     Scaffold(
         floatingActionButton = {
             Box(Modifier.padding(bottom = FabBottomBarClearance)) {
@@ -156,43 +198,6 @@ fun DnsScreen() {
         }
     }
 
-    editingServer?.let { server ->
-        DnsServerEditorDialog(
-            initial = server,
-            existingServers = state.dnsServers.map { it.tag },
-            onDismiss = { editingServer = null },
-            onSave = { store.upsertDnsServer(it); editingServer = null },
-            onDelete = if (server.tag.isNotBlank()) {
-                { store.deleteDnsServer(server.id); editingServer = null }
-            } else null,
-        )
-    }
-
-    editingGroup?.let { group ->
-        DnsGroupEditorDialog(
-            initial = group,
-            serverTags = state.dnsServers.filter { it.enabled }.map { it.tag },
-            onDismiss = { editingGroup = null },
-            onSave = { store.upsertDnsGroup(it); editingGroup = null },
-            onDelete = if (group.name.isNotBlank()) {
-                { store.deleteDnsGroup(group.id); editingGroup = null }
-            } else null,
-        )
-    }
-
-    editingRule?.let { rule ->
-        DnsRuleEditorDialog(
-            initial = rule,
-            serverOptions = state.dnsServers.filter { it.enabled }.map { it.tag } +
-                    state.dnsGroups.map { it.name },
-            ruleSetTags = state.routeRuleSets.filter { it.enabled }.map { it.tag },
-            onDismiss = { editingRule = null },
-            onSave = { store.upsertDnsRule(it); editingRule = null },
-            onDelete = if (rule.autoFromRouteRuleId == null && rule.name.isNotBlank()) {
-                { store.deleteDnsRule(rule.id); editingRule = null }
-            } else null,
-        )
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -494,14 +499,51 @@ private fun DnsServerEditorDialog(
     val needsAddress = type !in setOf(DnsServerType.LOCAL, DnsServerType.HOSTS, DnsServerType.FAKEIP)
     val supportsEch = type in setOf(DnsServerType.TLS, DnsServerType.HTTPS, DnsServerType.QUIC, DnsServerType.H3)
 
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(if (initial.tag.isBlank()) "添加 DNS" else "编辑 DNS") },
-        text = {
+    // 整页编辑器（不再是弹窗）；拦截系统返回/侧滑回到 DNS 列表
+    BackHandler(enabled = true) { onDismiss() }
+
+    fun doSave() {
+        if (tag.isBlank()) return
+        onSave(
+            initial.copy(
+                tag = tag.trim(), type = type, address = address.trim(),
+                detour = detour.ifBlank { null },
+                addressResolver = resolver.ifBlank { null },
+                clientSubnet = clientSubnet.ifBlank { null },
+                echEnabled = echEnabled && supportsEch,
+                echConfig = echConfig.ifBlank { null },
+                inet4Range = inet4Range.trim(),
+                inet6Range = inet6Range.trim(),
+            ),
+        )
+    }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text(if (initial.tag.isBlank()) "添加 DNS" else "编辑 DNS") },
+                navigationIcon = {
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                    }
+                },
+                actions = {
+                    if (onDelete != null) {
+                        IconButton(onClick = onDelete) {
+                            Icon(Icons.Filled.Delete, contentDescription = "删除", tint = MaterialTheme.colorScheme.error)
+                        }
+                    }
+                    TextButton(onClick = { doSave() }) { Text("保存") }
+                },
+            )
+        },
+    ) { padding ->
             Column(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState()),
+                    .fillMaxSize()
+                    .padding(padding)
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 20.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 OutlinedTextField(value = tag, onValueChange = { tag = it }, label = { Text("tag（唯一标识）") }, singleLine = true, modifier = Modifier.fillMaxWidth())
@@ -577,7 +619,7 @@ private fun DnsServerEditorDialog(
                 if (type == DnsServerType.FAKEIP) {
                     OutlinedTextField(
                         value = inet4Range, onValueChange = { inet4Range = it },
-                        label = { Text("IPv4 段（可选，默认 198.18.0.0/15）") },
+                        label = { Text("IPv4 段（可选，默认 10.0.0.0/8）") },
                         singleLine = true, modifier = Modifier.fillMaxWidth(),
                     )
                     OutlinedTextField(
@@ -592,33 +634,7 @@ private fun DnsServerEditorDialog(
                     )
                 }
             }
-        },
-        confirmButton = {
-            TextButton(onClick = {
-                if (tag.isBlank()) return@TextButton
-                onSave(
-                    initial.copy(
-                        tag = tag.trim(), type = type, address = address.trim(),
-                        detour = detour.ifBlank { null },
-                        addressResolver = resolver.ifBlank { null },
-                        clientSubnet = clientSubnet.ifBlank { null },
-                        echEnabled = echEnabled && supportsEch,
-                        echConfig = echConfig.ifBlank { null },
-                        inet4Range = inet4Range.trim(),
-                        inet6Range = inet6Range.trim(),
-                    ),
-                )
-            }) { Text("保存") }
-        },
-        dismissButton = {
-            Row {
-                if (onDelete != null) {
-                    TextButton(onClick = onDelete) { Text("删除", color = MaterialTheme.colorScheme.error) }
-                }
-                TextButton(onClick = onDismiss) { Text("取消") }
-            }
-        },
-    )
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -927,7 +943,7 @@ private fun DnsJsonPasteDialog(
     )
 }
 
-@OptIn(ExperimentalLayoutApi::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 private fun DnsGroupEditorDialog(
     initial: DnsGroup,
@@ -939,43 +955,56 @@ private fun DnsGroupEditorDialog(
     var name by remember { mutableStateOf(initial.name) }
     var selected by remember { mutableStateOf(initial.serverTags.toSet()) }
 
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(if (initial.name.isBlank()) "添加 DNS group" else "编辑 DNS group") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("group 名称") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                Text("成员 DNS", style = MaterialTheme.typography.labelLarge)
-                if (serverTags.isEmpty()) {
-                    Text("尚无可用 DNS，请先在「DNS」页添加。", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                } else {
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        serverTags.forEach { tag ->
-                            FilterChip(
-                                selected = tag in selected,
-                                onClick = { selected = if (tag in selected) selected - tag else selected + tag },
-                                label = { Text(tag) },
-                            )
+    BackHandler(enabled = true) { onDismiss() }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text(if (initial.name.isBlank()) "添加 DNS group" else "编辑 DNS group") },
+                navigationIcon = {
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                    }
+                },
+                actions = {
+                    if (onDelete != null) {
+                        IconButton(onClick = onDelete) {
+                            Icon(Icons.Filled.Delete, contentDescription = "删除", tint = MaterialTheme.colorScheme.error)
                         }
+                    }
+                    TextButton(onClick = {
+                        if (name.isBlank()) return@TextButton
+                        onSave(initial.copy(name = name.trim(), serverTags = selected.toList().sorted()))
+                    }) { Text("保存") }
+                },
+            )
+        },
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("group 名称") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            Text("成员 DNS", style = MaterialTheme.typography.labelLarge)
+            if (serverTags.isEmpty()) {
+                Text("尚无可用 DNS，请先在「DNS」页添加。", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } else {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    serverTags.forEach { tag ->
+                        FilterChip(
+                            selected = tag in selected,
+                            onClick = { selected = if (tag in selected) selected - tag else selected + tag },
+                            label = { Text(tag) },
+                        )
                     }
                 }
             }
-        },
-        confirmButton = {
-            TextButton(onClick = {
-                if (name.isBlank()) return@TextButton
-                onSave(initial.copy(name = name.trim(), serverTags = selected.toList().sorted()))
-            }) { Text("保存") }
-        },
-        dismissButton = {
-            Row {
-                if (onDelete != null) {
-                    TextButton(onClick = onDelete) { Text("删除", color = MaterialTheme.colorScheme.error) }
-                }
-                TextButton(onClick = onDismiss) { Text("取消") }
-            }
-        },
-    )
+        }
+    }
 }
 
 @Composable

@@ -63,7 +63,8 @@ class SbAiVpnService : VpnService() {
             try {
                 LibboxRuntime.setup(this@SbAiVpnService)
 
-                val state = RuleStore.get(this@SbAiVpnService).state.value
+                // :core 进程的 RuleStore 是首次构造时的磁盘快照，必须 reload 才能拿到 UI 刚改的配置
+                val state = RuleStore.get(this@SbAiVpnService).reload()
                 // generate() 内部已处理 configOverride（导入 JSON 覆盖合并），直接调用
                 val config = SingBoxConfigGenerator.generate(state)
 

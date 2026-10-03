@@ -28,12 +28,42 @@ class RuleStore private constructor(context: Context) {
     private fun load(): AppState {
         val raw = prefs.getString(KEY_STATE, null) ?: return AppState()
         return runCatching { json.decodeFromString(AppState.serializer(), raw) }
-            .getOrElse { AppState() }
+            .getOrElse {
+                // 解析失败时先备份原始内容再回退默认值，避免下次 persist 把用户数据静默清空
+                android.util.Log.e("RuleStore", "配置解析失败，已备份原始内容", it)
+                runCatching {
+                    prefs.edit()
+                        .putString("app_state.corrupt.${System.currentTimeMillis()}", raw)
+                        .commit()
+                }
+                AppState()
+            }
+    }
+
+    /**
+     * 从磁盘重新载入配置。
+     *
+     * 必需场景：VPN 服务运行在独立的 `:core` 进程，该进程的 RuleStore 单例在首次构造时
+     * 只读一次磁盘快照；UI 进程改了配置后，:core 里的内存 StateFlow 仍是旧值。
+     * 因此服务每次启动前必须调用本方法，否则会拿旧配置起内核。
+     */
+    fun reload(): AppState = synchronized(this) {
+        val fresh = load()
+        _state.value = fresh
+        fresh
     }
 
     private fun persist(next: AppState) {
         _state.value = next
-        prefs.edit().putString(KEY_STATE, json.encodeToString(AppState.serializer(), next)).apply()
+        // 必须用 commit() 而非 apply()：VPN 服务运行在独立的 :core 进程，
+        // apply() 是异步落盘，UI 写完立刻启动服务时 :core 可能读到旧配置。
+        // commit() 同步写盘，保证跨进程可见（配置写入频率低，主线程开销可接受）。
+        val ok = prefs.edit()
+            .putString(KEY_STATE, json.encodeToString(AppState.serializer(), next))
+            .commit()
+        if (!ok) {
+            android.util.Log.w("RuleStore", "配置写入磁盘失败")
+        }
     }
 
     fun update(transform: (AppState) -> AppState) = synchronized(this) {

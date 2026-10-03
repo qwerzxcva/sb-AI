@@ -57,19 +57,17 @@ class SingBoxConfigGeneratorTest {
         assertEquals(2, rr["domain"]!!.jsonArray.size)
         assertEquals(2, rr["network"]!!.jsonArray.size)
         assertEquals(2, rr["protocol"]!!.jsonArray.size)
-        // 自动模式默认开启（与负载均衡解耦），入口为 auto（urltest 优选）
-        assertEquals("auto", rr["outbound"]!!.jsonPrimitive.content)
+        // 无任何节点时入口回退为 direct（单节点/无节点不套 auto，auto 只包多候选出口）
+        assertEquals("direct", rr["outbound"]!!.jsonPrimitive.content)
     }
 
     @Test
     fun `auto mode works independently of load balance`() {
-        // 关掉负载均衡、只开自动模式：entryTag 应为 auto，且 outbounds 里有 auto
-        val node = ProxyNode(
-            name = "n1",
-            outboundJson = """{"type":"vless","tag":"n1","server":"1.2.3.4","server_port":443,"uuid":"x"}""",
-        )
+        // 关掉负载均衡、只开自动模式 + 多节点：入口应为 auto（urltest 优选）
+        val node1 = ProxyNode(name = "n1", outboundJson = """{"type":"vless","tag":"n1","server":"1.2.3.4","server_port":443,"uuid":"x"}""")
+        val node2 = ProxyNode(name = "n2", outboundJson = """{"type":"vless","tag":"n2","server":"1.2.3.5","server_port":443,"uuid":"y"}""")
         val state = AppState(
-            proxyNodes = listOf(node),
+            proxyNodes = listOf(node1, node2),
             loadBalance = LoadBalanceConfig(enabled = false, autoEnabled = true),
         )
         val cfg = parse(state)
@@ -302,7 +300,7 @@ class SingBoxConfigGeneratorTest {
         )
         val cfg = parse(state)
         val fake = cfg["dns"]!!.jsonObject["servers"]!!.jsonArray.first().jsonObject
-        assertEquals("198.18.0.0/15", fake["inet4_range"]!!.jsonPrimitive.content)
+        assertEquals("10.0.0.0/8", fake["inet4_range"]!!.jsonPrimitive.content)
         assertEquals("fc00::/18", fake["inet6_range"]!!.jsonPrimitive.content)
         // 控制面不得通过 clash_api 暴露
         assertNull(cfg["experimental"]!!.jsonObject["clash_api"])

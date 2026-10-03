@@ -79,8 +79,12 @@ object SingBoxConfigGenerator {
             else -> "direct"
         }
         // 自动模式与负载均衡解耦：auto（urltest 优选）可在关掉负载均衡后单独使用。
-        // entryTag = auto 开启时套一层 auto，否则直连出口。
-        val entryTag = if (lb.autoEnabled) "auto" else finalProxyTag
+        // 但 auto 只有在「有多个出口候选可测速」时才有意义：
+        //  - lb（urltest 组）/ proxy（多节点 selector）→ 套 auto 再优选，合理；
+        //  - lb-selector（手动）→ 套 urltest 会覆盖用户手动选择，不套；
+        //  - 单节点 / direct → 无可测速对象，不套。
+        val autoWorthWrapping = lb.autoEnabled && (finalProxyTag == "lb" || finalProxyTag == "proxy")
+        val entryTag = if (autoWorthWrapping) "auto" else finalProxyTag
 
         val dnsServers = buildDnsServers(state, entryTag)
         val defaultDnsTag = state.dnsServers.firstOrNull { it.enabled && it.tag.isNotBlank() }?.tag
@@ -132,8 +136,8 @@ object SingBoxConfigGenerator {
                 })
             }
 
-            // 自动模式独立于负载均衡：开启即在最外层套一层 urltest 优选（可与 LB 搭配，也可单独用）
-            if (lb.autoEnabled) {
+            // 自动模式独立于负载均衡：与 entryTag 同条件创建（仅为多候选出口套 urltest 优选）
+            if (autoWorthWrapping) {
                 add(buildJsonObject {
                     put("type", "urltest")
                     put("tag", "auto")
@@ -285,7 +289,7 @@ object SingBoxConfigGenerator {
                     DnsServerType.FAKEIP -> {
                         put("type", "fakeip")
                         // 自定义段优先，空则用内核默认
-                        put("inet4_range", s.inet4Range.ifBlank { "198.18.0.0/15" })
+                        put("inet4_range", s.inet4Range.ifBlank { "10.0.0.0/8" })
                         put("inet6_range", s.inet6Range.ifBlank { "fc00::/18" })
                     }
                     else -> {
@@ -376,7 +380,7 @@ object SingBoxConfigGenerator {
             ?.let { fake ->
                 rules.add(buildJsonObject {
                     putJsonArray("ip_cidr") {
-                        add(fake.inet4Range.ifBlank { "198.18.0.0/15" })
+                        add(fake.inet4Range.ifBlank { "10.0.0.0/8" })
                         add(fake.inet6Range.ifBlank { "fc00::/18" })
                     }
                     put("outbound", entryTag)
@@ -535,16 +539,7 @@ object SingBoxConfigGenerator {
         val result = mutableListOf<JsonObject>()
         val groupOfTag = state.dnsGroups.associate { it.name to it.serverTags }
 
-        // 0) fakeIP 联动：fakeip DNS server 存在时，自动生成 query_type A/AAAA → fakeip 规则
-        state.dnsServers.firstOrNull { it.enabled && it.type == DnsServerType.FAKEIP && it.tag.isNotBlank() }
-            ?.let { fake ->
-                result.add(buildJsonObject {
-                    putJsonArray("query_type") { add("A"); add("AAAA") }
-                    put("server", fake.tag)
-                })
-            }
-
-        // 1) 用户手动创建的 DNS 规则（按列表顺序 = 优先级）
+        // 1) 用户手动创建的 DNS 规则（按列表顺序 = 优先级，必须最先匹配）
         state.dnsRules.filter { it.enabled }.forEach { r ->
             val server = resolveDnsTag(r.server, groupOfTag, state)
             // route 动作必须有有效 server，否则整条跳过（避免悬空引用 / 残缺规则）
@@ -615,6 +610,16 @@ object SingBoxConfigGenerator {
                 if (strategy != null) put("ip_strategy", strategy)
             })
         }
+
+        // 4) fakeIP 联动：fakeip DNS server 存在时，query_type A/AAAA 兜底走 fakeip。
+        // 放最后（兜底），否则会吞掉上面的手动规则（query_type 规则无条件匹配所有域名）。
+        state.dnsServers.firstOrNull { it.enabled && it.type == DnsServerType.FAKEIP && it.tag.isNotBlank() }
+            ?.let { fake ->
+                result.add(buildJsonObject {
+                    putJsonArray("query_type") { add("A"); add("AAAA") }
+                    put("server", fake.tag)
+                })
+            }
 
         return result
     }

@@ -141,7 +141,7 @@ data class DnsServer(
     val echEnabled: Boolean = false,
     /** ECH 配置（PEM/echconfiglist），可选；留空表示仅启用 ECH 自动获取 */
     val echConfig: String? = null,
-    /** fakeIP 自定义 IPv4 段（仅 fakeip 类型）；空 = 内核默认 198.18.0.0/15 */
+    /** fakeIP 自定义 IPv4 段（仅 fakeip 类型）；空 = 默认 10.0.0.0/8（避开 TEST-NET-2 冲突） */
     val inet4Range: String = "",
     /** fakeIP 自定义 IPv6 段（仅 fakeip 类型）；空 = 内核默认 fc00::/18 */
     val inet6Range: String = "",

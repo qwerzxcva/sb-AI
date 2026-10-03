@@ -46,17 +46,17 @@ fun SbGlassBottomBar(
                 backdrop = pageBackdrop,
                 shape = { CircleShape },
                 effects = {
-                    // 液态玻璃核心：模糊 + 提亮 + 微饱和（vibrancy）
-                    blur(radius = 40f)
-                    colorControls(brightness = 0.14f, saturation = 1.25f, contrast = 1.02f)
-                    opacity(0.55f)
+                    // 性能优先：模糊半径 40 → 8（液态玻璃观感主要靠 vibrancy + highlight，
+                    // 大半径模糊每帧对整页 backdrop 采样是卡顿主因）。
+                    blur(radius = 8f)
+                    colorControls(brightness = 0.1f, saturation = 1.18f, contrast = 1.0f)
+                    opacity(0.5f)
                 },
                 highlight = {
-                    // 顶光描边（ClashFest lumen_hairline 效果），玻璃通透感关键
-                    Highlight(width = 1.dp, alpha = 0.35f)
+                    Highlight(width = 0.5.dp, alpha = 0.25f)
                 },
                 shadow = {
-                    Shadow(radius = 20.dp, color = Color.Black.copy(alpha = 0.22f))
+                    Shadow(radius = 12.dp, color = Color.Black.copy(alpha = 0.18f))
                 },
             ),
         shape = CircleShape,

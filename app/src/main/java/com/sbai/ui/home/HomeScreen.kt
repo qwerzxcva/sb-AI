@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.net.VpnService
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -23,6 +24,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Balance
 import androidx.compose.material.icons.filled.CloudDownload
@@ -52,6 +54,7 @@ import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
+import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -130,8 +133,11 @@ fun HomeScreen() {
 
     // 进程隔离后：UI 进程自建 CommandClient 连接 :core 进程的 CommandServer（unix socket 跨进程），
     // 以 connectedToService 作为「内核是否在跑」的真源（StateFlow 不跨进程共享）。
+    // connect() 是阻塞 socket 连接，必须在 IO 线程，否则进首页卡 UI
     LaunchedEffect(Unit) {
-        SbCommandClient.connect()
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            SbCommandClient.connect()
+        }
     }
     val coreRunning = running || coreConnected
 
@@ -144,6 +150,19 @@ fun HomeScreen() {
                 store.upsertProxyNode(it)
                 editingNode = null
             },
+        )
+        return
+    }
+
+    // 订阅编辑器：整页（二级页面），不是弹窗
+    editingSub?.let { sub ->
+        SubscriptionEditorDialog(
+            initial = sub,
+            onDismiss = { editingSub = null },
+            onSave = { store.upsertSubscription(it); editingSub = null },
+            onDelete = if (sub.url.isNotBlank()) {
+                { store.deleteSubscription(sub.id); editingSub = null }
+            } else null,
         )
         return
     }
@@ -559,17 +578,6 @@ fun HomeScreen() {
     }
 
     // ---- 对话框 ----
-    editingSub?.let { sub ->
-        SubscriptionEditorDialog(
-            initial = sub,
-            onDismiss = { editingSub = null },
-            onSave = { store.upsertSubscription(it); editingSub = null },
-            onDelete = if (sub.url.isNotBlank()) {
-                { store.deleteSubscription(sub.id); editingSub = null }
-            } else null,
-        )
-    }
-
     if (showConfigPreview) {
         ConfigPreviewDialog(
             config = runCatching { SingBoxConfigGenerator.generate(state) }.getOrElse { "生成失败: ${it.message}" },
@@ -807,6 +815,7 @@ private fun stopVpn(context: Context) {
 // 对话框
 // ---------------------------------------------------------------------------
 
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 private fun SubscriptionEditorDialog(
     initial: Subscription,
@@ -829,14 +838,57 @@ private fun SubscriptionEditorDialog(
     var detour by remember { mutableStateOf(initial.detour) }
     var error by remember { mutableStateOf<String?>(null) }
 
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(if (initial.url.isBlank()) "添加订阅源" else "订阅源") },
-        text = {
+    // 整页编辑器（不再是弹窗）；拦截系统返回/侧滑回到首页
+    BackHandler(enabled = true) { onDismiss() }
+
+    fun doSave() {
+        val u = url.trim()
+        if (!u.startsWith("https://") && !u.startsWith("http://")) {
+            error = "请输入 http/https 订阅地址"; return
+        }
+        onSave(
+            initial.copy(
+                name = name.trim(), url = u, autoUpdate = autoUpdate,
+                updateIntervalHours = intervalHours.toIntOrNull()?.coerceAtLeast(0) ?: 24,
+                userAgent = userAgent.ifBlank { null },
+                includeKeyword = includeKw.trim(),
+                excludeKeyword = excludeKw.trim(),
+                removeDuplicates = removeDuplicates,
+                removeInsecure = removeInsecure,
+                urlTestAfterUpdate = urlTestAfterUpdate,
+                removeUnavailable = removeUnavailable && urlTestAfterUpdate,
+                sortByLatency = sortByLatency && urlTestAfterUpdate,
+                detour = detour,
+            ),
+        )
+    }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text(if (initial.url.isBlank()) "添加订阅源" else "订阅源") },
+                navigationIcon = {
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                    }
+                },
+                actions = {
+                    if (onDelete != null) {
+                        IconButton(onClick = onDelete) {
+                            Icon(Icons.Filled.Delete, contentDescription = "删除", tint = MaterialTheme.colorScheme.error)
+                        }
+                    }
+                    TextButton(onClick = { doSave() }) { Text("保存") }
+                },
+            )
+        },
+    ) { padding ->
             Column(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState()),
+                    .fillMaxSize()
+                    .padding(padding)
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 20.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 OutlinedTextField(
@@ -921,39 +973,7 @@ private fun SubscriptionEditorDialog(
                 }
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             }
-        },
-        confirmButton = {
-            TextButton(onClick = {
-                val u = url.trim()
-                if (!u.startsWith("https://") && !u.startsWith("http://")) {
-                    error = "请输入 http/https 订阅地址"; return@TextButton
-                }
-                onSave(
-                    initial.copy(
-                        name = name.trim(), url = u, autoUpdate = autoUpdate,
-                        updateIntervalHours = intervalHours.toIntOrNull()?.coerceAtLeast(0) ?: 24,
-                        userAgent = userAgent.ifBlank { null },
-                        includeKeyword = includeKw.trim(),
-                        excludeKeyword = excludeKw.trim(),
-                        removeDuplicates = removeDuplicates,
-                        removeInsecure = removeInsecure,
-                        urlTestAfterUpdate = urlTestAfterUpdate,
-                        removeUnavailable = removeUnavailable && urlTestAfterUpdate,
-                        sortByLatency = sortByLatency && urlTestAfterUpdate,
-                        detour = detour,
-                    ),
-                )
-            }) { Text("保存") }
-        },
-        dismissButton = {
-            Row {
-                if (onDelete != null) {
-                    TextButton(onClick = onDelete) { Text("删除", color = MaterialTheme.colorScheme.error) }
-                }
-                TextButton(onClick = onDismiss) { Text("取消") }
-            }
-        },
-    )
+    }
 }
 
 @Composable

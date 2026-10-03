@@ -93,6 +93,33 @@ fun RouteRulesScreen() {
     var editingRuleSet by remember { mutableStateOf<RouteRuleSet?>(null) }
     var showRuleSetManager by remember { mutableStateOf(false) }
 
+    // 规则编辑器：整页（二级页面），提前 return 覆盖列表页
+    editingRule?.let { rule ->
+        RouteRuleEditorDialog(
+            initial = rule,
+            dnsOptions = state.dnsServers.filter { it.enabled }.map { it.tag } +
+                    state.dnsGroups.map { it.name },
+            ruleSetTags = state.routeRuleSets.filter { it.enabled }.map { it.tag },
+            onDismiss = { editingRule = null },
+            onSave = { store.upsertRouteRule(it); editingRule = null },
+            onCreateRuleSet = { editingRuleSet = RouteRuleSet() },
+        )
+        return
+    }
+
+    // 规则集编辑器：整页（二级页面）
+    editingRuleSet?.let { rs ->
+        RuleSetEditorDialog(
+            initial = rs,
+            onDismiss = { editingRuleSet = null },
+            onSave = { store.upsertRuleSet(it); editingRuleSet = null },
+            onDelete = if (rs.tag.isNotBlank()) {
+                { store.deleteRuleSet(rs.id); editingRuleSet = null }
+            } else null,
+        )
+        return
+    }
+
     Scaffold(
         floatingActionButton = {
             Box(Modifier.padding(bottom = FabBottomBarClearance)) {
@@ -165,29 +192,6 @@ fun RouteRulesScreen() {
                 onDelete = { store.deleteRouteRule(rule.id) },
             )
         }
-    }
-
-    editingRule?.let { rule ->
-        RouteRuleEditorDialog(
-            initial = rule,
-            dnsOptions = state.dnsServers.filter { it.enabled }.map { it.tag } +
-                    state.dnsGroups.map { it.name },
-            ruleSetTags = state.routeRuleSets.filter { it.enabled }.map { it.tag },
-            onDismiss = { editingRule = null },
-            onSave = { store.upsertRouteRule(it); editingRule = null },
-            onCreateRuleSet = { editingRuleSet = RouteRuleSet() },
-        )
-    }
-
-    editingRuleSet?.let { rs ->
-        RuleSetEditorDialog(
-            initial = rs,
-            onDismiss = { editingRuleSet = null },
-            onSave = { store.upsertRuleSet(it); editingRuleSet = null },
-            onDelete = if (rs.tag.isNotBlank()) {
-                { store.deleteRuleSet(rs.id); editingRuleSet = null }
-            } else null,
-        )
     }
 
     if (showRuleSetManager) {
@@ -845,14 +849,51 @@ private fun RuleSetEditorDialog(
     var typeExpanded by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
 
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(if (initial.tag.isBlank()) "添加规则集" else "编辑规则集") },
-        text = {
+    // 整页编辑器（不再是弹窗）
+    BackHandler(enabled = true) { onDismiss() }
+
+    fun doSave() {
+        if (tag.isBlank()) { error = "tag 不能为空"; return }
+        if (type == RuleSetType.LOCAL) {
+            val ok = runCatching { Json.parseToJsonElement(localContent).jsonObject }.isSuccess
+            if (localContent.isNotBlank() && !ok) { error = "本地规则集 JSON 无效"; return }
+        }
+        onSave(
+            initial.copy(
+                tag = tag.trim(), type = type, url = url.trim(),
+                localContent = localContent,
+                downloadDetour = detour.ifBlank { null },
+                ipv4 = ipv4, ipv6 = ipv6,
+            ),
+        )
+    }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text(if (initial.tag.isBlank()) "添加规则集" else "编辑规则集") },
+                navigationIcon = {
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                    }
+                },
+                actions = {
+                    if (onDelete != null) {
+                        IconButton(onClick = onDelete) {
+                            Icon(Icons.Filled.Delete, contentDescription = "删除", tint = MaterialTheme.colorScheme.error)
+                        }
+                    }
+                    TextButton(onClick = { doSave() }) { Text("保存") }
+                },
+            )
+        },
+    ) { padding ->
             Column(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState()),
+                    .fillMaxSize()
+                    .padding(padding)
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 20.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 OutlinedTextField(
@@ -894,33 +935,7 @@ private fun RuleSetEditorDialog(
                 }
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             }
-        },
-        confirmButton = {
-            TextButton(onClick = {
-                if (tag.isBlank()) { error = "tag 不能为空"; return@TextButton }
-                if (type == RuleSetType.LOCAL) {
-                    val ok = runCatching { Json.parseToJsonElement(localContent).jsonObject }.isSuccess
-                    if (localContent.isNotBlank() && !ok) { error = "本地规则集 JSON 无效"; return@TextButton }
-                }
-                onSave(
-                    initial.copy(
-                        tag = tag.trim(), type = type, url = url.trim(),
-                        localContent = localContent,
-                        downloadDetour = detour.ifBlank { null },
-                        ipv4 = ipv4, ipv6 = ipv6,
-                    ),
-                )
-            }) { Text("保存") }
-        },
-        dismissButton = {
-            Row {
-                if (onDelete != null) {
-                    TextButton(onClick = onDelete) { Text("删除", color = MaterialTheme.colorScheme.error) }
-                }
-                TextButton(onClick = onDismiss) { Text("取消") }
-            }
-        },
-    )
+    }
 }
 
 @Composable
