@@ -117,6 +117,26 @@ class RuleStore private constructor(context: Context) {
         s.copy(proxyNodes = s.proxyNodes.filterNot { it.id == id })
     }
 
+    /** 用订阅解析结果整体替换该订阅下的节点 */
+    fun replaceSubscriptionNodes(subscriptionId: String, nodes: List<ProxyNode>) = update { s ->
+        s.copy(proxyNodes = s.proxyNodes.filterNot { it.subscriptionId == subscriptionId } + nodes)
+    }
+
+    // ---- Subscriptions ----
+    fun upsertSubscription(sub: Subscription) = update { s ->
+        val list = s.subscriptions.toMutableList()
+        val idx = list.indexOfFirst { it.id == sub.id }
+        if (idx >= 0) list[idx] = sub else list.add(sub)
+        s.copy(subscriptions = list)
+    }
+
+    fun deleteSubscription(id: String) = update { s ->
+        s.copy(
+            subscriptions = s.subscriptions.filterNot { it.id == id },
+            proxyNodes = s.proxyNodes.filterNot { it.subscriptionId == id },
+        )
+    }
+
     // ---- Settings ----
     fun updateSettings(settings: AppSettings) = update { s -> s.copy(settings = settings) }
 

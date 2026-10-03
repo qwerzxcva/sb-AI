@@ -253,6 +253,22 @@ class SingBoxConfigGeneratorTest {
     }
 
     @Test
+    fun `dns server ecs and ech emitted`() {
+        val state = AppState(
+            dnsServers = listOf(
+                DnsServer(
+                    tag = "d1", type = DnsServerType.HTTPS, address = "https://dns.google/dns-query",
+                    clientSubnet = "1.0.1.0/24", echEnabled = true,
+                ),
+            ),
+        )
+        val cfg = parse(state)
+        val d1 = cfg["dns"]!!.jsonObject["servers"]!!.jsonArray.first().jsonObject
+        assertEquals("1.0.1.0/24", d1["client_subnet"]!!.jsonPrimitive.content)
+        assertEquals("true", d1["tls"]!!.jsonObject["ech"]!!.jsonObject["enabled"]!!.jsonPrimitive.content)
+    }
+
+    @Test
     fun `default config has tun inbound and dns fallback`() {
         val cfg = parse(AppState())
         val inbounds = cfg["inbounds"]!!.jsonArray

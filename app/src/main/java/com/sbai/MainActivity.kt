@@ -7,7 +7,6 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Balance
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Settings
@@ -26,7 +25,6 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
-import com.sbai.ui.balance.LoadBalanceScreen
 import com.sbai.ui.dns.DnsScreen
 import com.sbai.ui.home.HomeScreen
 import com.sbai.ui.routes.RouteRulesScreen
@@ -37,7 +35,6 @@ sealed class Screen(val route: String, val title: String, val icon: ImageVector)
     data object Home : Screen("home", "首页", Icons.Filled.Home)
     data object Routes : Screen("routes", "路由", Icons.Filled.SwapHoriz)
     data object Dns : Screen("dns", "DNS", Icons.Filled.Dns)
-    data object Balance : Screen("balance", "负载均衡", Icons.Filled.Balance)
     data object Settings : Screen("settings", "设置", Icons.Filled.Settings)
 }
 
@@ -56,7 +53,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun MainScaffold() {
     val navController = rememberNavController()
-    val items = listOf(Screen.Home, Screen.Routes, Screen.Dns, Screen.Balance, Screen.Settings)
+    val items = listOf(Screen.Home, Screen.Routes, Screen.Dns, Screen.Settings)
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
 
@@ -91,7 +88,6 @@ private fun MainScaffold() {
             composable(Screen.Home.route) { HomeScreen() }
             composable(Screen.Routes.route) { RouteRulesScreen() }
             composable(Screen.Dns.route) { DnsScreen() }
-            composable(Screen.Balance.route) { LoadBalanceScreen() }
             composable(Screen.Settings.route) { SettingsScreen() }
         }
     }

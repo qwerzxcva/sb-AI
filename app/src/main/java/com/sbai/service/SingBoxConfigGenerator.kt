@@ -265,6 +265,20 @@ object SingBoxConfigGenerator {
                 }
                 s.detour?.takeIf { it.isNotBlank() }?.let { put("detour", it) }
                 s.addressResolver?.takeIf { it.isNotBlank() }?.let { put("address_resolver", it) }
+                // ECS（EDNS Client Subnet）
+                s.clientSubnet?.takeIf { it.isNotBlank() }?.let { put("client_subnet", it) }
+                // ECH（Encrypted Client Hello）：仅加密类 DNS 有效
+                if (s.echEnabled && s.type in setOf(DnsServerType.TLS, DnsServerType.HTTPS, DnsServerType.QUIC, DnsServerType.H3)) {
+                    putJsonObject("tls") {
+                        put("enabled", true)
+                        putJsonObject("ech") {
+                            put("enabled", true)
+                            s.echConfig?.takeIf { it.isNotBlank() }?.let {
+                                putJsonArray("config") { add(it) }
+                            }
+                        }
+                    }
+                }
             })
         }
         return result

@@ -95,6 +95,12 @@ data class DnsServer(
     val address: String = "",            // 如 223.5.5.5 / tls://8.8.8.8 / https://dns.google/dns-query
     val addressResolver: String? = null, // 解析 address 所用的 DNS（可选）
     val detour: String? = null,          // 出口（可选，可为空 = 无需指定出口）
+    /** ECS（EDNS Client Subnet）：CIDR（如 1.0.1.0/24）或 "auto"；空 = 不启用 */
+    val clientSubnet: String? = null,
+    /** ECH（Encrypted Client Hello），仅 tls/https/quic/h3 有效 */
+    val echEnabled: Boolean = false,
+    /** ECH 配置（PEM/echconfiglist），可选；留空表示仅启用 ECH 自动获取 */
+    val echConfig: String? = null,
 )
 
 @Serializable
@@ -153,7 +159,7 @@ data class LoadBalanceConfig(
 )
 
 // ---------------------------------------------------------------------------
-// Proxy nodes（v1：以 sing-box outbound JSON 形式导入）
+// Proxy nodes（订阅解析或手动 JSON）
 // ---------------------------------------------------------------------------
 
 @Serializable
@@ -163,6 +169,21 @@ data class ProxyNode(
     val enabled: Boolean = true,
     /** sing-box outbound 对象的原始 JSON（必须含 type / tag） */
     val outboundJson: String = "",
+    /** 来源订阅 id；手动添加为 null */
+    val subscriptionId: String? = null,
+)
+
+/** 订阅源：拉取分享链接并解析为节点 */
+@Serializable
+data class Subscription(
+    val id: String = UUID.randomUUID().toString(),
+    val name: String = "",
+    val url: String = "",
+    val enabled: Boolean = true,
+    val autoUpdate: Boolean = true,
+    val lastUpdatedAt: Long = 0L,
+    val lastError: String? = null,
+    val nodeCount: Int = 0,
 )
 
 // ---------------------------------------------------------------------------
@@ -195,5 +216,6 @@ data class AppState(
     val dnsGroups: List<DnsGroup> = emptyList(),
     val loadBalance: LoadBalanceConfig = LoadBalanceConfig(),
     val proxyNodes: List<ProxyNode> = emptyList(),
+    val subscriptions: List<Subscription> = emptyList(),
     val settings: AppSettings = AppSettings(),
 )

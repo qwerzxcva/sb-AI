@@ -1,11 +1,13 @@
 package com.sbai.ui.home
 
 import android.app.Activity
+import android.content.Context
 import android.content.Intent
 import android.net.VpnService
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -13,47 +15,74 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Balance
+import androidx.compose.material.icons.filled.CloudDownload
+import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Hub
+import androidx.compose.material.icons.filled.PowerSettingsNew
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Router
+import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material.icons.filled.Widgets
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.jsonObject
+import com.sbai.data.LoadBalanceConfig
+import com.sbai.data.LoadBalanceMode
 import com.sbai.data.ProxyNode
 import com.sbai.data.RuleStore
+import com.sbai.data.Subscription
 import com.sbai.service.SbAiVpnService
 import com.sbai.service.SingBoxConfigGenerator
+import com.sbai.service.SubscriptionManager
+import com.sbai.ui.components.SbBadge
+import com.sbai.ui.components.SbCollapsibleGroup
+import com.sbai.ui.components.SbGroup
+import com.sbai.ui.components.SbItem
+import com.sbai.ui.components.SbSpacer
+import com.sbai.ui.components.SbSwitchItem
+import com.sbai.ui.theme.LocalSbStyleTokens
+import kotlinx.coroutines.launch
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -62,181 +91,419 @@ fun HomeScreen() {
     val store = remember { RuleStore.get(context) }
     val state by store.state.collectAsState()
     val status by SbAiVpnService.status.collectAsState()
+    val scope = rememberCoroutineScope()
+    val tokens = LocalSbStyleTokens.current
 
-    var showNodeEditor by remember { mutableStateOf<ProxyNode?>(null) }
+    val subManager = remember { SubscriptionManager(store) }
+    var refreshingId by remember { mutableStateOf<String?>(null) }
+
+    var editingNode by remember { mutableStateOf<ProxyNode?>(null) }
+    var editingSub by remember { mutableStateOf<Subscription?>(null) }
     var showConfigPreview by remember { mutableStateOf(false) }
+    var showModeDialog by remember { mutableStateOf(false) }
+    var showNodesPicker by remember { mutableStateOf(false) }
+    var editingText by remember { mutableStateOf<Triple<String, String, (String) -> Unit>?>(null) }
 
     val vpnPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult(),
     ) { result ->
-        if (result.resultCode == Activity.RESULT_OK) {
-            startVpn(context)
-        }
+        if (result.resultCode == Activity.RESULT_OK) startVpn(context)
     }
 
-    Scaffold(
-        topBar = { TopAppBar(title = { Text("sb-AI") }) },
-        floatingActionButton = {
-            ExtendedFloatingActionButton(
-                onClick = {
-                    when (status) {
-                        is SbAiVpnService.ServiceStatus.Running -> stopVpn(context)
-                        else -> {
-                            val intent = VpnService.prepare(context)
-                            if (intent != null) {
-                                vpnPermissionLauncher.launch(intent)
-                            } else {
-                                startVpn(context)
-                            }
-                        }
-                    }
-                },
-                icon = {
-                    Icon(
-                        if (status is SbAiVpnService.ServiceStatus.Running) Icons.Filled.Stop else Icons.Filled.PlayArrow,
-                        contentDescription = null,
-                    )
-                },
-                text = {
-                    Text(
-                        when (status) {
-                            is SbAiVpnService.ServiceStatus.Running -> "停止"
-                            is SbAiVpnService.ServiceStatus.Starting -> "启动中…"
-                            is SbAiVpnService.ServiceStatus.Stopping -> "停止中…"
-                            is SbAiVpnService.ServiceStatus.Error -> "启动（上次失败）"
-                            else -> "启动"
-                        },
-                    )
-                },
-            )
-        },
-    ) { padding ->
+    val running = status is SbAiVpnService.ServiceStatus.Running
+    val lb = state.loadBalance
+
+    Scaffold { padding ->
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+                .padding(horizontal = tokens.screenHorizontalPadding),
+            verticalArrangement = Arrangement.spacedBy(0.dp),
         ) {
+            // ---- 顶部状态区 ----
             item {
-                StatusCard(status)
-            }
-
-            item {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text("节点（${state.proxyNodes.size}）", style = MaterialTheme.typography.titleMedium)
-                    Row {
-                        OutlinedButton(onClick = { showConfigPreview = true }) { Text("预览配置") }
-                        Spacer(Modifier.padding(4.dp))
-                        Button(onClick = { showNodeEditor = ProxyNode() }) {
-                            Icon(Icons.Filled.Add, contentDescription = null)
-                            Text("添加")
+                Spacer(Modifier.height(24.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("sb-AI", style = MaterialTheme.typography.headlineLarge)
+                        Text(
+                            statusText(status),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = when (status) {
+                                is SbAiVpnService.ServiceStatus.Running -> MaterialTheme.colorScheme.primary
+                                is SbAiVpnService.ServiceStatus.Error -> MaterialTheme.colorScheme.error
+                                else -> MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                        )
+                    }
+                    // 大号启动按钮
+                    Surface(
+                        onClick = {
+                            when {
+                                running -> stopVpn(context)
+                                status is SbAiVpnService.ServiceStatus.Starting ||
+                                    status is SbAiVpnService.ServiceStatus.Stopping -> Unit
+                                else -> {
+                                    val intent = VpnService.prepare(context)
+                                    if (intent != null) vpnPermissionLauncher.launch(intent) else startVpn(context)
+                                }
+                            }
+                        },
+                        shape = RoundedCornerShape(tokens.groupCornerRadius),
+                        color = if (running) MaterialTheme.colorScheme.errorContainer
+                        else MaterialTheme.colorScheme.primaryContainer,
+                        modifier = Modifier.size(72.dp),
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                Icons.Filled.PowerSettingsNew,
+                                contentDescription = if (running) "停止" else "启动",
+                                tint = if (running) MaterialTheme.colorScheme.onErrorContainer
+                                else MaterialTheme.colorScheme.onPrimaryContainer,
+                                modifier = Modifier.size(32.dp),
+                            )
                         }
                     }
                 }
+                SbSpacer()
             }
 
-            items(state.proxyNodes, key = { it.id }) { node ->
-                NodeCard(
-                    node = node,
-                    onToggle = { store.upsertProxyNode(node.copy(enabled = !node.enabled)) },
-                    onEdit = { showNodeEditor = node },
-                    onDelete = { store.deleteProxyNode(node.id) },
-                )
+            // ---- 代理出口（负载均衡内嵌，不再单独一页） ----
+            item {
+                SbGroup(title = "代理出口") {
+                    item {
+                        SbSwitchItem(
+                            title = "负载均衡",
+                            subtitle = if (lb.enabled) lb.mode.displayName else "关闭",
+                            icon = Icons.Filled.Balance,
+                            checked = lb.enabled,
+                            onCheckedChange = { store.updateLoadBalance(lb.copy(enabled = it)) },
+                        )
+                    }
+                    if (lb.enabled) {
+                        item {
+                            SbItem(
+                                title = "模式",
+                                subtitle = lb.mode.displayName,
+                                icon = Icons.Filled.Router,
+                                onClick = { showModeDialog = true },
+                            )
+                        }
+                        item {
+                            SbSwitchItem(
+                                title = "自动模式",
+                                subtitle = "在负载均衡组之上自动优选最优出口",
+                                icon = Icons.Filled.Sync,
+                                checked = lb.autoEnabled,
+                                onCheckedChange = { store.updateLoadBalance(lb.copy(autoEnabled = it)) },
+                            )
+                        }
+                        item {
+                            SbItem(
+                                title = "参与节点",
+                                subtitle = if (lb.outbounds.isEmpty()) "全部节点" else lb.outbounds.joinToString(),
+                                icon = Icons.Filled.Hub,
+                                onClick = { showNodesPicker = true },
+                            )
+                        }
+                    }
+                    item {
+                        SbItem(
+                            title = "配置预览",
+                            subtitle = "查看生成的 sing-box 配置",
+                            icon = Icons.Filled.Code,
+                            onClick = { showConfigPreview = true },
+                        )
+                    }
+                }
+                SbSpacer()
             }
 
-            if (state.proxyNodes.isEmpty()) {
+            // ---- 负载均衡高级参数（折叠） ----
+            if (lb.enabled) {
                 item {
-                    Text(
-                        "暂无节点。点击「添加」粘贴 sing-box outbound JSON。",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    SbCollapsibleGroup(
+                        title = "负载均衡参数",
+                        summary = "测速 URL · 间隔 ${lb.intervalSeconds}s · tolerance ${lb.toleranceMs}ms",
+                    ) {
+                        item {
+                            SbItem(title = "测速 URL", subtitle = lb.checkUrl, onClick = {
+                                editingText = Triple("测速 URL", lb.checkUrl) { v ->
+                                    store.updateLoadBalance(lb.copy(checkUrl = v.trim()))
+                                }
+                            })
+                        }
+                        item {
+                            SbItem(title = "测速间隔（秒）", subtitle = lb.intervalSeconds.toString(), onClick = {
+                                editingText = Triple("测速间隔（秒）", lb.intervalSeconds.toString()) { v ->
+                                    v.toIntOrNull()?.let { n -> store.updateLoadBalance(lb.copy(intervalSeconds = n)) }
+                                }
+                            })
+                        }
+                        item {
+                            SbItem(title = "tolerance（毫秒）", subtitle = lb.toleranceMs.toString(), onClick = {
+                                editingText = Triple("tolerance（毫秒）", lb.toleranceMs.toString()) { v ->
+                                    v.toIntOrNull()?.let { n -> store.updateLoadBalance(lb.copy(toleranceMs = n)) }
+                                }
+                            })
+                        }
+                        item {
+                            SbItem(title = "idle_timeout（秒）", subtitle = lb.idleTimeoutSeconds.toString(), onClick = {
+                                editingText = Triple("idle_timeout（秒）", lb.idleTimeoutSeconds.toString()) { v ->
+                                    v.toIntOrNull()?.let { n -> store.updateLoadBalance(lb.copy(idleTimeoutSeconds = n)) }
+                                }
+                            })
+                        }
+                        item {
+                            SbSwitchItem(
+                                title = "切换时中断已有连接",
+                                checked = lb.interruptExistConnections,
+                                onCheckedChange = { store.updateLoadBalance(lb.copy(interruptExistConnections = it)) },
+                            )
+                        }
+                    }
+                    SbSpacer()
                 }
             }
 
-            item { Spacer(Modifier.height(80.dp)) }
+            // ---- 订阅源 ----
+            item {
+                SbGroup(title = "订阅源") {
+                    state.subscriptions.forEach { sub ->
+                        item {
+                            SbItem(
+                                title = sub.name.ifBlank { sub.url },
+                                subtitle = sub.lastError?.let { "错误: $it" }
+                                    ?: "${sub.nodeCount} 节点 · ${formatTime(sub.lastUpdatedAt)}",
+                                icon = Icons.Filled.CloudDownload,
+                                onClick = { editingSub = sub },
+                                trailing = {
+                                    if (refreshingId == sub.id) {
+                                        CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                                    } else {
+                                        IconButton(onClick = {
+                                            refreshingId = sub.id
+                                            scope.launch {
+                                                subManager.refresh(sub)
+                                                refreshingId = null
+                                            }
+                                        }) { Icon(Icons.Filled.Refresh, contentDescription = "更新") }
+                                    }
+                                },
+                            )
+                        }
+                    }
+                    item {
+                        SbItem(
+                            title = "添加订阅源",
+                            subtitle = "支持 vless / vmess / trojan / ss / hysteria2 分享链接",
+                            icon = Icons.Filled.Add,
+                            onClick = { editingSub = Subscription() },
+                        )
+                    }
+                    if (state.subscriptions.size > 1) {
+                        item {
+                            SbItem(
+                                title = "全部更新",
+                                icon = Icons.Filled.Refresh,
+                                onClick = {
+                                    scope.launch {
+                                        state.subscriptions.filter { it.enabled }.forEach { sub ->
+                                            refreshingId = sub.id
+                                            subManager.refresh(sub)
+                                        }
+                                        refreshingId = null
+                                    }
+                                },
+                            )
+                        }
+                    }
+                }
+                SbSpacer()
+            }
+
+            // ---- 节点 ----
+            item {
+                SbGroup(title = "节点（${state.proxyNodes.size}）") {
+                    state.proxyNodes.take(20).forEach { node ->
+                        item {
+                            SbItem(
+                                title = node.name.ifBlank { "未命名节点" },
+                                subtitle = node.outboundJson.nodeSummary(),
+                                icon = Icons.Filled.Widgets,
+                                onClick = { editingNode = node },
+                                trailing = {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Switch(
+                                            checked = node.enabled,
+                                            onCheckedChange = { store.upsertProxyNode(node.copy(enabled = !node.enabled)) },
+                                        )
+                                        IconButton(onClick = { store.deleteProxyNode(node.id) }) {
+                                            Icon(Icons.Filled.Delete, contentDescription = "删除")
+                                        }
+                                    }
+                                },
+                            )
+                        }
+                    }
+                    if (state.proxyNodes.size > 20) {
+                        item { SbItem(title = "… 共 ${state.proxyNodes.size} 个节点", subtitle = "显示前 20 个") }
+                    }
+                    item {
+                        SbItem(
+                            title = "手动添加节点",
+                            subtitle = "粘贴 sing-box outbound JSON",
+                            icon = Icons.Filled.Add,
+                            onClick = { editingNode = ProxyNode() },
+                        )
+                    }
+                }
+                Spacer(Modifier.height(96.dp))
+            }
         }
     }
 
-    showNodeEditor?.let { node ->
+    // ---- 对话框 ----
+    editingNode?.let { node ->
         NodeEditorDialog(
             initial = node,
-            onDismiss = { showNodeEditor = null },
-            onSave = {
-                store.upsertProxyNode(it)
-                showNodeEditor = null
-            },
+            onDismiss = { editingNode = null },
+            onSave = { store.upsertProxyNode(it); editingNode = null },
+        )
+    }
+
+    editingSub?.let { sub ->
+        SubscriptionEditorDialog(
+            initial = sub,
+            onDismiss = { editingSub = null },
+            onSave = { store.upsertSubscription(it); editingSub = null },
+            onDelete = if (sub.url.isNotBlank()) {
+                { store.deleteSubscription(sub.id); editingSub = null }
+            } else null,
         )
     }
 
     if (showConfigPreview) {
         ConfigPreviewDialog(
-            config = runCatching { SingBoxConfigGenerator.generate(state) }
-                .getOrElse { "生成失败: ${it.message}" },
+            config = runCatching { SingBoxConfigGenerator.generate(state) }.getOrElse { "生成失败: ${it.message}" },
             onDismiss = { showConfigPreview = false },
+        )
+    }
+
+    if (showModeDialog) {
+        AlertDialog(
+            onDismissRequest = { showModeDialog = false },
+            title = { Text("负载均衡模式") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    LoadBalanceMode.entries.forEach { mode ->
+                        Surface(
+                            onClick = {
+                                store.updateLoadBalance(lb.copy(mode = mode))
+                                showModeDialog = false
+                            },
+                            shape = RoundedCornerShape(16.dp),
+                            color = if (lb.mode == mode) MaterialTheme.colorScheme.primaryContainer
+                            else MaterialTheme.colorScheme.surfaceContainer,
+                        ) {
+                            Column(Modifier.padding(16.dp)) {
+                                Text(mode.displayName, style = MaterialTheme.typography.titleSmall)
+                                Text(
+                                    when (mode) {
+                                        LoadBalanceMode.LATENCY -> "urltest：始终选延迟最低的节点"
+                                        LoadBalanceMode.BALANCED -> "urltest+tolerance：在可接受延迟内分摊节点"
+                                        LoadBalanceMode.MANUAL -> "selector：手动切换出口"
+                                    },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { showModeDialog = false }) { Text("关闭") } },
+        )
+    }
+
+    if (showNodesPicker) {
+        val nodeTags = state.proxyNodes.filter { it.enabled }.map { it.name.ifBlank { it.id } }
+        AlertDialog(
+            onDismissRequest = { showNodesPicker = false },
+            title = { Text("参与负载均衡的节点") },
+            text = {
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text("全部不选 = 使用全部启用节点", style = MaterialTheme.typography.bodySmall)
+                    nodeTags.forEach { tag ->
+                        FilterChip(
+                            selected = lb.outbounds.isEmpty() || tag in lb.outbounds,
+                            onClick = {
+                                val current = if (lb.outbounds.isEmpty()) nodeTags else lb.outbounds
+                                val next = if (tag in current) current - tag else current + tag
+                                store.updateLoadBalance(
+                                    lb.copy(outbounds = if (next.size == nodeTags.size) emptyList() else next),
+                                )
+                            },
+                            label = { Text(tag) },
+                        )
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { showNodesPicker = false }) { Text("完成") } },
+        )
+    }
+
+    editingText?.let { (title, initialValue, onDone) ->
+        TextEditDialog(
+            title = title,
+            initial = initialValue,
+            onDismiss = { editingText = null },
+            onDone = { onDone(it); editingText = null },
         )
     }
 }
 
-@Composable
-private fun StatusCard(status: SbAiVpnService.ServiceStatus) {
-    val (text, color) = when (status) {
-        is SbAiVpnService.ServiceStatus.Running ->
-            "运行中" to MaterialTheme.colorScheme.primary
-        is SbAiVpnService.ServiceStatus.Starting ->
-            "启动中…" to MaterialTheme.colorScheme.tertiary
-        is SbAiVpnService.ServiceStatus.Stopping ->
-            "停止中…" to MaterialTheme.colorScheme.tertiary
-        is SbAiVpnService.ServiceStatus.Error ->
-            "错误: ${status.message}" to MaterialTheme.colorScheme.error
-        else -> "已停止" to MaterialTheme.colorScheme.onSurfaceVariant
-    }
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-    ) {
-        Column(Modifier.padding(16.dp)) {
-            Text("服务状态", style = MaterialTheme.typography.labelMedium)
-            Spacer(Modifier.height(4.dp))
-            Text(text, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, color = color)
-        }
-    }
+// ---------------------------------------------------------------------------
+// 辅助
+// ---------------------------------------------------------------------------
+
+private fun statusText(status: SbAiVpnService.ServiceStatus): String = when (status) {
+    is SbAiVpnService.ServiceStatus.Running -> "运行中"
+    is SbAiVpnService.ServiceStatus.Starting -> "启动中…"
+    is SbAiVpnService.ServiceStatus.Stopping -> "停止中…"
+    is SbAiVpnService.ServiceStatus.Error -> "错误: ${status.message}"
+    else -> "已停止"
 }
 
-@Composable
-private fun NodeCard(
-    node: ProxyNode,
-    onToggle: () -> Unit,
-    onEdit: () -> Unit,
-    onDelete: () -> Unit,
-) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text(node.name.ifBlank { "未命名节点" }, style = MaterialTheme.typography.titleSmall)
-                Text(
-                    node.outboundJson.take(80),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                )
-            }
-            Switch(checked = node.enabled, onCheckedChange = { onToggle() })
-            IconButton(onClick = onEdit) { Text("✎") }
-            IconButton(onClick = onDelete) { Icon(Icons.Filled.Delete, contentDescription = "删除") }
-        }
-    }
+private fun formatTime(epoch: Long): String =
+    if (epoch <= 0) "未更新"
+    else SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()).format(Date(epoch))
+
+private fun String.nodeSummary(): String = runCatching {
+    val obj = Json.parseToJsonElement(this).jsonObject
+    val type = obj["type"]?.toString()?.trim('"').orEmpty()
+    val server = obj["server"]?.toString()?.trim('"').orEmpty()
+    val port = obj["server_port"]?.toString().orEmpty()
+    "$type · $server:$port"
+}.getOrDefault("")
+
+private fun startVpn(context: Context) {
+    val intent = Intent(context, SbAiVpnService::class.java).setAction(SbAiVpnService.ACTION_START)
+    ContextCompat.startForegroundService(context, intent)
 }
+
+private fun stopVpn(context: Context) {
+    val intent = Intent(context, SbAiVpnService::class.java).setAction(SbAiVpnService.ACTION_STOP)
+    context.startService(intent)
+}
+
+// ---------------------------------------------------------------------------
+// 对话框
+// ---------------------------------------------------------------------------
 
 @Composable
 private fun NodeEditorDialog(
@@ -253,19 +520,11 @@ private fun NodeEditorDialog(
         title = { Text(if (initial.outboundJson.isBlank()) "添加节点" else "编辑节点") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("名称") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(
-                    value = name,
-                    onValueChange = { name = it },
-                    label = { Text("名称") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                OutlinedTextField(
-                    value = json,
-                    onValueChange = { json = it },
+                    value = json, onValueChange = { json = it },
                     label = { Text("sing-box outbound JSON") },
-                    modifier = Modifier.fillMaxWidth(),
-                    minLines = 4,
+                    modifier = Modifier.fillMaxWidth(), minLines = 4,
                     placeholder = { Text("{\"type\":\"vless\",\"tag\":\"...\",...}") },
                 )
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
@@ -273,15 +532,11 @@ private fun NodeEditorDialog(
         },
         confirmButton = {
             TextButton(onClick = {
-                val parsed = runCatching {
-                    Json.parseToJsonElement(json).jsonObject
-                }.getOrElse {
-                    error = "JSON 无效: ${it.message}"
-                    return@TextButton
+                val parsed = runCatching { Json.parseToJsonElement(json).jsonObject }.getOrElse {
+                    error = "JSON 无效: ${it.message}"; return@TextButton
                 }
                 if (parsed["type"] == null || parsed["tag"] == null) {
-                    error = "outbound 必须包含 type 与 tag"
-                    return@TextButton
+                    error = "outbound 必须包含 type 与 tag"; return@TextButton
                 }
                 onSave(initial.copy(name = name, outboundJson = json))
             }) { Text("保存") }
@@ -291,29 +546,73 @@ private fun NodeEditorDialog(
 }
 
 @Composable
+private fun SubscriptionEditorDialog(
+    initial: Subscription,
+    onDismiss: () -> Unit,
+    onSave: (Subscription) -> Unit,
+    onDelete: (() -> Unit)?,
+) {
+    var name by remember { mutableStateOf(initial.name) }
+    var url by remember { mutableStateOf(initial.url) }
+    var autoUpdate by remember { mutableStateOf(initial.autoUpdate) }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (initial.url.isBlank()) "添加订阅源" else "订阅源") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("名称") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = url, onValueChange = { url = it }, label = { Text("订阅 URL") }, modifier = Modifier.fillMaxWidth(), minLines = 2)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Switch(checked = autoUpdate, onCheckedChange = { autoUpdate = it })
+                    Spacer(Modifier.size(8.dp))
+                    Text("自动更新")
+                }
+                error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                if (!url.startsWith("http://") && !url.startsWith("https://")) {
+                    error = "请输入 http/https 订阅地址"; return@TextButton
+                }
+                onSave(initial.copy(name = name.trim(), url = url.trim(), autoUpdate = autoUpdate))
+            }) { Text("保存") }
+        },
+        dismissButton = {
+            Row {
+                if (onDelete != null) {
+                    TextButton(onClick = onDelete) { Text("删除", color = MaterialTheme.colorScheme.error) }
+                }
+                TextButton(onClick = onDismiss) { Text("取消") }
+            }
+        },
+    )
+}
+
+@Composable
 private fun ConfigPreviewDialog(config: String, onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("sing-box 配置预览") },
         text = {
-            OutlinedTextField(
-                value = config,
-                onValueChange = {},
-                readOnly = true,
-                modifier = Modifier.fillMaxWidth(),
-                minLines = 12,
-            )
+            OutlinedTextField(value = config, onValueChange = {}, readOnly = true, modifier = Modifier.fillMaxWidth(), minLines = 12)
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } },
     )
 }
 
-private fun startVpn(context: android.content.Context) {
-    val intent = Intent(context, SbAiVpnService::class.java).setAction(SbAiVpnService.ACTION_START)
-    ContextCompat.startForegroundService(context, intent)
-}
-
-private fun stopVpn(context: android.content.Context) {
-    val intent = Intent(context, SbAiVpnService::class.java).setAction(SbAiVpnService.ACTION_STOP)
-    context.startService(intent)
+@Composable
+private fun TextEditDialog(title: String, initial: String, onDismiss: () -> Unit, onDone: (String) -> Unit) {
+    var value by remember { mutableStateOf(initial) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            OutlinedTextField(value = value, onValueChange = { value = it }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        },
+        confirmButton = { TextButton(onClick = { onDone(value) }) { Text("确定") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
 }
