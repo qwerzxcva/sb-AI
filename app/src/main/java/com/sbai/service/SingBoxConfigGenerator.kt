@@ -4,6 +4,7 @@ import com.sbai.data.AppSettings
 import com.sbai.data.AppState
 import com.sbai.data.DnsServerType
 import com.sbai.data.LoadBalanceMode
+import com.sbai.data.PerAppProxyMode
 import com.sbai.data.RouteRule
 import com.sbai.data.RuleAction
 import com.sbai.data.RuleLogic
@@ -204,6 +205,16 @@ object SingBoxConfigGenerator {
                     put("stack", "mixed")
                     put("sniff", true)
                     put("sniff_override_destination", false)
+
+                    // 分应用代理（LxBox 基准）
+                    val pap = state.settings.perAppProxy
+                    when (pap.mode) {
+                        PerAppProxyMode.INCLUDE ->
+                            putJsonArray("include_package") { pap.packages.forEach(::add) }
+                        PerAppProxyMode.EXCLUDE ->
+                            putJsonArray("exclude_package") { pap.packages.forEach(::add) }
+                        PerAppProxyMode.OFF -> Unit
+                    }
                 })
             }
 

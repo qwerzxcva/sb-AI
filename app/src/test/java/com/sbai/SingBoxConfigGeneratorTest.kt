@@ -269,6 +269,36 @@ class SingBoxConfigGeneratorTest {
     }
 
     @Test
+    fun `per-app proxy include and exclude`() {
+        val include = parse(
+            AppState(
+                settings = com.sbai.data.AppSettings(
+                    perAppProxy = com.sbai.data.PerAppProxy(
+                        mode = com.sbai.data.PerAppProxyMode.INCLUDE,
+                        packages = listOf("com.example.a", "com.example.b"),
+                    ),
+                ),
+            ),
+        )
+        val tun = include["inbounds"]!!.jsonArray.first().jsonObject
+        assertEquals(2, tun["include_package"]!!.jsonArray.size)
+
+        val exclude = parse(
+            AppState(
+                settings = com.sbai.data.AppSettings(
+                    perAppProxy = com.sbai.data.PerAppProxy(
+                        mode = com.sbai.data.PerAppProxyMode.EXCLUDE,
+                        packages = listOf("com.example.c"),
+                    ),
+                ),
+            ),
+        )
+        val tun2 = exclude["inbounds"]!!.jsonArray.first().jsonObject
+        assertEquals(1, tun2["exclude_package"]!!.jsonArray.size)
+        assertTrue(!tun2.containsKey("include_package"))
+    }
+
+    @Test
     fun `default config has tun inbound and dns fallback`() {
         val cfg = parse(AppState())
         val inbounds = cfg["inbounds"]!!.jsonArray

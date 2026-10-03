@@ -140,6 +140,9 @@ class RuleStore private constructor(context: Context) {
     // ---- Settings ----
     fun updateSettings(settings: AppSettings) = update { s -> s.copy(settings = settings) }
 
+    /** 备份导入：整体替换应用状态 */
+    fun replaceAll(state: AppState) = persist(state)
+
     companion object {
         private const val PREFS_NAME = "sb_ai_rules"
         private const val KEY_STATE = "app_state"

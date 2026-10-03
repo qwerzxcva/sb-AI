@@ -59,7 +59,8 @@ class SbAiVpnService : VpnService() {
                 LibboxRuntime.setup(this@SbAiVpnService)
 
                 val state = RuleStore.get(this@SbAiVpnService).state.value
-                val config = SingBoxConfigGenerator.generate(state)
+                val config = state.settings.customConfig?.takeIf { it.isNotBlank() }
+                    ?: SingBoxConfigGenerator.generate(state)
 
                 val configFile = LibboxRuntime.configFile(this@SbAiVpnService)
                 configFile.parentFile?.mkdirs()
@@ -68,6 +69,9 @@ class SbAiVpnService : VpnService() {
                 val platform = SbPlatformInterface(this@SbAiVpnService)
                 val rt = LibboxServiceRuntime(platform) { stopVpn() }
                 rt.start(config)
+
+                runCatching { SbCommandClient.connect() }
+                    .onFailure { Log.w(TAG, "command client unavailable", it) }
 
                 platformInterface = platform
                 runtime = rt
@@ -84,6 +88,7 @@ class SbAiVpnService : VpnService() {
     private fun stopVpn() {
         _status.value = ServiceStatus.Stopping
         scope.launch {
+            SbCommandClient.disconnect()
             runCatching { runtime?.stop() }
             runtime = null
             platformInterface = null

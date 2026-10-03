@@ -9,6 +9,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -25,6 +27,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Balance
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Hub
@@ -68,6 +71,7 @@ import com.sbai.data.ProxyNode
 import com.sbai.data.RuleStore
 import com.sbai.data.Subscription
 import com.sbai.service.SbAiVpnService
+import com.sbai.service.SbCommandClient
 import com.sbai.service.SingBoxConfigGenerator
 import com.sbai.service.SubscriptionManager
 import com.sbai.ui.components.SbBadge
@@ -84,13 +88,15 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun HomeScreen() {
     val context = LocalContext.current
     val store = remember { RuleStore.get(context) }
     val state by store.state.collectAsState()
     val status by SbAiVpnService.status.collectAsState()
+    val commandStatus by SbCommandClient.status.collectAsState()
+    val proxyGroups by SbCommandClient.groups.collectAsState()
     val scope = rememberCoroutineScope()
     val tokens = LocalSbStyleTokens.current
 
@@ -103,6 +109,7 @@ fun HomeScreen() {
     var showModeDialog by remember { mutableStateOf(false) }
     var showNodesPicker by remember { mutableStateOf(false) }
     var editingText by remember { mutableStateOf<Triple<String, String, (String) -> Unit>?>(null) }
+    var importResult by remember { mutableStateOf<String?>(null) }
 
     val vpnPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult(),
@@ -136,6 +143,14 @@ fun HomeScreen() {
                                 else -> MaterialTheme.colorScheme.onSurfaceVariant
                             },
                         )
+                        if (running) {
+                            Text(
+                                "↑ ${com.sbai.ui.monitor.formatSpeed(commandStatus.uplink)} · " +
+                                    "↓ ${com.sbai.ui.monitor.formatSpeed(commandStatus.downlink)}",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.secondary,
+                            )
+                        }
                     }
                     // 大号启动按钮
                     Surface(
@@ -218,6 +233,51 @@ fun HomeScreen() {
                     }
                 }
                 SbSpacer()
+            }
+
+            // ---- 代理组（运行中：延迟/切换/测速） ----
+            if (running && proxyGroups.isNotEmpty()) {
+                item {
+                    SbGroup(title = "代理组") {
+                        proxyGroups.forEach { group ->
+                            item {
+                                Column(Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Column(Modifier.weight(1f)) {
+                                            Text(group.tag, style = MaterialTheme.typography.titleSmall)
+                                            Text(
+                                                "${group.type} · 当前: ${group.selected.ifBlank { "—" }}",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            )
+                                        }
+                                        if (group.type == "urltest") {
+                                            TextButton(onClick = { SbCommandClient.urlTest(group.tag) }) { Text("测速") }
+                                        }
+                                    }
+                                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        group.items.take(30).forEach { item ->
+                                            val selected = item.tag == group.selected
+                                            FilterChip(
+                                                selected = selected,
+                                                onClick = {
+                                                    if (group.selectable && !selected) {
+                                                        SbCommandClient.selectOutbound(group.tag, item.tag)
+                                                    }
+                                                },
+                                                label = {
+                                                    val delay = if (item.delay > 0) "${item.delay}ms" else ""
+                                                    Text(if (delay.isBlank()) item.tag else "${item.tag} · $delay")
+                                                },
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    SbSpacer()
+                }
             }
 
             // ---- 负载均衡高级参数（折叠） ----
@@ -358,8 +418,36 @@ fun HomeScreen() {
                             onClick = { editingNode = ProxyNode() },
                         )
                     }
+                    item {
+                        SbItem(
+                            title = "从剪贴板导入",
+                            subtitle = "解析分享链接（vless/vmess/trojan/ss/hysteria2）",
+                            icon = Icons.Filled.ContentPaste,
+                            onClick = {
+                                val clip = clipboardText(context)
+                                if (clip.isNullOrBlank()) {
+                                    importResult = "剪贴板为空"
+                                } else {
+                                    val parsed = com.sbai.service.ShareLinkParser.parseSubscription(clip)
+                                    if (parsed.isEmpty()) {
+                                        importResult = "未识别到可解析的节点链接"
+                                    } else {
+                                        parsed.forEach { p ->
+                                            store.upsertProxyNode(ProxyNode(name = p.name, outboundJson = p.outboundJson))
+                                        }
+                                        importResult = "已导入 ${parsed.size} 个节点"
+                                    }
+                                }
+                            },
+                        )
+                    }
+                    importResult?.let { msg ->
+                        item {
+                            SbItem(title = "导入结果", subtitle = msg)
+                        }
+                    }
                 }
-                Spacer(Modifier.height(96.dp))
+                Spacer(Modifier.height(120.dp))
             }
         }
     }
@@ -490,6 +578,11 @@ private fun String.nodeSummary(): String = runCatching {
     val port = obj["server_port"]?.toString().orEmpty()
     "$type · $server:$port"
 }.getOrDefault("")
+
+private fun clipboardText(context: Context): String? = runCatching {
+    val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+    cm.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(context)?.toString()
+}.getOrNull()
 
 private fun startVpn(context: Context) {
     val intent = Intent(context, SbAiVpnService::class.java).setAction(SbAiVpnService.ACTION_START)

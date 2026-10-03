@@ -193,6 +193,16 @@ data class Subscription(
 @Serializable
 enum class LogLevel(val wireName: String) { TRACE("trace"), DEBUG("debug"), INFO("info"), WARN("warn"), ERROR("error"), FATAL("fatal"), PANIC("panic") }
 
+/** 分应用代理（LxBox 基准：include/exclude 名单） */
+@Serializable
+enum class PerAppProxyMode { OFF, INCLUDE, EXCLUDE }
+
+@Serializable
+data class PerAppProxy(
+    val mode: PerAppProxyMode = PerAppProxyMode.OFF,
+    val packages: List<String> = emptyList(),
+)
+
 @Serializable
 data class AppSettings(
     val logLevel: LogLevel = LogLevel.WARN,
@@ -202,6 +212,11 @@ data class AppSettings(
     val strictRoute: Boolean = true,
     val finalOutbound: String = "",   // 留空 = 自动（跟随入口 tag）
     val dnsStrategy: String = "prefer_ipv4",   // prefer_ipv4 / prefer_ipv6 / ipv4_only / ipv6_only
+    val perAppProxy: PerAppProxy = PerAppProxy(),
+    /** 自定义 sing-box 配置 JSON：非空时优先于生成的配置 */
+    val customConfig: String? = null,
+    /** 开机自动启动（需要 VPN 权限已授予） */
+    val autoStartOnBoot: Boolean = false,
 )
 
 // ---------------------------------------------------------------------------
