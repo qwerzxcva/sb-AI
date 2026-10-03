@@ -1,134 +1,114 @@
 [
     {
-        "merged": "/root/.gradle/daemon/8.14.2/com.sbai.app-merged_res-47:/layout_fragment_rule_editor.xml.flat",
-        "source": "/root/.gradle/daemon/8.14.2/com.sbai.app-main-49:/layout/fragment_rule_editor.xml"
+        "merged": "com.sbai.app-merged_res-47:/mipmap-xhdpi_ic_launcher_round.png.flat",
+        "source": "com.sbai.app-main-49:/mipmap-xhdpi/ic_launcher_round.png"
     },
     {
-        "merged": "/root/.gradle/daemon/8.14.2/com.sbai.app-merged_res-47:/layout_fragment_lb_rule_editor.xml.flat",
-        "source": "/root/.gradle/daemon/8.14.2/com.sbai.app-main-49:/layout/fragment_lb_rule_editor.xml"
+        "merged": "com.sbai.app-merged_res-47:/mipmap-xxhdpi_ic_launcher_round.png.flat",
+        "source": "com.sbai.app-main-49:/mipmap-xxhdpi/ic_launcher_round.png"
     },
     {
-        "merged": "/root/.gradle/daemon/8.14.2/com.sbai.app-merged_res-47:/mipmap-mdpi_ic_launcher.png.flat",
-        "source": "/root/.gradle/daemon/8.14.2/com.sbai.app-main-49:/mipmap-mdpi/ic_launcher.png"
+        "merged": "com.sbai.app-merged_res-47:/mipmap-xhdpi_ic_launcher.png.flat",
+        "source": "com.sbai.app-main-49:/mipmap-xhdpi/ic_launcher.png"
     },
     {
-        "merged": "/root/.gradle/daemon/8.14.2/com.sbai.app-merged_res-47:/mipmap-xxxhdpi_ic_launcher.png.flat",
-        "source": "/root/.gradle/daemon/8.14.2/com.sbai.app-main-49:/mipmap-xxxhdpi/ic_launcher.png"
+        "merged": "com.sbai.app-merged_res-47:/layout_fragment_settings.xml.flat",
+        "source": "com.sbai.app-main-49:/layout/fragment_settings.xml"
     },
     {
-        "merged": "/root/.gradle/daemon/8.14.2/com.sbai.app-merged_res-47:/menu_bottom_nav_menu.xml.flat",
-        "source": "/root/.gradle/daemon/8.14.2/com.sbai.app-main-49:/menu/bottom_nav_menu.xml"
+        "merged": "com.sbai.app-merged_res-47:/mipmap-mdpi_ic_launcher.png.flat",
+        "source": "com.sbai.app-main-49:/mipmap-mdpi/ic_launcher.png"
     },
     {
-        "merged": "/root/.gradle/daemon/8.14.2/com.sbai.app-merged_res-47:/drawable-nodpi_ic_launcher_foreground.png.flat",
-        "source": "/root/.gradle/daemon/8.14.2/com.sbai.app-main-49:/drawable-nodpi/ic_launcher_foreground.png"
+        "merged": "com.sbai.app-merged_res-47:/layout_item_lb_rule.xml.flat",
+        "source": "com.sbai.app-main-49:/layout/item_lb_rule.xml"
     },
     {
-        "merged": "/root/.gradle/daemon/8.14.2/com.sbai.app-merged_res-47:/layout_fragment_settings.xml.flat",
-        "source": "/root/.gradle/daemon/8.14.2/com.sbai.app-main-49:/layout/fragment_settings.xml"
+        "merged": "com.sbai.app-merged_res-47:/layout_fragment_lb_rule_editor.xml.flat",
+        "source": "com.sbai.app-main-49:/layout/fragment_lb_rule_editor.xml"
     },
     {
-        "merged": "/root/.gradle/daemon/8.14.2/com.sbai.app-merged_res-47:/drawable_ic_qs_proxy.xml.flat",
-        "source": "/root/.gradle/daemon/8.14.2/com.sbai.app-main-49:/drawable/ic_qs_proxy.xml"
+        "merged": "com.sbai.app-merged_res-47:/mipmap-mdpi_ic_launcher_round.png.flat",
+        "source": "com.sbai.app-main-49:/mipmap-mdpi/ic_launcher_round.png"
     },
     {
-        "merged": "/root/.gradle/daemon/8.14.2/com.sbai.app-merged_res-47:/layout_item_route_rule.xml.flat",
-        "source": "/root/.gradle/daemon/8.14.2/com.sbai.app-main-49:/layout/item_route_rule.xml"
+        "merged": "com.sbai.app-merged_res-47:/mipmap-hdpi_ic_launcher_round.png.flat",
+        "source": "com.sbai.app-main-49:/mipmap-hdpi/ic_launcher_round.png"
     },
     {
-        "merged": "/root/.gradle/daemon/8.14.2/com.sbai.app-merged_res-47:/mipmap-hdpi_ic_launcher_round.png.flat",
-        "source": "/root/.gradle/daemon/8.14.2/com.sbai.app-main-49:/mipmap-hdpi/ic_launcher_round.png"
+        "merged": "com.sbai.app-merged_res-47:/mipmap-xxhdpi_ic_launcher.png.flat",
+        "source": "com.sbai.app-main-49:/mipmap-xxhdpi/ic_launcher.png"
     },
     {
-        "merged": "/root/.gradle/daemon/8.14.2/com.sbai.app-merged_res-47:/mipmap-xxhdpi_ic_launcher.png.flat",
-        "source": "/root/.gradle/daemon/8.14.2/com.sbai.app-main-49:/mipmap-xxhdpi/ic_launcher.png"
+        "merged": "com.sbai.app-merged_res-47:/drawable_ic_qs_proxy.xml.flat",
+        "source": "com.sbai.app-main-49:/drawable/ic_qs_proxy.xml"
     },
     {
-        "merged": "/root/.gradle/daemon/8.14.2/com.sbai.app-merged_res-47:/layout_fragment_dns_server_editor.xml.flat",
-        "source": "/root/.gradle/daemon/8.14.2/com.sbai.app-main-49:/layout/fragment_dns_server_editor.xml"
+        "merged": "com.sbai.app-merged_res-47:/layout_item_dns_server.xml.flat",
+        "source": "com.sbai.app-main-49:/layout/item_dns_server.xml"
     },
     {
-        "merged": "/root/.gradle/daemon/8.14.2/com.sbai.app-merged_res-47:/mipmap-xhdpi_ic_launcher_round.png.flat",
-        "source": "/root/.gradle/daemon/8.14.2/com.sbai.app-main-49:/mipmap-xhdpi/ic_launcher_round.png"
+        "merged": "com.sbai.app-merged_res-47:/xml_backup_rules.xml.flat",
+        "source": "com.sbai.app-main-49:/xml/backup_rules.xml"
     },
     {
-        "merged": "/root/.gradle/daemon/8.14.2/com.sbai.app-merged_res-47:/mipmap-xxxhdpi_ic_launcher_round.png.flat",
-        "source": "/root/.gradle/daemon/8.14.2/com.sbai.app-main-49:/mipmap-xxxhdpi/ic_launcher_round.png"
+        "merged": "com.sbai.app-merged_res-47:/mipmap-xxxhdpi_ic_launcher_round.png.flat",
+        "source": "com.sbai.app-main-49:/mipmap-xxxhdpi/ic_launcher_round.png"
     },
     {
-        "merged": "/root/.gradle/daemon/8.14.2/com.sbai.app-merged_res-47:/layout_item_lb_rule.xml.flat",
-        "source": "/root/.gradle/daemon/8.14.2/com.sbai.app-main-49:/layout/item_lb_rule.xml"
+        "merged": "com.sbai.app-merged_res-47:/menu_bottom_nav_menu.xml.flat",
+        "source": "com.sbai.app-main-49:/menu/bottom_nav_menu.xml"
     },
     {
-        "merged": "/root/.gradle/daemon/8.14.2/com.sbai.app-merged_res-47:/layout_item_dns_group.xml.flat",
-        "source": "/root/.gradle/daemon/8.14.2/com.sbai.app-main-49:/layout/item_dns_group.xml"
+        "merged": "com.sbai.app-merged_res-47:/navigation_nav_graph.xml.flat",
+        "source": "com.sbai.app-main-49:/navigation/nav_graph.xml"
     },
     {
         "merged": "com.sbai.app-merged_res-47:/layout_fragment_rule_editor.xml.flat",
         "source": "com.sbai.app-main-49:/layout/fragment_rule_editor.xml"
     },
     {
-        "merged": "/root/.gradle/daemon/8.14.2/com.sbai.app-merged_res-47:/mipmap-mdpi_ic_launcher_round.png.flat",
-        "source": "/root/.gradle/daemon/8.14.2/com.sbai.app-main-49:/mipmap-mdpi/ic_launcher_round.png"
+        "merged": "com.sbai.app-merged_res-47:/xml_data_extraction_rules.xml.flat",
+        "source": "com.sbai.app-main-49:/xml/data_extraction_rules.xml"
     },
     {
-        "merged": "/root/.gradle/daemon/8.14.2/com.sbai.app-merged_res-47:/layout_item_dns_server.xml.flat",
-        "source": "/root/.gradle/daemon/8.14.2/com.sbai.app-main-49:/layout/item_dns_server.xml"
+        "merged": "com.sbai.app-merged_res-47:/layout_activity_main.xml.flat",
+        "source": "com.sbai.app-main-49:/layout/activity_main.xml"
     },
     {
-        "merged": "/root/.gradle/daemon/8.14.2/com.sbai.app-merged_res-47:/layout_activity_main.xml.flat",
-        "source": "/root/.gradle/daemon/8.14.2/com.sbai.app-main-49:/layout/activity_main.xml"
+        "merged": "com.sbai.app-merged_res-47:/drawable-nodpi_ic_launcher_foreground.png.flat",
+        "source": "com.sbai.app-main-49:/drawable-nodpi/ic_launcher_foreground.png"
     },
     {
-        "merged": "/root/.gradle/daemon/8.14.2/com.sbai.app-merged_res-47:/mipmap-anydpi-v33_ic_launcher.xml.flat",
-        "source": "/root/.gradle/daemon/8.14.2/com.sbai.app-main-49:/mipmap-anydpi-v33/ic_launcher.xml"
+        "merged": "com.sbai.app-merged_res-47:/mipmap-xxxhdpi_ic_launcher.png.flat",
+        "source": "com.sbai.app-main-49:/mipmap-xxxhdpi/ic_launcher.png"
     },
     {
-        "merged": "/root/.gradle/daemon/8.14.2/com.sbai.app-merged_res-47:/mipmap-anydpi_ic_launcher.xml.flat",
-        "source": "/root/.gradle/daemon/8.14.2/com.sbai.app-main-49:/mipmap-anydpi/ic_launcher.xml"
+        "merged": "com.sbai.app-merged_res-47:/layout_item_route_rule.xml.flat",
+        "source": "com.sbai.app-main-49:/layout/item_route_rule.xml"
     },
     {
-        "merged": "/root/.gradle/daemon/8.14.2/com.sbai.app-merged_res-47:/navigation_nav_graph.xml.flat",
-        "source": "/root/.gradle/daemon/8.14.2/com.sbai.app-main-49:/navigation/nav_graph.xml"
+        "merged": "com.sbai.app-merged_res-47:/layout_fragment_dns.xml.flat",
+        "source": "com.sbai.app-main-49:/layout/fragment_dns.xml"
     },
     {
-        "merged": "/root/.gradle/daemon/8.14.2/com.sbai.app-merged_res-47:/mipmap-xxhdpi_ic_launcher_round.png.flat",
-        "source": "/root/.gradle/daemon/8.14.2/com.sbai.app-main-49:/mipmap-xxhdpi/ic_launcher_round.png"
+        "merged": "com.sbai.app-merged_res-47:/mipmap-hdpi_ic_launcher.png.flat",
+        "source": "com.sbai.app-main-49:/mipmap-hdpi/ic_launcher.png"
     },
     {
-        "merged": "/root/.gradle/daemon/8.14.2/com.sbai.app-merged_res-47:/layout_fragment_dns_group_editor.xml.flat",
-        "source": "/root/.gradle/daemon/8.14.2/com.sbai.app-main-49:/layout/fragment_dns_group_editor.xml"
+        "merged": "com.sbai.app-merged_res-47:/layout_fragment_dns_server_editor.xml.flat",
+        "source": "com.sbai.app-main-49:/layout/fragment_dns_server_editor.xml"
     },
     {
-        "merged": "/root/.gradle/daemon/8.14.2/com.sbai.app-merged_res-47:/layout_fragment_routing.xml.flat",
-        "source": "/root/.gradle/daemon/8.14.2/com.sbai.app-main-49:/layout/fragment_routing.xml"
+        "merged": "com.sbai.app-merged_res-47:/layout_item_dns_group.xml.flat",
+        "source": "com.sbai.app-main-49:/layout/item_dns_group.xml"
     },
     {
-        "merged": "/root/.gradle/daemon/8.14.2/com.sbai.app-merged_res-47:/mipmap-anydpi_ic_launcher_round.xml.flat",
-        "source": "/root/.gradle/daemon/8.14.2/com.sbai.app-main-49:/mipmap-anydpi/ic_launcher_round.xml"
+        "merged": "com.sbai.app-merged_res-47:/layout_fragment_dns_group_editor.xml.flat",
+        "source": "com.sbai.app-main-49:/layout/fragment_dns_group_editor.xml"
     },
     {
-        "merged": "/root/.gradle/daemon/8.14.2/com.sbai.app-merged_res-47:/mipmap-anydpi-v33_ic_launcher_round.xml.flat",
-        "source": "/root/.gradle/daemon/8.14.2/com.sbai.app-main-49:/mipmap-anydpi-v33/ic_launcher_round.xml"
-    },
-    {
-        "merged": "/root/.gradle/daemon/8.14.2/com.sbai.app-merged_res-47:/layout_fragment_dns.xml.flat",
-        "source": "/root/.gradle/daemon/8.14.2/com.sbai.app-main-49:/layout/fragment_dns.xml"
-    },
-    {
-        "merged": "/root/.gradle/daemon/8.14.2/com.sbai.app-merged_res-47:/xml_data_extraction_rules.xml.flat",
-        "source": "/root/.gradle/daemon/8.14.2/com.sbai.app-main-49:/xml/data_extraction_rules.xml"
-    },
-    {
-        "merged": "/root/.gradle/daemon/8.14.2/com.sbai.app-merged_res-47:/mipmap-hdpi_ic_launcher.png.flat",
-        "source": "/root/.gradle/daemon/8.14.2/com.sbai.app-main-49:/mipmap-hdpi/ic_launcher.png"
-    },
-    {
-        "merged": "/root/.gradle/daemon/8.14.2/com.sbai.app-merged_res-47:/mipmap-xhdpi_ic_launcher.png.flat",
-        "source": "/root/.gradle/daemon/8.14.2/com.sbai.app-main-49:/mipmap-xhdpi/ic_launcher.png"
-    },
-    {
-        "merged": "/root/.gradle/daemon/8.14.2/com.sbai.app-merged_res-47:/xml_backup_rules.xml.flat",
-        "source": "/root/.gradle/daemon/8.14.2/com.sbai.app-main-49:/xml/backup_rules.xml"
+        "merged": "com.sbai.app-merged_res-47:/layout_fragment_routing.xml.flat",
+        "source": "com.sbai.app-main-49:/layout/fragment_routing.xml"
     }
 ]
