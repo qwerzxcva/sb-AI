@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <backup-rules>
-    <include domain="sharedpref" path="."/>
-    <exclude domain="sharedpref" path="device.xml"/>
+    <!-- 与 data_extraction_rules 保持一致：配置含节点凭据，不进入云端备份 -->
+    <exclude domain="sharedpref" path="."/>
+    <exclude domain="file" path="."/>
 </backup-rules>

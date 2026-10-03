@@ -1,19 +1,25 @@
 package com.sbai.ui.theme
 
+import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.dynamicDarkColorScheme
+import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.sbai.data.ThemeMode
 
 // Kototoro 风格：深色优先 + 冷色主调 + surfaceContainer 层级
 private val DarkColors = darkColorScheme(
@@ -95,9 +101,28 @@ private val SbTypography = Typography(
 
 @Composable
 fun SbAiTheme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
+    themeMode: ThemeMode = ThemeMode.SYSTEM,
+    dynamicColor: Boolean = true,
     content: @Composable () -> Unit,
 ) {
+    val context = LocalContext.current
+    val darkTheme = when (themeMode) {
+        ThemeMode.SYSTEM -> isSystemInDarkTheme()
+        ThemeMode.LIGHT -> false
+        ThemeMode.DARK -> true
+    }
+
+    // Material You 动态取色（Android 12+），失败时回退内置配色
+    val colorScheme = remember(darkTheme, dynamicColor) {
+        if (dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            runCatching {
+                if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+            }.getOrNull()
+        } else {
+            null
+        }
+    } ?: if (darkTheme) DarkColors else LightColors
+
     val tokens = SbStyleTokens()
     val shapes = Shapes(
         extraSmall = RoundedCornerShape(tokens.settingsGroupInnerCornerRadius),
@@ -108,7 +133,7 @@ fun SbAiTheme(
     )
     CompositionLocalProvider(LocalSbStyleTokens provides tokens) {
         MaterialTheme(
-            colorScheme = if (darkTheme) DarkColors else LightColors,
+            colorScheme = colorScheme,
             typography = SbTypography,
             shapes = shapes,
             content = content,

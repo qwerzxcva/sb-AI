@@ -1,73 +1,86 @@
-# sb-AI 进度
+# sb-AI 进度（第 4 段续跑起点）
 
-> 目标：AsteriskBOX 风格 UI + 自签签名 + 移植 LxBox / AsteriskBOX / ThroneForAndroid 功能；
-> 仅 ARMv8；Kotlin(+Compose) 为主，sing-box 内核为 Go 预编译 AAR（libbox）。
+> 目标：Kototoro 风格 UI + LxBox 内核/功能基准 + 三大代理 UI 交集功能 + 全面审核循环。
+> 仅 ARMv8，Kotlin/Compose，**不集成 Root/Magisk**。
 
-## 已完成（本轮）
+## 环境关键事实（必读，与第 3 段相同）
 
-### 工程与构建
-- 清理旧仓库误跟踪的构建产物（build/、.gradle/、META-INF/、解包 AAR 的 316MB jni/*.so 等）
-- Kotlin 2.0.21 + AGP 8.7.3 + Gradle 8.14.2（wrapper 已提交）
-- 仅 `arm64-v8a`：`splits.abi` + AAR 裁剪（`app/libs/libbox.aar` 由 120MB → 84MB，仅含 arm64）
-- 自签签名：`sbai-keystore.jks`（CN=sb-AI, O=QWERZXCVA），debug/release 均使用
-- `scripts/fetch-libbox.sh`：构建时下载内核，AAR 不入 git
-- `.github/workflows/build.yml`：CI 下载内核 → 单元测试 → assembleRelease → ABI 校验 → 上传 artifact
-- 本机验证：`assembleDebug` / `assembleRelease` 均 BUILD SUCCESSFUL；
-  `apksigner verify` 通过；APK 内 `lib/` 仅 `arm64-v8a`（libbox.so / libsing-box.so）
+- 沙箱内 `github.com:443` 不可达；`api.github.com`/`codeload.github.com`/`repo1.maven.org` 可达。
+- **推送统一走 `/workspace/push_api.py`**（GitHub Git Data API），token 在 `/workspace/.gh_token`。
+- 远端：`qwerzxcva/sb-AI` 分支 `master`。最近推送：`08e97a6`（第二轮）。本轮代码**尚未推送**。
+- 构建：`./gradlew :app:testDebugUnitTest :app:assembleRelease`（编译约 40s，release 约 1.5-2.5min）。
+- compileSdk 必须 34（platforms 有 android-34 / android-37.0，build-tools 34.0.0）。
+- **内核已切换为 LxBox 同款 `Leadaxe/sing-box-lx` v1.14.2-lx.11**（`app/libs/libbox.aar` 79MB arm64-only，不入 git）。
+  - 下载+SHA256校验+裁剪脚本：`scripts/fetch-libbox.sh`（已重写，勿再用旧版指向 Asterisk4Magisk）。
+  - gobind API 差异（已适配）：**没有** `usePlatformAutoRedirect`/`createAutoRedirect`（PlatformInterface 里已删）；
+    **多了** `writeDNSQuery(DnsQuery)`（SbCommandClient 已加 no-op 实现）；其余（CommandServer/CommandClient/Connections/TunOptions/SetupOptions）一致。
+  - lx 内核 AAR 解包参考在 `/tmp/lxsrc/io/nekohasekai/libbox/`（如目录被清理，重新解包 app/libs/libbox.aar 的 classes.jar）。
+- 旧 AsteriskBOX 内核参考源码 jar：`/tmp/libbox-src/`（第 3 段解包，可能已不存在）。
+- haze 1.5.2（`HazeState()` 构造 + `haze`/`hazeChild`，无 shape 参数）；androidx 版本被 force 锁定，见 app/build.gradle.kts。
+- 子代理必须传 `model: "inherit"`（默认自定义模型 temperature 400 报错）。
 
-### 功能（对应需求 0-7）
-| 需求 | 实现 | 位置 |
-|---|---|---|
-| 0 仅 ARMv8 + Kotlin/Rust 选型 | arm64-only；UI=Kotlin/Compose，内核=Go 预编译（Rust 未引入，见「决策」） | `app/build.gradle.kts` |
-| 1 独立路由规则页、一行一条 | 域名/后缀/关键词/正则/IP-CIDR/规则集 tag 全部多行文本，一行一条 | `ui/routes/RouteRulesScreen.kt` |
-| 2 network/protocol 多选 | FilterChip 多选：tcp/udp；http/tls/quic/dns/bittorrent/stun/ssh | 同上 |
-| 3 独立 DNS 页（DNS/DNS group，无需出口） | DNS server（udp/tcp/tls/https/quic/h3/local/hosts/fakeip）+ group；detour 可留空 | `ui/dns/DnsScreen.kt` |
-| 4 直连/代理指定 DNS → 自动生成 DNS 规则 | 非拦截、非纯 IP/远程规则集规则选 DNS/group 后生成 DNS 规则（group 取首个 server） | `service/SingBoxConfigGenerator.kt` |
-| 5 规则集勾选 IPv4/IPv6 → 生成 DNS 规则；4+5 同时命中只生成一条 | `ip_strategy=ipv4_only/ipv6_only`；与 DNS 联动合并为单条规则 | 同上 |
-| 6 负载均衡（参考 LxBox）+「自动」模式 | 延迟优选/均衡负载（urltest 参数化）/手动切换（selector）；auto 模式在 LB 组上再套 urltest，可搭配 | `ui/balance/LoadBalanceScreen.kt` |
-| 7 逻辑运算 or/and/invert | `RuleLogic.SINGLE/AND/OR` + `invert`，生成 `type=logical` 规则 | `data/Models.kt` + 生成器 |
+## 用户第 4 轮反馈 → 完成状态
 
-### 服务层
-- `LibboxRuntime`：`Libbox.setup(SetupOptions)` + `CommandServer` 生命周期
-- `SbPlatformInterface`：TUN 建立（地址/路由/DNS/应用过滤）、socket protect、
-  默认网卡监控、接口枚举、`DnsResolver` 本地 DNS 传输、WIFI 状态；
-  不支持的平台特性（shell/bridge/auto-redirect/SFTP）显式抛 `UnsupportedOperationException`
-- `SbAiVpnService`：前台服务 + 通知（含停止动作）+ `ServiceStatus` StateFlow
-- 实现模式参考 AsteriskBOX（GPL-3.0）`engine/vpn/*`，已在 README 致谢
+| 反馈 | 状态 |
+|---|---|
+| UI 被底栏挡住 | ✅ `BottomBarClearance`(132.dp) 常量 + 底栏加 `navigationBarsPadding()`；各页面底部 spacer 需统一改用它 |
+| network 少一个 / protocol 少 | ✅ tcp/udp/**icmp**；protocol 全量 **bittorrent/dns/dtls/http/ntp/quic/rdp/ssh/stun/tls**（RouteRulesScreen 顶部常量） |
+| 单条件 vs or 区别 | ✅ RuleLogic 删除 SINGLE，只留 AND/OR；卡片与编辑器显示明确说明；单类别时 OR 自动平铺不包 logical |
+| DNS 页增加 DNS 规则（映射+自建） | ⏳ 模型/生成器已就绪（`DnsRule`、`autoDnsRules()`、手动规则在前），**DnsScreen 还没加 Tab** |
+| 规则集与路由规则合并+优先级 | ✅ 规则集改为入口对话框（内联管理）；路由规则统一有序列表显示 `#优先级` + **长按拖动排序**（DragDropLazyColumn） |
+| 负载均衡仅用 N 个节点 | ✅ 模型+生成器（round_robin + balancer{pool,pool_tolerance,sticky_hash}，fork 扩展）；**HomeScreen UI 还没加 pool/urltestMode 控件** |
+| 订阅源增强 | ⏳ 模型已加字段（UA/interval/includeKeyword/excludeKeyword/traffic*）；**SubscriptionManager 还没用这些字段** |
+| 路由规则粘贴 JSON 片段 | ✅ RouteRuleJsonCodec.fromJson/toJson + 编辑器「粘贴 JSON」按钮 |
+| 自定义配置→覆盖（双优先级） | ✅ ConfigMerger + ConfigOverride 模型；**SettingsScreen 还是旧 customConfig UI，需重写** |
+| 内核用 LxBox 的 sing-box | ✅ sing-box-lx v1.14.2-lx.11 |
 
-### 测试
-- `SingBoxConfigGeneratorTest`：12 例全部通过，覆盖
-  逐行值/多选、and+invert、DNS group 解析、ipv4_only、4+5 合并单条、
-  拦截不联动、纯 IP 不联动、规则集 ip_strategy、LB 三模式+auto、无 detour DNS、默认配置
-- 测试发现并修复两个真实缺陷：
-  1. 根对象漏写 `outbounds`（配置不可用）
-  2. `autoEnabled` 默认 true 导致未启用 LB 时也套 auto 层
+## 下一步（按顺序执行）
 
-## 决策记录
-- **Rust 未引入**：sing-box 官方 Android 集成是 Go 预编译 libbox（gobind）。
-  自研 Rust 内核等于重写代理栈，风险/工期不可控；故 v1 = Kotlin(Compose) + Go 预编译内核。
-  如后续需要 Rust，可放在 JNI 侧做规则编译/校验等纯计算模块。
-- **节点导入 v1 采用 sing-box outbound JSON 粘贴**（含 type/tag 校验），
-  分享链接解析（vless/vmess/trojan/ss）与订阅留待后续。
-- **负载均衡语义映射**：sing-box 原生只有 `urltest`/`selector`，
-  LxBox 的 random/roundRobin/leastPing/leastLoad 映射为
-  延迟优选(tolerance=0)/均衡负载(tolerance>0+idle_timeout)/手动切换(selector)，
-  参数（URL、间隔、tolerance、idle_timeout、中断连接、参与节点）全部可操作。
+1. **SbAiVpnService.kt**：把 `settings.customConfig` 引用改为 `configOverride`（编译会报错）：
+   `val config = if (override.enabled && override.json.isNotBlank()) SingBoxConfigGenerator.generate(state) /* merged */ ...`
+   实际直接调 `SingBoxConfigGenerator.generate(state)`（内部已处理覆盖），删掉 customConfig 分支。
+2. **HomeScreen.kt**：负载均衡参数 UI 更新——`intervalSeconds`→`interval`（duration 字符串如 "15m"）、`idleTimeoutSeconds`→`idleTimeout`；
+   新增「选点模式」（least_test/round_robin 说明卡片）、「节点池大小 N」（round_robin 时显示）、sticky_hash 多选；
+   节点 tag 显示统一用 `SingBoxConfigGenerator.nodeTagOf(node)`。
+3. **DnsScreen.kt**：Tab 改 3 个（DNS 服务器 / DNS 规则 / DNS group）。
+   DNS 规则 Tab：手动规则用 DragDropLazyColumn（调 store.reorderDnsRules）；自动规则（`SingBoxConfigGenerator.autoDnsRules(state)`）只读展示带「自动」徽章；
+   手动规则编辑器：域名/后缀/关键词/正则/IP-CIDR/规则集/network/port/query_type 多行输入 + server 下拉 + ip_strategy 下拉 + disable_cache/rewrite_ttl/client_subnet。
+4. **SubscriptionManager.kt**：UA（subscription.userAgent ?: 默认）、https 强制、响应体 4MB 上限、
+   解析后按 includeKeyword/excludeKeyword 过滤节点名、读 `subscription-userinfo` 响应头（upload/download/total/expire）写回 store。
+5. **SettingsScreen.kt**：「自定义配置」分组改「配置覆盖」：启用开关 + 优先级 SegmentedButton（UI层最高/导入JSON最高）+
+   导入 JSON 编辑对话框（同 CustomConfigEditorDialog 改字段名 configOverride）；删 DEFAULT_CUSTOM_CONFIG 或改为覆盖示例。
+6. **测试**：SingBoxConfigGeneratorTest 更新——`intervalSeconds`→`interval`、`RuleLogic.AND` 默认、
+   `customConfig`→`configOverride`；新增：balancer pool 输出、手动 DNS 规则顺序在前、ConfigMerger 用例（UI_HIGHEST 补充/IMPORT_HIGHEST 覆盖/数组按 tag 合并）、RouteRuleJsonCodec round-trip。
+7. `./gradlew :app:testDebugUnitTest :app:assembleRelease`，全绿后 `cd /workspace && python3 push_api.py`。
+8. 全面审核子代理（security + engineering，model=inherit）→ 修复 → 复验 → 推送。
 
-## 待办 / 已知风险
-1. **未做真机运行验证**（仅构建+单测）。VPN 权限、TUN 建立、libbox 启动需真机冒烟。
-2. libbox 为 `v1.15.0-alpha.9-reF1nd`（AsteriskBOX 同源 fork，alpha）；
-   rule-set `format=source` 的 `version` 字段随内核版本变化，需按实际内核校验。
-3. `local` 规则集当前用 `type=inline`，若内核要求 `type=local`+文件路径需调整。
-4. `fakeip` DNS 的 `inet4_range/inet6_range` 目前为空对象，需补默认网段。
-5. 后续功能：分享链接/订阅导入、分应用代理、QS Tile、日志页、连接页、
-   配置导入导出、GeoIP/GeoSite 更新、开机自启。
-6. 合规：上游为 GPL-3.0，本项目 README 已声明 GPL-3.0 并致谢。
+## 架构速查（本轮变更后）
 
-## 环境备注（重要）
-- 沙箱内 `github.com:443` 不可达（`api.github.com`、`codeload.github.com` 可达），
-  因此 `git push` 失败；本轮改用 **GitHub Git Data API**（blobs→tree→commit→ref）推送，
-  脚本：`/workspace/push_api.py`（token 从 git remote 提取到 `/workspace/.gh_token`）。
-- 远端 `qwerzxcva/sb-AI@master` 已更新至本轮提交；本地 history 与远端为「同内容不同 commit 对象」，
-  后续推送继续走 API 脚本即可（parent 取远端 head）。
-- 建议把 token 存入宿主「Git」面板并轮换当前明文 token（它出现在 git remote URL 中）。
+```
+data/Models.kt:
+  RuleLogic { AND, OR }          // 无 SINGLE
+  LoadBalanceConfig { mode, urltestMode: LEAST_TEST/ROUND_ROBIN, pool, poolTolerance, stickyHash: List<StickyHashKey>,
+                      checkUrl, interval("15m"), toleranceMs, idleTimeout("30m"), interruptExistConnections, autoEnabled, outbounds }
+  DnsRule { id, enabled, autoFromRouteRuleId(null=手动), name, domains/domainSuffixes/..., ruleSetTags, ipCidrs,
+            networks, ports, queryTypes, server, ipStrategy, disableCache, rewriteTtl, clientSubnet }
+  Subscription { ..., userAgent, updateIntervalHours, includeKeyword, excludeKeyword, trafficUpload/Download/Total/Expire }
+  ConfigOverride { enabled, priority: UI_HIGHEST/IMPORT_HIGHEST, json }
+  AppSettings { ..., configOverride }   // customConfig 已删除
+service/:
+  SingBoxConfigGenerator  // generate()=含覆盖；generateUiOnly()；autoDnsRules(state)；nodeTagOf()
+  ConfigMerger            // 深度合并
+  RouteRuleJsonCodec      // 规则 JSON 片段 <-> RouteRule
+  ShareLinkParser/SubscriptionManager/SbCommandClient/SbPlatformInterface/LibboxRuntime/SbAiVpnService/SbTileService/BootReceiver
+ui/:
+  components/ SbComponents(SbGroup/SbItem/.../BottomBarClearance) + DragDropLazyColumn(长按拖动)
+  routes/RouteRulesScreen  // 统一有序列表+规则集管理对话框+JSON粘贴+拖动排序
+  home/dns/monitor/settings/theme + MainActivity(GlassBottomBar)
+```
+
+## 已知坑（本轮新踩过的）
+
+- PlatformInterface 的 `put()` 在 buildJsonObject lambda 里返回旧值（首次为 null），
+  `?.let{...} ?: fallback` 会因 let 返回 null 而误触发 fallback——必须写成
+  `val x = query["k"]?.takeIf{...}; put("k", x ?: default)` 模式（ShareLinkParser 已踩过，RouteRuleJsonCodec 用了正确模式）。
+- gobind 接口类没有 AutoRedirect（lx 1.14.2），加了 @Override 会编译失败，已删。
+- DragDropLazyColumn 的 onDragEnd 用 LaunchedEffect(draggingIndex) 触发，参数是 keys 列表（调 store.reorderXxx）。

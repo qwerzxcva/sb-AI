@@ -28,7 +28,9 @@ import androidx.compose.material.icons.filled.EditNote
 import androidx.compose.material.icons.filled.Height
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.NetworkCheck
+import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.PowerSettingsNew
+import androidx.compose.material.icons.filled.Preview
 import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Route
 import androidx.compose.material.icons.filled.Save
@@ -58,8 +60,11 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.sbai.data.AppState
 import com.sbai.data.LogLevel
+import com.sbai.data.OverridePriority
 import com.sbai.data.PerAppProxyMode
 import com.sbai.data.RuleStore
+import com.sbai.service.SingBoxConfigGenerator
+import com.sbai.data.ThemeMode
 import com.sbai.ui.components.SbGroup
 import com.sbai.ui.components.SbItem
 import com.sbai.ui.components.SbSpacer
@@ -78,6 +83,7 @@ fun SettingsScreen() {
 
     var showAppPicker by remember { mutableStateOf(false) }
     var showCustomConfigEditor by remember { mutableStateOf(false) }
+    var showOverridePreview by remember { mutableStateOf(false) }
     var backupMessage by remember { mutableStateOf<String?>(null) }
 
     val backupJson = Json { prettyPrint = true; encodeDefaults = true }
@@ -116,6 +122,36 @@ fun SettingsScreen() {
                 .padding(horizontal = tokens.screenHorizontalPadding),
         ) {
             item { Spacer(Modifier.height(16.dp)) }
+
+            // ---- 外观 ----
+            item {
+                SbGroup(title = "外观") {
+                    item {
+                        Column(Modifier.padding(16.dp)) {
+                            Text("主题", style = MaterialTheme.typography.labelLarge)
+                            Spacer(Modifier.height(8.dp))
+                            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                                ThemeMode.entries.forEachIndexed { i, mode ->
+                                    SegmentedButton(
+                                        selected = settings.themeMode == mode,
+                                        onClick = { store.updateSettings(settings.copy(themeMode = mode)) },
+                                        shape = SegmentedButtonDefaults.itemShape(index = i, count = ThemeMode.entries.size),
+                                    ) { Text(mode.displayName) }
+                                }
+                            }
+                        }
+                    }
+                    item {
+                        SbSwitchItem(
+                            title = "Material You 动态取色",
+                            subtitle = "跟随系统壁纸配色（Android 12+）",
+                            icon = Icons.Filled.Palette,
+                            checked = settings.dynamicColor,
+                        ) { store.updateSettings(settings.copy(dynamicColor = it)) }
+                    }
+                }
+                SbSpacer()
+            }
 
             // ---- 内核 ----
             item {
@@ -225,28 +261,80 @@ fun SettingsScreen() {
                 SbSpacer()
             }
 
-            // ---- 自定义配置 ----
+            // ---- 配置覆盖 ----
             item {
-                SbGroup(title = "自定义配置") {
+                SbGroup(title = "配置覆盖") {
                     item {
                         SbSwitchItem(
-                            title = "使用自定义配置",
-                            subtitle = "启用后忽略生成的配置，直接使用下方 JSON",
+                            title = "启用配置覆盖",
+                            subtitle = "导入完整 sing-box JSON，与 UI 生成的配置合并",
                             icon = Icons.Filled.Code,
-                            checked = !settings.customConfig.isNullOrBlank(),
+                            checked = settings.configOverride.enabled,
                         ) { enabled ->
                             store.updateSettings(
-                                settings.copy(customConfig = if (enabled) (settings.customConfig ?: DEFAULT_CUSTOM_CONFIG) else null),
+                                settings.copy(
+                                    configOverride = settings.configOverride.copy(
+                                        enabled = enabled,
+                                        json = if (enabled && settings.configOverride.json.isBlank()) {
+                                            OVERRIDE_SAMPLE
+                                        } else {
+                                            settings.configOverride.json
+                                        },
+                                    ),
+                                ),
                             )
                         }
                     }
-                    item {
-                        SbItem(
-                            title = "编辑自定义配置",
-                            subtitle = if (settings.customConfig.isNullOrBlank()) "未启用" else "已启用（${settings.customConfig.length} 字符）",
-                            icon = Icons.Filled.EditNote,
-                            onClick = { showCustomConfigEditor = true },
-                        )
+                    if (settings.configOverride.enabled) {
+                        item {
+                            Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                                Text("优先级", style = MaterialTheme.typography.labelLarge)
+                                Spacer(Modifier.height(4.dp))
+                                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                                    OverridePriority.entries.forEachIndexed { i, p ->
+                                        SegmentedButton(
+                                            selected = settings.configOverride.priority == p,
+                                            onClick = {
+                                                store.updateSettings(
+                                                    settings.copy(
+                                                        configOverride = settings.configOverride.copy(priority = p),
+                                                    ),
+                                                )
+                                            },
+                                            shape = SegmentedButtonDefaults.itemShape(
+                                                index = i, count = OverridePriority.entries.size,
+                                            ),
+                                        ) { Text(p.displayName) }
+                                }
+                                }
+                                Text(
+                                    if (settings.configOverride.priority == OverridePriority.UI_HIGHEST) {
+                                        "UI 层最高：导入的 JSON 只能补充 UI 没有生成的字段和没有添加的数组项"
+                                    } else {
+                                        "导入 JSON 最高：覆盖 UI 生成的同名字段（按 tag/name 合并数组）"
+                                    },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                        item {
+                            SbItem(
+                                title = "编辑导入的 JSON",
+                                subtitle = if (settings.configOverride.json.isBlank()) "未填写"
+                                else "已填写（${settings.configOverride.json.length} 字符）",
+                                icon = Icons.Filled.EditNote,
+                                onClick = { showCustomConfigEditor = true },
+                            )
+                        }
+                        item {
+                            SbItem(
+                                title = "查看最终合并结果",
+                                subtitle = "预览 UI 配置 + 导入 JSON 合并后的 sing-box 配置",
+                                icon = Icons.Filled.Preview,
+                                onClick = { showOverridePreview = true },
+                            )
+                        }
                     }
                 }
                 SbSpacer()
@@ -329,19 +417,47 @@ fun SettingsScreen() {
 
     if (showCustomConfigEditor) {
         CustomConfigEditorDialog(
-            initial = settings.customConfig ?: DEFAULT_CUSTOM_CONFIG,
+            initial = settings.configOverride.json.ifBlank { OVERRIDE_SAMPLE },
             onDismiss = { showCustomConfigEditor = false },
-            onSave = { store.updateSettings(settings.copy(customConfig = it.ifBlank { null })) },
+            onSave = { text ->
+                store.updateSettings(
+                    settings.copy(configOverride = settings.configOverride.copy(json = text)),
+                )
+                showCustomConfigEditor = false
+            },
+        )
+    }
+
+    if (showOverridePreview) {
+        val merged = runCatching { SingBoxConfigGenerator.generate(state) }
+            .getOrElse { "合并失败: ${it.message}" }
+        AlertDialog(
+            onDismissRequest = { showOverridePreview = false },
+            title = { Text("合并后的 sing-box 配置") },
+            text = {
+                OutlinedTextField(
+                    value = merged, onValueChange = {}, readOnly = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 300.dp),
+                    textStyle = MaterialTheme.typography.bodySmall,
+                )
+            },
+            confirmButton = { TextButton(onClick = { showOverridePreview = false }) { Text("关闭") } },
         )
     }
 }
 
-private const val DEFAULT_CUSTOM_CONFIG = """{
-  "log": { "level": "warn" },
-  "dns": { "servers": [ { "type": "udp", "tag": "dns", "server": "223.5.5.5" } ] },
-  "inbounds": [ { "type": "tun", "tag": "tun-in", "address": ["172.18.0.1/30"], "auto_route": true } ],
-  "outbounds": [ { "type": "direct", "tag": "direct" } ],
-  "route": { "final": "direct", "auto_detect_interface": true }
+/** 覆盖示例：常用「UI 没有生成的补充项」写法 */
+private const val OVERRIDE_SAMPLE = """{
+  "log": { "level": "info" },
+  "ntp": { "enabled": true, "server": "ntp.aliyun.com" },
+  "experimental": {
+    "clash_api": { "external_controller": "127.0.0.1:9090" }
+  },
+  "outbounds": [
+    { "type": "direct", "tag": "warp-direct" }
+  ]
 }"""
 
 // ---------------------------------------------------------------------------

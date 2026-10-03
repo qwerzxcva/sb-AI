@@ -28,6 +28,7 @@ import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -41,6 +42,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import com.sbai.data.RuleStore
 import com.sbai.ui.dns.DnsScreen
 import com.sbai.ui.home.HomeScreen
 import com.sbai.ui.monitor.MonitorScreen
@@ -66,7 +68,12 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            SbAiTheme {
+            val store = remember { RuleStore.get(this) }
+            val state by store.state.collectAsState()
+            SbAiTheme(
+                themeMode = state.settings.themeMode,
+                dynamicColor = state.settings.dynamicColor,
+            ) {
                 MainScaffold()
             }
         }
@@ -111,6 +118,7 @@ private fun MainScaffold() {
             },
             modifier = Modifier
                 .align(Alignment.BottomCenter)
+                .navigationBarsPadding()
                 .padding(horizontal = 20.dp)
                 .padding(bottom = 12.dp),
         )

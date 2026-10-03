@@ -14,12 +14,13 @@ enum class RuleAction(val outboundTag: String?) {
     BLOCK("block"),
 }
 
-/** 逻辑运算：单条件 / AND / OR */
+/** 逻辑运算：AND（全部满足）/ OR（任一满足）。
+ *  sing-box 语义：同一个 rule 对象内各字段是 AND，字段内数组是 OR。
+ *  因此 AND = 平铺单条 rule；OR = logical{mode:or, rules:[按字段类别拆分的子规则]}。 */
 @Serializable
-enum class RuleLogic(val wireName: String?) {
-    SINGLE(null),
-    AND("and"),
-    OR("or"),
+enum class RuleLogic(val wireName: String?, val displayName: String) {
+    AND("and", "AND（全部满足）"),
+    OR("or", "OR（任一满足）"),
 }
 
 @Serializable
@@ -44,7 +45,7 @@ data class RouteRule(
     val ports: List<Int> = emptyList(),
     val portRanges: List<String> = emptyList(),       // "8000:9000"
 
-    val logic: RuleLogic = RuleLogic.SINGLE,
+    val logic: RuleLogic = RuleLogic.AND,
     val invert: Boolean = false,                      // 逻辑运算 invert
 
     // IPv4 / IPv6 勾选（默认全部勾选）
@@ -124,6 +125,42 @@ data class DnsGroup(
     val serverTags: List<String> = emptyList(),
 )
 
+/**
+ * 显式 DNS 规则（可手动创建，也由路由规则自动生成）。
+ * 自动生成的规则 `autoFromRouteRuleId != null`，在 UI 中只读展示。
+ */
+@Serializable
+data class DnsRule(
+    val id: String = UUID.randomUUID().toString(),
+    val enabled: Boolean = true,
+    /** 由哪条路由规则自动生成；null = 用户手动创建 */
+    val autoFromRouteRuleId: String? = null,
+    /** 手动规则的名称（仅展示用） */
+    val name: String = "",
+
+    // 匹配条件（一行一条）
+    val domains: List<String> = emptyList(),
+    val domainSuffixes: List<String> = emptyList(),
+    val domainKeywords: List<String> = emptyList(),
+    val domainRegexes: List<String> = emptyList(),
+    val ruleSetTags: List<String> = emptyList(),
+    val ipCidrs: List<String> = emptyList(),
+    val networks: List<String> = emptyList(),
+    val ports: List<Int> = emptyList(),
+    /** 查询类型：A / AAAA / CNAME / ... */
+    val queryTypes: List<String> = emptyList(),
+
+    // 动作
+    /** 目标 DNS server tag（或 DNS group 名，生成时解析为首个成员） */
+    val server: String = "",
+    /** prefer_ipv4 / prefer_ipv6 / ipv4_only / ipv6_only / "" */
+    val ipStrategy: String = "",
+    val disableCache: Boolean = false,
+    val rewriteTtl: Int? = null,
+    /** 本条规则级别的 ECS 覆盖 */
+    val clientSubnet: String? = null,
+)
+
 // ---------------------------------------------------------------------------
 // Load balance（参考 LxBox 的负载均衡 + “自动”模式）
 // ---------------------------------------------------------------------------
@@ -140,6 +177,25 @@ enum class LoadBalanceMode(val displayName: String) {
     MANUAL("手动切换"),
 }
 
+/** urltest 选点模式（LxBox UrltestMode） */
+@Serializable
+enum class UrltestMode(val wire: String, val displayName: String) {
+    /** 上游行为：始终选 delay 最低的一个节点 */
+    LEAST_TEST("least_test", "最低延迟"),
+
+    /** fork 扩展：在 pool 大小的节点池内轮询分摊 */
+    ROUND_ROBIN("round_robin", "轮询分摊"),
+}
+
+/** 粘性会话 key（round_robin 的 balancer.sticky_hash） */
+@Serializable
+enum class StickyHashKey(val wire: String, val displayName: String) {
+    NONE("none", "无（纯轮询）"),
+    PROCESS("process", "按进程"),
+    DOMAIN("domain", "按域名"),
+    SOURCE_IP("source_ip", "按源 IP"),
+}
+
 @Serializable
 data class LoadBalanceConfig(
     val enabled: Boolean = false,
@@ -148,11 +204,23 @@ data class LoadBalanceConfig(
     /** “自动”模式：在负载均衡组之上自动选择当前最优出口，可与 LB 模式搭配 */
     val autoEnabled: Boolean = true,
 
-    val checkUrl: String = "https://www.gstatic.com/generate_204",
-    val intervalSeconds: Int = 300,
+    val checkUrl: String = "https://cp.cloudflare.com/generate_204",
+    /** 测速间隔，sing-box duration 字符串（如 "15m"） */
+    val interval: String = "15m",
     val toleranceMs: Int = 50,
-    val idleTimeoutSeconds: Int = 1800,
+    /** duration 字符串（如 "30m"） */
+    val idleTimeout: String = "30m",
     val interruptExistConnections: Boolean = false,
+
+    /** urltest 选点模式（LxBox §208） */
+    val urltestMode: UrltestMode = UrltestMode.LEAST_TEST,
+
+    /** 仅使用 N 个节点参与负载均衡（LxBox balancer.pool）；round_robin 时生效 */
+    val pool: Int = 3,
+    /** balancer.pool_tolerance：0 = 保持池内节点存活；>0 = 按 delay 选最优 N 个 */
+    val poolTolerance: Int = 0,
+    /** balancer.sticky_hash：粘性会话 key */
+    val stickyHash: List<StickyHashKey> = listOf(StickyHashKey.NONE),
 
     /** 参与负载均衡的节点 tag；空 = 全部代理节点 */
     val outbounds: List<String> = emptyList(),
@@ -181,9 +249,22 @@ data class Subscription(
     val url: String = "",
     val enabled: Boolean = true,
     val autoUpdate: Boolean = true,
+    /** 自动更新间隔（小时）；0 = 不自动 */
+    val updateIntervalHours: Int = 24,
+    /** 自定义 User-Agent（部分机场需要特定 UA 才返回可用内容） */
+    val userAgent: String? = null,
     val lastUpdatedAt: Long = 0L,
     val lastError: String? = null,
     val nodeCount: Int = 0,
+    /** 节点名包含关键字才导入（空 = 不过滤） */
+    val includeKeyword: String = "",
+    /** 节点名包含关键字则排除（空 = 不过滤） */
+    val excludeKeyword: String = "",
+    /** 订阅流量信息（来自 subscription-userinfo 响应头） */
+    val trafficUpload: Long = 0L,
+    val trafficDownload: Long = 0L,
+    val trafficTotal: Long = 0L,
+    val trafficExpire: Long = 0L,
 )
 
 // ---------------------------------------------------------------------------
@@ -203,6 +284,37 @@ data class PerAppProxy(
     val packages: List<String> = emptyList(),
 )
 
+/** 主题模式（三大代理交集功能：外观设置） */
+@Serializable
+enum class ThemeMode(val displayName: String) {
+    SYSTEM("跟随系统"),
+    LIGHT("浅色"),
+    DARK("深色"),
+}
+
+/** 配置覆盖的优先级模式 */
+@Serializable
+enum class OverridePriority(val displayName: String) {
+    /** UI 层配置最高：导入的 JSON 只补充 UI 没有生成的部分 */
+    UI_HIGHEST("UI 层最高"),
+
+    /** 导入的 JSON 最高：覆盖 UI 生成的同名字段 */
+    IMPORT_HIGHEST("导入 JSON 最高"),
+}
+
+/**
+ * 配置覆盖：导入完整 sing-box JSON，与 UI 生成的配置深度合并。
+ * 合并规则：对象递归合并；数组按 tag/name 去重合并（同 key 时高优先级方胜出），
+ * 无 key 的数组（如 route.rules）按「低优先级在前、高优先级在后」拼接，
+ * 保证高优先级规则先匹配。
+ */
+@Serializable
+data class ConfigOverride(
+    val enabled: Boolean = false,
+    val priority: OverridePriority = OverridePriority.UI_HIGHEST,
+    val json: String = "",
+)
+
 @Serializable
 data class AppSettings(
     val logLevel: LogLevel = LogLevel.WARN,
@@ -213,10 +325,14 @@ data class AppSettings(
     val finalOutbound: String = "",   // 留空 = 自动（跟随入口 tag）
     val dnsStrategy: String = "prefer_ipv4",   // prefer_ipv4 / prefer_ipv6 / ipv4_only / ipv6_only
     val perAppProxy: PerAppProxy = PerAppProxy(),
-    /** 自定义 sing-box 配置 JSON：非空时优先于生成的配置 */
-    val customConfig: String? = null,
+    /** 配置覆盖：导入完整 JSON 与 UI 配置深度合并 */
+    val configOverride: ConfigOverride = ConfigOverride(),
     /** 开机自动启动（需要 VPN 权限已授予） */
     val autoStartOnBoot: Boolean = false,
+    /** 外观：主题模式 */
+    val themeMode: ThemeMode = ThemeMode.SYSTEM,
+    /** 外观：Material You 动态取色（Android 12+） */
+    val dynamicColor: Boolean = true,
 )
 
 // ---------------------------------------------------------------------------
@@ -229,6 +345,8 @@ data class AppState(
     val routeRuleSets: List<RouteRuleSet> = emptyList(),
     val dnsServers: List<DnsServer> = emptyList(),
     val dnsGroups: List<DnsGroup> = emptyList(),
+    /** 用户手动创建的 DNS 规则（自动生成的不入库，由生成器实时推导） */
+    val dnsRules: List<DnsRule> = emptyList(),
     val loadBalance: LoadBalanceConfig = LoadBalanceConfig(),
     val proxyNodes: List<ProxyNode> = emptyList(),
     val subscriptions: List<Subscription> = emptyList(),

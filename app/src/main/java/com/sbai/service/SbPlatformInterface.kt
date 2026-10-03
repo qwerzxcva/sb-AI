@@ -15,8 +15,6 @@ import android.os.Process
 import android.system.ErrnoException
 import android.system.OsConstants
 import android.util.Log
-import io.nekohasekai.libbox.AutoRedirectHandler
-import io.nekohasekai.libbox.AutoRedirectSession
 import io.nekohasekai.libbox.BridgeOptions
 import io.nekohasekai.libbox.BridgeSession
 import io.nekohasekai.libbox.ConnectionOwner
@@ -226,7 +224,7 @@ class SbPlatformInterface(
                 type = android?.second?.toLibboxType() ?: Libbox.InterfaceTypeOther
                 dnsServer = android?.first?.dnsServers.orEmpty()
                     .mapNotNull { it.hostAddress }.toStringIterator()
-                dnsSearchDomain = android?.first?.domains.toSearchDomains().toStringIterator()
+                // lx 内核 NetworkInterface 无 dnsSearchDomain 字段
                 metered = android?.second
                     ?.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED)
                     ?.not() ?: false
@@ -260,10 +258,6 @@ class SbPlatformInterface(
     override fun readSystemSSHHostKey(): String = unsupported("system SSH host key")
     override fun lookupSFTPServer(): String = unsupported("SFTP server")
     override fun lookupUser(username: String?): PlatformUser = unsupported("platform user")
-    override fun usePlatformAutoRedirect(): Boolean = false
-    override fun createAutoRedirect(options: ByteArray?, handler: AutoRedirectHandler?): AutoRedirectSession =
-        unsupported("platform auto redirect")
-
     override fun usePlatformBridge(): Boolean = false
     override fun createBridge(options: BridgeOptions?): BridgeSession = unsupported("platform bridge")
     override fun registerMyInterface(name: String?) = Unit
@@ -356,9 +350,6 @@ private fun RoutePrefixIterator.toList(): List<LibboxRoutePrefix> = buildList {
 internal fun StringIterator.toList(): List<String> = buildList {
     while (hasNext()) add(next())
 }
-
-private fun String?.toSearchDomains(): List<String> =
-    orEmpty().split(Regex("\\s+")).filter(String::isNotEmpty).distinct()
 
 // ---------------------------------------------------------------------------
 // 系统 DNS 传输（DnsResolver）

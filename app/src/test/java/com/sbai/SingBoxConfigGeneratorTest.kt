@@ -2,6 +2,7 @@ package com.sbai
 
 import com.sbai.data.AppState
 import com.sbai.data.DnsGroup
+import com.sbai.data.DnsRule
 import com.sbai.data.DnsServer
 import com.sbai.data.DnsServerType
 import com.sbai.data.LoadBalanceConfig
@@ -58,7 +59,8 @@ class SingBoxConfigGeneratorTest {
     }
 
     @Test
-    fun `logical and or with invert`() {
+    fun `and logic flattens into single rule with invert`() {
+        // AND 语义 = sing-box 单条 rule 的默认行为：所有字段类别平铺（不包 logical）
         val rule = RouteRule(
             action = RuleAction.DIRECT,
             domains = listOf("a.com"),
@@ -68,11 +70,12 @@ class SingBoxConfigGeneratorTest {
         )
         val cfg = parse(AppState(routeRules = listOf(rule)))
         val rr = routeRules(cfg).last().jsonObject
-        assertEquals("logical", rr["type"]!!.jsonPrimitive.content)
-        assertEquals("and", rr["mode"]!!.jsonPrimitive.content)
+        assertNull(rr["type"])   // AND 平铺，无 logical 包装
+        assertNull(rr["mode"])
+        assertEquals("a.com", rr["domain"]!!.jsonArray[0].jsonPrimitive.content)
+        assertEquals("1.2.3.0/24", rr["ip_cidr"]!!.jsonArray[0].jsonPrimitive.content)
         assertEquals("true", rr["invert"]!!.jsonPrimitive.content)
         assertEquals("direct", rr["outbound"]!!.jsonPrimitive.content)
-        assertEquals(2, rr["rules"]!!.jsonArray.size)
     }
 
     @Test
@@ -180,8 +183,109 @@ class SingBoxConfigGeneratorTest {
         )
         val cfg = parse(state)
         val dr = dnsRules(cfg).single().jsonObject
-        assertEquals("dns-default", dr["server"]!!.jsonPrimitive.content)
+        // 有自定义 DNS 时，ip_strategy 规则指向首个启用的 DNS（而非悬空的 dns-default）
+        assertEquals("d1", dr["server"]!!.jsonPrimitive.content)
         assertEquals("ipv4_only", dr["ip_strategy"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `rule set ip strategy falls back to built-in dns-default when no custom dns`() {
+        val rs = RouteRuleSet(
+            tag = "geoip-cn",
+            type = RuleSetType.REMOTE,
+            url = "https://example.com/geoip-cn.json",
+            ipv4 = false,
+            ipv6 = true,
+        )
+        val cfg = parse(AppState(routeRuleSets = listOf(rs)))
+        val dr = dnsRules(cfg).single().jsonObject
+        assertEquals("dns-default", dr["server"]!!.jsonPrimitive.content)
+        assertEquals("ipv6_only", dr["ip_strategy"]!!.jsonPrimitive.content)
+        // dns-default 必须真实存在于 servers 中，不能悬空
+        val servers = cfg["dns"]!!.jsonObject["servers"]!!.jsonArray
+        assertTrue(servers.any { it.jsonObject["tag"]!!.jsonPrimitive.content == "dns-default" })
+    }
+
+    @Test
+    fun `empty dns group does not emit dangling server reference`() {
+        val rule = RouteRule(
+            action = RuleAction.PROXY,
+            domains = listOf("a.com"),
+            dnsTag = "empty-group",
+        )
+        val state = AppState(
+            routeRules = listOf(rule),
+            dnsServers = listOf(DnsServer(tag = "d1", type = DnsServerType.UDP, address = "223.5.5.5")),
+            dnsGroups = listOf(DnsGroup(name = "empty-group", serverTags = emptyList())),
+        )
+        val cfg = parse(state)
+        // 空 group → 不生成 DNS 规则（避免悬空引用）
+        assertEquals(0, dnsRules(cfg).size)
+    }
+
+    @Test
+    fun `both ipv4 and ipv6 unchecked emits no ip_strategy rule`() {
+        val rule = RouteRule(
+            action = RuleAction.DIRECT,
+            domains = listOf("a.com"),
+            ipv4 = false,
+            ipv6 = false,
+        )
+        val cfg = parse(AppState(routeRules = listOf(rule)))
+        assertEquals(0, dnsRules(cfg).size)
+    }
+
+    @Test
+    fun `duplicate node tags are deduplicated`() {
+        val json = """{"type":"vless","tag":"dup","server":"1.2.3.4","server_port":443,"uuid":"x"}"""
+        val state = AppState(
+            proxyNodes = listOf(
+                ProxyNode(name = "a", outboundJson = json),
+                ProxyNode(name = "b", outboundJson = json),
+            ),
+        )
+        val cfg = parse(state)
+        val tags = outbounds(cfg).map { it.jsonObject["tag"]!!.jsonPrimitive.content }
+        assertEquals(1, tags.count { it == "dup" })
+    }
+
+    @Test
+    fun `doh path is preserved`() {
+        val state = AppState(
+            dnsServers = listOf(
+                DnsServer(tag = "doh", type = DnsServerType.HTTPS, address = "https://dns.alidns.com/dns-query"),
+            ),
+        )
+        val d = parse(state)["dns"]!!.jsonObject["servers"]!!.jsonArray.first().jsonObject
+        assertEquals("dns.alidns.com", d["server"]!!.jsonPrimitive.content)
+        assertEquals("/dns-query", d["path"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `fakeip has valid ranges and no clash api is exposed`() {
+        val state = AppState(
+            dnsServers = listOf(DnsServer(tag = "fake", type = DnsServerType.FAKEIP)),
+        )
+        val cfg = parse(state)
+        val fake = cfg["dns"]!!.jsonObject["servers"]!!.jsonArray.first().jsonObject
+        assertEquals("198.18.0.0/15", fake["inet4_range"]!!.jsonPrimitive.content)
+        assertEquals("fc00::/18", fake["inet6_range"]!!.jsonPrimitive.content)
+        // 控制面不得通过 clash_api 暴露
+        assertNull(cfg["experimental"]!!.jsonObject["clash_api"])
+    }
+
+    @Test
+    fun `inline rule set has no format field`() {
+        val rs = RouteRuleSet(
+            tag = "local-set",
+            type = RuleSetType.LOCAL,
+            localContent = """{"version":3,"rules":[{"domain_suffix":["a.com"]}]}""",
+        )
+        val cfg = parse(AppState(routeRuleSets = listOf(rs)))
+        val set = cfg["route"]!!.jsonObject["rule_set"]!!.jsonArray.first().jsonObject
+        assertEquals("inline", set["type"]!!.jsonPrimitive.content)
+        assertNull(set["format"])
+        assertEquals(1, set["rules"]!!.jsonArray.size)
     }
 
     @Test
@@ -306,5 +410,125 @@ class SingBoxConfigGeneratorTest {
         val servers = cfg["dns"]!!.jsonObject["servers"]!!.jsonArray
         assertTrue(servers.size >= 2)
         assertNotNull(cfg["route"]!!.jsonObject["final"])
+    }
+
+    @Test
+    fun `round_robin emits fork balancer pool extension`() {
+        val node = ProxyNode(
+            name = "n1",
+            outboundJson = """{"type":"vless","tag":"n1","server":"1.2.3.4","server_port":443,"uuid":"x"}""",
+        )
+        val state = AppState(
+            proxyNodes = listOf(node),
+            loadBalance = LoadBalanceConfig(
+                enabled = true,
+                mode = LoadBalanceMode.BALANCED,
+                urltestMode = com.sbai.data.UrltestMode.ROUND_ROBIN,
+                pool = 3,
+                poolTolerance = 0,
+                stickyHash = listOf(com.sbai.data.StickyHashKey.PROCESS, com.sbai.data.StickyHashKey.DOMAIN),
+            ),
+        )
+        val cfg = parse(state)
+        val lb = outbounds(cfg).first { it.jsonObject["tag"]!!.jsonPrimitive.content == "lb" }.jsonObject
+        assertEquals("urltest", lb["type"]!!.jsonPrimitive.content)
+        assertEquals("round_robin", lb["mode"]!!.jsonPrimitive.content)
+        val balancer = lb["balancer"]!!.jsonObject
+        assertEquals(3, balancer["pool"]!!.jsonPrimitive.content.toInt())
+        assertEquals(0, balancer["pool_tolerance"]!!.jsonPrimitive.content.toInt())
+        val sticky = balancer["sticky_hash"]!!.jsonArray.map { it.jsonPrimitive.content }
+        assertEquals(listOf("process", "domain"), sticky)
+    }
+
+    @Test
+    fun `least_test emits no balancer block`() {
+        val node = ProxyNode(
+            name = "n1",
+            outboundJson = """{"type":"vless","tag":"n1","server":"1.2.3.4","server_port":443,"uuid":"x"}""",
+        )
+        val state = AppState(
+            proxyNodes = listOf(node),
+            loadBalance = LoadBalanceConfig(
+                enabled = true,
+                mode = LoadBalanceMode.BALANCED,
+                urltestMode = com.sbai.data.UrltestMode.LEAST_TEST,
+            ),
+        )
+        val lb = parse(state).let { cfg ->
+            outbounds(cfg).first { it.jsonObject["tag"]!!.jsonPrimitive.content == "lb" }.jsonObject
+        }
+        assertNull(lb["mode"])
+        assertNull(lb["balancer"])
+    }
+
+    @Test
+    fun `manual dns rules come before auto-derived rules`() {
+        val manual = DnsRule(
+            name = "manual",
+            domains = listOf("manual.com"),
+            server = "d1",
+        )
+        val autoSrc = RouteRule(
+            action = RuleAction.DIRECT,
+            domains = listOf("auto.com"),
+            dnsTag = "d1",
+        )
+        val state = AppState(
+            routeRules = listOf(autoSrc),
+            dnsRules = listOf(manual),
+            dnsServers = listOf(DnsServer(tag = "d1", type = DnsServerType.UDP, address = "223.5.5.5")),
+        )
+        val cfg = parse(state)
+        val rules = dnsRules(cfg)
+        assertEquals(2, rules.size)
+        // 手动在前
+        assertEquals("manual.com", rules[0].jsonObject["domain"]!!.jsonArray[0].jsonPrimitive.content)
+        assertEquals("auto.com", rules[1].jsonObject["domain"]!!.jsonArray[0].jsonPrimitive.content)
+    }
+
+    @Test
+    fun `auto dns rules helper reflects route rules for UI preview`() {
+        val rule = RouteRule(
+            action = RuleAction.DIRECT,
+            domains = listOf("a.com"),
+            dnsTag = "d1",
+        )
+        val state = AppState(
+            routeRules = listOf(rule),
+            dnsServers = listOf(DnsServer(tag = "d1", type = DnsServerType.UDP, address = "223.5.5.5")),
+        )
+        val auto = SingBoxConfigGenerator.autoDnsRules(state)
+        assertEquals(1, auto.size)
+        assertEquals(rule.id, auto[0].autoFromRouteRuleId)
+        assertEquals("d1", auto[0].server)
+    }
+
+    @Test
+    fun `or logic with single category flattens instead of wrapping logical`() {
+        val rule = RouteRule(
+            action = RuleAction.DIRECT,
+            domains = listOf("a.com"),
+            logic = RuleLogic.OR,
+        )
+        val cfg = parse(AppState(routeRules = listOf(rule)))
+        val rr = routeRules(cfg).last().jsonObject
+        // 只有一个条件类别时 OR == AND，直接平铺，不包 logical
+        assertNull(rr["type"])
+        assertEquals("direct", rr["outbound"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `or logic with multiple categories wraps logical or`() {
+        val rule = RouteRule(
+            action = RuleAction.DIRECT,
+            domains = listOf("a.com"),
+            ipCidrs = listOf("1.2.3.0/24"),
+            logic = RuleLogic.OR,
+        )
+        val cfg = parse(AppState(routeRules = listOf(rule)))
+        val rr = routeRules(cfg).last().jsonObject
+        assertEquals("logical", rr["type"]!!.jsonPrimitive.content)
+        assertEquals("or", rr["mode"]!!.jsonPrimitive.content)
+        assertEquals(2, rr["rules"]!!.jsonArray.size)
     }
 }

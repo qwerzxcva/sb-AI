@@ -50,6 +50,24 @@ object SbCommandClient : CommandClientHandler {
         val testTime: Long,
     )
 
+    /** 活跃连接快照（由 libbox Connections 状态机维护） */
+    data class ConnectionEntry(
+        val id: String,
+        val network: String,
+        val source: String,
+        val destination: String,
+        val domain: String,
+        val protocol: String,
+        val rule: String,
+        val outbound: String,
+        val outboundType: String,
+        val processPath: String,
+        val userName: String,
+        val uplinkTotal: Long,
+        val downlinkTotal: Long,
+        val createdAt: Long,
+    )
+
     private val _status = MutableStateFlow(DashboardStatus())
     val status: StateFlow<DashboardStatus> = _status
 
@@ -59,13 +77,23 @@ object SbCommandClient : CommandClientHandler {
     private val _connectedToService = MutableStateFlow(false)
     val connectedToService: StateFlow<Boolean> = _connectedToService
 
-    private val _logs = MutableStateFlow<List<String>>(emptyList())
-    val logs: StateFlow<List<String>> = _logs
-    private val logQueue = ConcurrentLinkedQueue<String>()
+    private val _connections = MutableStateFlow<List<ConnectionEntry>>(emptyList())
+    val connections: StateFlow<List<ConnectionEntry>> = _connections
+
+    /** 保护 libbox Connections 状态机（Go 回调线程 vs UI 读取） */
+    private val connectionsLock = Any()
+
+    data class LogLine(val seq: Long, val text: String)
+
+    private val _logs = MutableStateFlow<List<LogLine>>(emptyList())
+    val logs: StateFlow<List<LogLine>> = _logs
+    private val logQueue = ConcurrentLinkedQueue<LogLine>()
+    private val logSeq = java.util.concurrent.atomic.AtomicLong(0)
     private const val MAX_LOGS = 500
 
     private var client: CommandClient? = null
-    private var connections: Connections = Libbox.newConnections()
+    /** libbox 连接状态机（Go 侧维护），与公开 StateFlow 区分命名 */
+    private var connectionState: Connections = Libbox.newConnections()
 
     @Synchronized
     fun connect() {
@@ -83,20 +111,39 @@ object SbCommandClient : CommandClientHandler {
             return
         }
         client = c
-        connections = Libbox.newConnections()
+        // Connections 是 gobind 代理对象（无 close），直接换新实例，旧对象由 GC 释放 refnum
+        synchronized(connectionsLock) {
+            connectionState = Libbox.newConnections()
+        }
+        _connections.value = emptyList()
     }
 
     @Synchronized
     fun disconnect() {
         _status.value = DashboardStatus()
         _groups.value = emptyList()
+        _connections.value = emptyList()
         _connectedToService.value = false
         val c = client
         client = null
         if (c != null) {
             runCatching { c.disconnect() }
         }
-        connections = Libbox.newConnections()
+        synchronized(connectionsLock) {
+            connectionState = Libbox.newConnections()
+        }
+    }
+
+    /** 关闭单条连接 */
+    fun closeConnection(id: String) {
+        runCatching { client?.closeConnection(id) }
+            .onFailure { Log.w(TAG, "closeConnection failed", it) }
+    }
+
+    /** 关闭全部连接 */
+    fun closeAllConnections() {
+        runCatching { client?.closeConnections() }
+            .onFailure { Log.w(TAG, "closeConnections failed", it) }
     }
 
     fun selectOutbound(groupTag: String, outboundTag: String) {
@@ -170,8 +217,49 @@ object SbCommandClient : CommandClientHandler {
         }
     }
 
-    override fun writeConnectionEvents(events: io.nekohasekai.libbox.ConnectionEvents) {
-        // 保留连接计数即可；完整连接列表在监控页按需展示
+    override fun writeConnectionEvents(events: io.nekohasekai.libbox.ConnectionEvents) {        // events 由 Go 侧传入；用 libbox Connections 状态机维护（不手动解析事件类型）
+        val snapshot = synchronized(connectionsLock) {
+            runCatching {
+                connectionState.applyEvents(events)
+                connectionState.filterState(Libbox.ConnectionStateActive.toInt())
+                buildList {
+                    val it = connectionState.iterator()
+                    while (it.hasNext()) {
+                        val c = it.next()
+                        val proc = runCatching { c.processInfo }.getOrNull()
+                        add(
+                            ConnectionEntry(
+                                id = c.id.orEmpty(),
+                                network = c.network.orEmpty(),
+                                source = c.source.orEmpty(),
+                                destination = c.destination.orEmpty(),
+                                domain = c.domain.orEmpty(),
+                                protocol = c.protocol.orEmpty(),
+                                rule = c.rule.orEmpty(),
+                                outbound = c.outbound.orEmpty(),
+                                outboundType = c.outboundType.orEmpty(),
+                                processPath = proc?.processPath.orEmpty(),
+                                userName = proc?.userName.orEmpty(),
+                                uplinkTotal = c.uplinkTotal,
+                                downlinkTotal = c.downlinkTotal,
+                                createdAt = c.createdAt,
+                            ),
+                        )
+                    }
+                }
+            }.getOrElse {
+                Log.w(TAG, "connection snapshot failed", it)
+                _connections.value
+            }
+        }
+        _connections.value = snapshot
+    }
+
+    override fun writeDNSQuery(query: io.nekohasekai.libbox.DnsQuery) {
+        // DNS 查询监控：lx 内核特有回调，暂仅记录失败项
+        if (query.failed) {
+            appendLog("[dns] ${query.domain} → ${query.dnsServer} 失败: ${query.error}")
+        }
     }
 
     override fun writeOutbounds(iterator: OutboundGroupItemIterator) {
@@ -192,7 +280,7 @@ object SbCommandClient : CommandClientHandler {
     }
 
     private fun appendLog(line: String) {
-        logQueue.add(line)
+        logQueue.add(LogLine(logSeq.incrementAndGet(), line))
         while (logQueue.size > MAX_LOGS) logQueue.poll()
         _logs.value = logQueue.toList()
     }

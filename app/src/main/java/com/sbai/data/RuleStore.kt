@@ -36,7 +36,9 @@ class RuleStore private constructor(context: Context) {
         prefs.edit().putString(KEY_STATE, json.encodeToString(AppState.serializer(), next)).apply()
     }
 
-    fun update(transform: (AppState) -> AppState) = persist(transform(_state.value))
+    fun update(transform: (AppState) -> AppState) = synchronized(this) {
+        persist(transform(_state.value))
+    }
 
     // ---- Route rules ----
     fun upsertRouteRule(rule: RouteRule) = update { s ->
@@ -58,6 +60,14 @@ class RuleStore private constructor(context: Context) {
             val tmp = list[idx]; list[idx] = list[target]; list[target] = tmp
         }
         s.copy(routeRules = list)
+    }
+
+    /** 长按拖动排序后整体写回（越靠上优先级越高） */
+    fun reorderRouteRules(orderedIds: List<String>) = update { s ->
+        val byId = s.routeRules.associateBy { it.id }
+        val reordered = orderedIds.mapNotNull { byId[it] }
+        val rest = s.routeRules.filterNot { it.id in orderedIds }
+        s.copy(routeRules = reordered + rest)
     }
 
     // ---- Route rule sets ----
@@ -100,6 +110,26 @@ class RuleStore private constructor(context: Context) {
 
     fun deleteDnsGroup(id: String) = update { s ->
         s.copy(dnsGroups = s.dnsGroups.filterNot { it.id == id })
+    }
+
+    // ---- DNS rules（手动创建，可排序）----
+    fun upsertDnsRule(rule: DnsRule) = update { s ->
+        val list = s.dnsRules.toMutableList()
+        val idx = list.indexOfFirst { it.id == rule.id }
+        if (idx >= 0) list[idx] = rule else list.add(rule)
+        s.copy(dnsRules = list)
+    }
+
+    fun deleteDnsRule(id: String) = update { s ->
+        s.copy(dnsRules = s.dnsRules.filterNot { it.id == id })
+    }
+
+    /** 整体重排（长按拖动排序后写回） */
+    fun reorderDnsRules(orderedIds: List<String>) = update { s ->
+        val byId = s.dnsRules.associateBy { it.id }
+        val reordered = orderedIds.mapNotNull { byId[it] }
+        val rest = s.dnsRules.filterNot { it.id in orderedIds }
+        s.copy(dnsRules = reordered + rest)
     }
 
     // ---- Load balance ----

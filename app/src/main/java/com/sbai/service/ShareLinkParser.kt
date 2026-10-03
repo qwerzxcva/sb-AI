@@ -96,8 +96,11 @@ object ShareLinkParser {
         val (beforeQuery, queryStr) = beforeFrag.split('?', limit = 2).let {
             it[0] to (it.getOrNull(1) ?: "")
         }
-        val (userInfo, hostPort) = beforeQuery.split('@', limit = 2).let {
-            if (it.size == 2) it[0] to it[1] else "" to it[0]
+        val (userInfo, hostPort) = run {
+            // 密码可能含 @：取最后一个 @ 作为 userInfo/host 分隔
+            val idx = beforeQuery.lastIndexOf('@')
+            if (idx >= 0) beforeQuery.substring(0, idx) to beforeQuery.substring(idx + 1)
+            else "" to beforeQuery
         }
         val (host, port) = splitHostPort(hostPort)
         return UrlParts(
@@ -110,14 +113,16 @@ object ShareLinkParser {
     }
 
     private fun splitHostPort(hostPort: String): Pair<String, Int> {
+        fun validPort(raw: String): Int =
+            raw.toIntOrNull()?.takeIf { it in 1..65535 } ?: error("invalid port: $raw")
         return if (hostPort.startsWith("[")) {
             val end = hostPort.indexOf(']')
             val host = hostPort.substring(0, end + 1)
-            val port = hostPort.substringAfter("]:", "").toIntOrNull() ?: 443
+            val port = hostPort.substringAfter("]:", "").let { if (it.isBlank()) 443 else validPort(it) }
             host to port
         } else {
             val idx = hostPort.lastIndexOf(':')
-            if (idx > 0) hostPort.substring(0, idx) to (hostPort.substring(idx + 1).toIntOrNull() ?: 443)
+            if (idx > 0) hostPort.substring(0, idx) to validPort(hostPort.substring(idx + 1))
             else hostPort to 443
         }
     }

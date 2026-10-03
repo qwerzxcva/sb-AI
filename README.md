@@ -60,9 +60,14 @@ app/src/main/java/com/sbai/
 
 ## 内核
 
-使用 [AndroidLibBoxLite](https://github.com/Asterisk4Magisk/AndroidLibBoxLite)
-预编译 AAR（`v1.15.0-alpha.9-reF1nd`，已裁剪至 arm64-v8a），
-由 `scripts/fetch-libbox.sh` / CI 在构建时下载。
+使用 **LxBox 同款内核 [`Leadaxe/sing-box-lx`](https://github.com/Leadaxe/sing-box-lx)**
+（`v1.14.2-lx.11`，已裁剪至 arm64-v8a），由 `scripts/fetch-libbox.sh` / CI 在构建时下载并校验 SHA256。
+
+**为什么用它**（用户明确要求「以 LxBox 为准」且追问内核来源）：
+负载均衡「仅使用 N 个节点」依赖 fork 特有的
+`outbound.balancer{pool, pool_tolerance, sticky_hash}` 与 `urltest.mode=round_robin` 扩展，
+上游 sing-box 及 AsteriskBOX 的 AndroidLibBoxLite 均没有这些字段。
+该 fork 同时包含 AWG2 与 XHTTP 传输支持。
 
 ## 许可
 

@@ -1,45 +1,49 @@
 package com.sbai.service
 
-import com.sbai.data.AppSettings
 import com.sbai.data.AppState
+import com.sbai.data.DnsRule
 import com.sbai.data.DnsServerType
 import com.sbai.data.LoadBalanceMode
+import com.sbai.data.OverridePriority
 import com.sbai.data.PerAppProxyMode
 import com.sbai.data.RouteRule
 import com.sbai.data.RuleAction
 import com.sbai.data.RuleLogic
 import com.sbai.data.RuleSetType
+import com.sbai.data.StickyHashKey
+import com.sbai.data.UrltestMode
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.add
-import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
 
+private typealias JB = kotlinx.serialization.json.JsonObjectBuilder
+
 /**
- * sing-box 配置生成器。
+ * sing-box 配置生成器（目标内核：Leadaxe/sing-box-lx，含 balancer/pool 扩展）。
  *
  * 语义要点：
- *  - 路由规则：逐行条目（域名/后缀/关键词/正则、IP/CIDR、规则集 tag），
- *    network / protocol 多选，logic=and/or 聚合，invert 取反。
- *  - DNS 联动：仅「非拦截、非 IP/远程规则集、且勾选了 DNS/DNS group」的规则
- *    自动生成 DNS 规则（server=所选 DNS group 的首个 server；domain_suffix 反向
- *    从域名规则推导）。
- *  - IPv4/IPv6：只要取消勾选任一项，即生成「{tag}-ip-strategy」DNS 规则；
- *    与 DNS 联动规则命中同一路由时合并为一条（{tag}-dns）。
- *  - 负载均衡：LATENCY=urltest(tolerance=0)、BALANCED=urltest(tolerance>0)、
- *    MANUAL=selector；autoEnabled 时在最外层再套一层 urltest「auto」。
+ *  - 路由规则：逐行条目（域名/后缀/关键词/正则、IP/CIDR、规则集 tag），network/protocol 多选。
+ *  - 逻辑运算：sing-box 中同一 rule 对象内各字段是 AND、字段内数组是 OR。
+ *      · AND → 平铺为单条 rule（所有字段类别都要满足）
+ *      · OR  → logical{mode:or, rules:[按字段类别拆分的子规则]}（任一类别满足即可）
+ *      · invert → 对整体取反
+ *  - DNS 规则：手动规则（可排序）在前，路由规则自动推导的在后；
+ *      自动推导只在「非拦截 + 含域名条件 + (指定了 DNS 或 取消了 IPv4/IPv6 之一)」时产生，
+ *      且两个条件同时命中只生成一条合并规则。
+ *  - 负载均衡：LATENCY=urltest(tolerance=0)、BALANCED=urltest(tolerance>0)、MANUAL=selector；
+ *      round_robin 模式额外输出 fork 扩展 balancer{pool,pool_tolerance,sticky_hash}；
+ *      autoEnabled 时在最外层再套一层 urltest「auto」。
+ *  - 配置覆盖：settings.configOverride 启用时与导入 JSON 深度合并（见 ConfigMerger）。
  */
-private typealias JsonObjectBuilderCompat = kotlinx.serialization.json.JsonObjectBuilder
-
 object SingBoxConfigGenerator {
 
     private val json = Json {
@@ -47,12 +51,24 @@ object SingBoxConfigGenerator {
         prettyPrint = true
     }
 
-    fun generate(state: AppState): String =
+    /** 生成最终配置字符串（已应用配置覆盖） */
+    fun generate(state: AppState): String {
+        val uiConfig = json.encodeToString(JsonElement.serializer(), generateObject(state))
+        val override = state.settings.configOverride
+        if (!override.enabled || override.json.isBlank()) return uiConfig
+        return runCatching { ConfigMerger.merge(uiConfig, override.json, override.priority) }
+            .getOrElse { uiConfig }   // 导入 JSON 非法时退回 UI 配置，避免服务起不来
+    }
+
+    /** 仅生成 UI 层配置（不含覆盖），供预览对比 */
+    fun generateUiOnly(state: AppState): String =
         json.encodeToString(JsonElement.serializer(), generateObject(state))
 
     fun generateObject(state: AppState): JsonObject {
-        val enabledNodes = state.proxyNodes.filter { it.enabled && it.outboundJson.isNotBlank() }
-        val nodeTags = enabledNodes.map { nodeTag(it) }.distinct()
+        val enabledNodes = state.proxyNodes
+            .filter { it.enabled && it.outboundJson.isNotBlank() }
+            .distinctBy { nodeTag(it) }   // 同 tag 去重，避免 outbound tag 冲突
+        val nodeTags = enabledNodes.map { nodeTag(it) }
         val lb = state.loadBalance
 
         val finalProxyTag = when {
@@ -65,51 +81,46 @@ object SingBoxConfigGenerator {
         val entryTag = if (lb.enabled && lb.autoEnabled) "auto" else finalProxyTag
 
         val dnsServers = buildDnsServers(state, entryTag)
-        val groupOfTag: Map<String, List<String>> = state.dnsGroups
-            .associate { it.name to it.serverTags }
-        val dnsForRule: (RouteRule) -> String? = { rule ->
-            rule.dnsTag?.takeIf { it.isNotBlank() }?.let { tag ->
-                groupOfTag[tag]?.firstOrNull() ?: tag
-            }
-        }
-
+        val defaultDnsTag = state.dnsServers.firstOrNull { it.enabled && it.tag.isNotBlank() }?.tag
+            ?: "dns-default"
         val routeRules = buildRouteRules(state, entryTag)
-        val dnsRules = buildDnsRules(state, routeRules, dnsForRule)
+        val dnsRules = buildDnsRules(state, defaultDnsTag)
 
         val outbounds = buildJsonArray {
             if (lb.enabled) {
-                val lbOutbounds = lb.outbounds.ifEmpty { nodeTags }
-                when (lb.mode) {
-                    LoadBalanceMode.MANUAL -> {
-                        add(buildJsonObject {
-                            put("type", "selector")
-                            put("tag", "lb-selector")
-                            putJsonArray("outbounds") { lbOutbounds.forEach(::add) }
-                        })
-                    }
-                    LoadBalanceMode.LATENCY -> {
-                        add(buildJsonObject {
-                            put("type", "urltest")
-                            put("tag", "lb")
-                            putJsonArray("outbounds") { lbOutbounds.forEach(::add) }
-                            put("url", lb.checkUrl)
-                            put("interval", "${lb.intervalSeconds}s")
-                            put("tolerance", 0)
-                            put("interrupt_exist_connections", lb.interruptExistConnections)
-                        })
-                    }
-                    LoadBalanceMode.BALANCED -> {
-                        add(buildJsonObject {
-                            put("type", "urltest")
-                            put("tag", "lb")
-                            putJsonArray("outbounds") { lbOutbounds.forEach(::add) }
-                            put("url", lb.checkUrl)
-                            put("interval", "${lb.intervalSeconds}s")
-                            put("tolerance", lb.toleranceMs)
-                            put("idle_timeout", "${lb.idleTimeoutSeconds}s")
-                            put("interrupt_exist_connections", lb.interruptExistConnections)
-                        })
-                    }
+                val lbOutbounds = lb.outbounds.filter { it in nodeTags }.ifEmpty { nodeTags }
+                if (lb.mode == LoadBalanceMode.MANUAL) {
+                    add(buildJsonObject {
+                        put("type", "selector")
+                        put("tag", "lb-selector")
+                        putJsonArray("outbounds") { lbOutbounds.forEach(::add) }
+                    })
+                } else {
+                    add(buildJsonObject {
+                        put("type", "urltest")
+                        put("tag", "lb")
+                        putJsonArray("outbounds") { lbOutbounds.forEach(::add) }
+                        put("url", lb.checkUrl)
+                        put("interval", lb.interval)
+                        put(
+                            "tolerance",
+                            if (lb.mode == LoadBalanceMode.LATENCY) 0 else lb.toleranceMs,
+                        )
+                        put("idle_timeout", lb.idleTimeout)
+                        put("interrupt_exist_connections", lb.interruptExistConnections)
+                        // fork 扩展：round_robin + balancer{pool,...} = 仅使用 N 个节点
+                        if (lb.urltestMode == UrltestMode.ROUND_ROBIN) {
+                            put("mode", UrltestMode.ROUND_ROBIN.wire)
+                            putJsonObject("balancer") {
+                                put("pool", lb.pool.coerceAtLeast(1))
+                                put("pool_tolerance", lb.poolTolerance.coerceAtLeast(0))
+                                putJsonArray("sticky_hash") {
+                                    val keys = lb.stickyHash.ifEmpty { listOf(StickyHashKey.NONE) }
+                                    keys.forEach { add(it.wire) }
+                                }
+                            }
+                        }
+                    })
                 }
             } else if (nodeTags.size > 1) {
                 add(buildJsonObject {
@@ -125,24 +136,17 @@ object SingBoxConfigGenerator {
                     put("tag", "auto")
                     putJsonArray("outbounds") { add(finalProxyTag) }
                     put("url", lb.checkUrl)
-                    put("interval", "${lb.intervalSeconds}s")
+                    put("interval", lb.interval)
                 })
             }
 
             enabledNodes.forEach { node ->
-                runCatching {
-                    json.parseToJsonElement(node.outboundJson).jsonObject
-                }.getOrNull()?.let(::add)
+                runCatching { json.parseToJsonElement(node.outboundJson).jsonObject }
+                    .getOrNull()?.let(::add)
             }
 
-            add(buildJsonObject {
-                put("type", "direct")
-                put("tag", "direct")
-            })
-            add(buildJsonObject {
-                put("type", "block")
-                put("tag", "block")
-            })
+            add(buildJsonObject { put("type", "direct"); put("tag", "direct") })
+            add(buildJsonObject { put("type", "block"); put("tag", "block") })
         }
 
         return buildJsonObject {
@@ -156,7 +160,7 @@ object SingBoxConfigGenerator {
                 putJsonArray("rules") { dnsRules.forEach(::add) }
                 put("strategy", state.settings.dnsStrategy)
                 put("independent_cache", true)
-                put("final", state.dnsServers.firstOrNull { it.enabled }?.tag ?: "dns-default")
+                put("final", defaultDnsTag)
             }
 
             putJsonObject("route") {
@@ -175,11 +179,11 @@ object SingBoxConfigGenerator {
                                 }
                                 RuleSetType.LOCAL -> {
                                     put("type", "inline")
-                                    put("format", "source")
-                                    runCatching {
-                                        put("rules", json.parseToJsonElement(rs.localContent)
-                                            .jsonObject["rules"] ?: JsonArray(emptyList()))
-                                    }
+                                    val rules = runCatching {
+                                        json.parseToJsonElement(rs.localContent)
+                                            .jsonObject["rules"] as? JsonArray
+                                    }.getOrNull()
+                                    put("rules", rules ?: JsonArray(emptyList()))
                                 }
                             }
                         })
@@ -206,22 +210,17 @@ object SingBoxConfigGenerator {
                     put("sniff", true)
                     put("sniff_override_destination", false)
 
-                    // 分应用代理（LxBox 基准）
-                    val pap = state.settings.perAppProxy
-                    when (pap.mode) {
+                    when (state.settings.perAppProxy.mode) {
                         PerAppProxyMode.INCLUDE ->
-                            putJsonArray("include_package") { pap.packages.forEach(::add) }
+                            putJsonArray("include_package") { state.settings.perAppProxy.packages.forEach(::add) }
                         PerAppProxyMode.EXCLUDE ->
-                            putJsonArray("exclude_package") { pap.packages.forEach(::add) }
+                            putJsonArray("exclude_package") { state.settings.perAppProxy.packages.forEach(::add) }
                         PerAppProxyMode.OFF -> Unit
                     }
                 })
             }
 
             putJsonObject("experimental") {
-                putJsonObject("clash_api") {
-                    put("external_controller", "127.0.0.1:9090")
-                }
                 putJsonObject("cache_file") {
                     put("enabled", true)
                     put("path", "cache.db")
@@ -261,25 +260,24 @@ object SingBoxConfigGenerator {
                     DnsServerType.HOSTS -> put("type", "hosts")
                     DnsServerType.FAKEIP -> {
                         put("type", "fakeip")
-                        putJsonObject("inet4_range") {}
-                        putJsonObject("inet6_range") {}
+                        put("inet4_range", "198.18.0.0/15")
+                        put("inet6_range", "fc00::/18")
                     }
                     else -> {
                         put("type", s.type.wireName)
                         if (s.type == DnsServerType.UDP || s.type == DnsServerType.TCP) {
                             put("server", s.address)
                         } else {
-                            // tls/https/quic/h3：server 取 address 去掉 scheme 后的 host:port
-                            put("server", stripScheme(s.address))
+                            val (host, path) = splitHostAndPath(s.address)
+                            put("server", host)
+                            if (path != null && s.type == DnsServerType.HTTPS) put("path", path)
                         }
                     }
                 }
                 s.detour?.takeIf { it.isNotBlank() }?.let { put("detour", it) }
                 s.addressResolver?.takeIf { it.isNotBlank() }?.let { put("address_resolver", it) }
-                // ECS（EDNS Client Subnet）
                 s.clientSubnet?.takeIf { it.isNotBlank() }?.let { put("client_subnet", it) }
-                // ECH（Encrypted Client Hello）：仅加密类 DNS 有效
-                if (s.echEnabled && s.type in setOf(DnsServerType.TLS, DnsServerType.HTTPS, DnsServerType.QUIC, DnsServerType.H3)) {
+                if (s.echEnabled && s.type in ECH_CAPABLE) {
                     putJsonObject("tls") {
                         put("enabled", true)
                         putJsonObject("ech") {
@@ -295,10 +293,15 @@ object SingBoxConfigGenerator {
         return result
     }
 
-    private fun stripScheme(address: String): String {
-        val idx = address.indexOf("://")
-        val host = if (idx >= 0) address.substring(idx + 3) else address
-        return host.substringBefore("/")
+    private val ECH_CAPABLE = setOf(
+        DnsServerType.TLS, DnsServerType.HTTPS, DnsServerType.QUIC, DnsServerType.H3,
+    )
+
+    private fun splitHostAndPath(address: String): Pair<String, String?> {
+        val noScheme = address.substringAfter("://")
+        val slash = noScheme.indexOf('/')
+        return if (slash >= 0) noScheme.substring(0, slash) to noScheme.substring(slash)
+        else noScheme to null
     }
 
     // ------------------------------------------------------------------
@@ -307,21 +310,10 @@ object SingBoxConfigGenerator {
 
     private fun buildRouteRules(state: AppState, entryTag: String): List<JsonObject> {
         val rules = mutableListOf<JsonObject>()
-
-        // 系统内置：DNS 劫持由 tun 处理，Clash API 直连
-        rules.add(buildJsonObject {
-            put("action", "sniff")
-        })
-        rules.add(buildJsonObject {
-            putJsonArray("ip_cidr") { add("127.0.0.1/32"); add("::1/128") }
-            putJsonArray("port") { add(9090) }
-            put("outbound", "direct")
-        })
-
+        rules.add(buildJsonObject { put("action", "sniff") })
         state.routeRules.filter { it.enabled }.forEach { rule ->
             rules.add(buildRouteRule(rule, entryTag))
         }
-
         return rules
     }
 
@@ -332,143 +324,168 @@ object SingBoxConfigGenerator {
             RuleAction.PROXY -> entryTag
         }
 
-        fun JsonObjectBuilderCompat.putConditions(r: RouteRule, includeDomain: Boolean, includeIp: Boolean) {
-            if (includeDomain) {
-                if (r.domains.isNotEmpty()) putJsonArray("domain") { r.domains.forEach(::add) }
-                if (r.domainSuffixes.isNotEmpty()) putJsonArray("domain_suffix") { r.domainSuffixes.forEach(::add) }
-                if (r.domainKeywords.isNotEmpty()) putJsonArray("domain_keyword") { r.domainKeywords.forEach(::add) }
-                if (r.domainRegexes.isNotEmpty()) putJsonArray("domain_regex") { r.domainRegexes.forEach(::add) }
+        // 按字段类别拆分为子条件（OR 模式用；AND 模式平铺）
+        val domainCond = buildJsonObject { putConditions(rule, domain = true, ip = false, transport = false) }
+        val ipCond = buildJsonObject { putConditions(rule, domain = false, ip = true, transport = false) }
+        val transportCond = buildJsonObject { putConditions(rule, domain = false, ip = false, transport = true) }
+
+        return buildJsonObject {
+            if (rule.logic == RuleLogic.OR) {
+                val children = buildJsonArray {
+                    listOf(domainCond, ipCond, transportCond).filter { it.isNotEmpty() }.forEach(::add)
+                }
+                if (children.size == 0) {
+                    put("outbound", outbound)
+                } else if (children.size == 1) {
+                    // 只有一个类别时 OR 与 AND 等价，直接平铺，避免无谓的 logical 包裹
+                    children[0].jsonObject.forEach { (k, v) -> put(k, v) }
+                    if (rule.invert) put("invert", true)
+                    put("outbound", outbound)
+                } else {
+                    put("type", "logical")
+                    put("mode", "or")
+                    put("rules", children)
+                    if (rule.invert) put("invert", true)
+                    put("outbound", outbound)
+                }
+            } else {
+                // AND：所有字段平铺在一个 rule 对象里（sing-box 默认即 AND 语义）
+                putConditions(rule, domain = true, ip = true, transport = true)
+                if (rule.invert) put("invert", true)
+                put("outbound", outbound)
             }
-            if (includeIp) {
-                if (r.ipCidrs.isNotEmpty()) putJsonArray("ip_cidr") { r.ipCidrs.forEach(::add) }
-                if (r.ruleSetTags.isNotEmpty()) putJsonArray("rule_set") { r.ruleSetTags.forEach(::add) }
-            }
+        }
+    }
+
+    private fun JB.putConditions(r: RouteRule, domain: Boolean, ip: Boolean, transport: Boolean) {
+        if (domain) {
+            if (r.domains.isNotEmpty()) putJsonArray("domain") { r.domains.forEach(::add) }
+            if (r.domainSuffixes.isNotEmpty()) putJsonArray("domain_suffix") { r.domainSuffixes.forEach(::add) }
+            if (r.domainKeywords.isNotEmpty()) putJsonArray("domain_keyword") { r.domainKeywords.forEach(::add) }
+            if (r.domainRegexes.isNotEmpty()) putJsonArray("domain_regex") { r.domainRegexes.forEach(::add) }
+        }
+        if (ip) {
+            if (r.ipCidrs.isNotEmpty()) putJsonArray("ip_cidr") { r.ipCidrs.forEach(::add) }
+            if (r.ruleSetTags.isNotEmpty()) putJsonArray("rule_set") { r.ruleSetTags.forEach(::add) }
+        }
+        if (transport) {
             if (r.networks.isNotEmpty()) putJsonArray("network") { r.networks.forEach(::add) }
             if (r.protocols.isNotEmpty()) putJsonArray("protocol") { r.protocols.forEach(::add) }
             if (r.ports.isNotEmpty()) putJsonArray("port") { r.ports.forEach(::add) }
             if (r.portRanges.isNotEmpty()) putJsonArray("port_range") { r.portRanges.forEach(::add) }
         }
-
-        return buildJsonObject {
-            when (rule.logic) {
-                RuleLogic.SINGLE -> {
-                    val scope = buildJsonObject {
-                        putConditions(rule, includeDomain = true, includeIp = true)
-                    }
-                    // 复制 scope 字段到本层
-                    scope.forEach { (k, v) -> put(k, v) }
-                    if (rule.invert) put("invert", true)
-                    put("outbound", outbound)
-                }
-                RuleLogic.AND, RuleLogic.OR -> {
-                    // 逻辑运算：domain 条件 / ip 条件各为一个子规则，and/or 聚合
-                    val domainCond = buildJsonObject {
-                        putConditions(rule, includeDomain = true, includeIp = false)
-                    }
-                    val ipCond = buildJsonObject {
-                        putConditions(rule, includeDomain = false, includeIp = true)
-                    }
-                    val children = buildJsonArray {
-                        if (domainCond.isNotEmpty()) add(domainCond)
-                        if (ipCond.isNotEmpty()) add(ipCond)
-                    }
-                    if (children.size == 0) {
-                        // 没有任何条件：退化为全局规则
-                        put("outbound", outbound)
-                    } else {
-                        put("type", "logical")
-                        put("mode", if (rule.logic == RuleLogic.AND) "and" else "or")
-                        put("rules", children)
-                        if (rule.invert) put("invert", true)
-                        put("outbound", outbound)
-                    }
-                }
-            }
-        }
     }
 
     // ------------------------------------------------------------------
-    // Route rules
+    // DNS rules：手动规则在前（用户可控优先级），自动推导在后
     // ------------------------------------------------------------------
 
-    private fun buildDnsRules(
-        state: AppState,
-        routeRules: List<JsonObject>,
-        dnsForRule: (RouteRule) -> String?,
-    ): List<JsonObject> {
-        val result = mutableListOf<JsonObject>()
-        val enabledRules = state.routeRules.filter { it.enabled }
+    /** 供 UI 展示：把自动推导的 DNS 规则也算出来（只读） */
+    fun autoDnsRules(state: AppState): List<DnsRule> {
+        val defaultDnsTag = state.dnsServers.firstOrNull { it.enabled && it.tag.isNotBlank() }?.tag
+            ?: "dns-default"
+        val groupOfTag = state.dnsGroups.associate { it.name to it.serverTags }
+        return state.routeRules.filter { it.enabled }.mapNotNull { rule ->
+            if (rule.action == RuleAction.BLOCK) return@mapNotNull null
+            if (!rule.hasDomainContent) return@mapNotNull null
+            val dnsServer = resolveDnsTag(rule.dnsTag, groupOfTag, state)
+            val strategy = ipStrategy(rule.ipv4, rule.ipv6)
+            if (dnsServer == null && strategy == null) return@mapNotNull null
+            DnsRule(
+                id = "auto-${rule.id}",
+                enabled = true,
+                autoFromRouteRuleId = rule.id,
+                name = "自动 · ${rule.name.ifBlank { "路由规则" }}",
+                domains = rule.domains,
+                domainSuffixes = rule.domainSuffixes,
+                domainKeywords = rule.domainKeywords,
+                domainRegexes = rule.domainRegexes,
+                server = dnsServer ?: defaultDnsTag,
+                ipStrategy = strategy ?: "",
+            )
+        }
+    }
 
-        // 路由规则集 IPv4/IPv6 勾选（默认全选）→ 生成 ip_strategy DNS 规则
+    private fun resolveDnsTag(
+        dnsTag: String?,
+        groupOfTag: Map<String, List<String>>,
+        state: AppState,
+    ): String? = dnsTag?.takeIf { it.isNotBlank() }?.let { tag ->
+        // group → 取首个成员；直接 server tag → 必须真实存在，否则 null（避免悬空引用）
+        groupOfTag[tag]?.firstOrNull()
+            ?: tag.takeIf { t -> state.dnsServers.any { it.enabled && it.tag == t } }
+    }
+
+    private fun buildDnsRules(state: AppState, defaultDnsTag: String): List<JsonObject> {
+        val result = mutableListOf<JsonObject>()
+        val groupOfTag = state.dnsGroups.associate { it.name to it.serverTags }
+
+        // 1) 用户手动创建的 DNS 规则（按列表顺序 = 优先级）
+        state.dnsRules.filter { it.enabled }.forEach { r ->
+            val server = resolveDnsTag(r.server, groupOfTag, state) ?: return@forEach
+            result.add(buildJsonObject {
+                if (r.domains.isNotEmpty()) putJsonArray("domain") { r.domains.forEach(::add) }
+                if (r.domainSuffixes.isNotEmpty()) putJsonArray("domain_suffix") { r.domainSuffixes.forEach(::add) }
+                if (r.domainKeywords.isNotEmpty()) putJsonArray("domain_keyword") { r.domainKeywords.forEach(::add) }
+                if (r.domainRegexes.isNotEmpty()) putJsonArray("domain_regex") { r.domainRegexes.forEach(::add) }
+                if (r.ruleSetTags.isNotEmpty()) putJsonArray("rule_set") { r.ruleSetTags.forEach(::add) }
+                if (r.ipCidrs.isNotEmpty()) putJsonArray("ip_cidr") { r.ipCidrs.forEach(::add) }
+                if (r.networks.isNotEmpty()) putJsonArray("network") { r.networks.forEach(::add) }
+                if (r.ports.isNotEmpty()) putJsonArray("port") { r.ports.forEach(::add) }
+                if (r.queryTypes.isNotEmpty()) putJsonArray("query_type") { r.queryTypes.forEach(::add) }
+                put("server", server)
+                if (r.ipStrategy.isNotBlank()) put("ip_strategy", r.ipStrategy)
+                if (r.disableCache) put("disable_cache", true)
+                r.rewriteTtl?.let { put("rewrite_ttl", it) }
+                r.clientSubnet?.takeIf { it.isNotBlank() }?.let { put("client_subnet", it) }
+            })
+        }
+
+        // 2) 规则集 IPv4/IPv6 勾选 → ip_strategy 规则
         state.routeRuleSets.filter { it.enabled && it.tag.isNotBlank() }.forEach { rs ->
             val strategy = ipStrategy(rs.ipv4, rs.ipv6) ?: return@forEach
             result.add(buildJsonObject {
                 putJsonArray("rule_set") { add(rs.tag) }
-                put("server", "dns-default")
+                put("server", defaultDnsTag)
                 put("ip_strategy", strategy)
             })
         }
 
-        enabledRules.forEachIndexed { index, rule ->
-            if (rule.action == RuleAction.BLOCK) return@forEachIndexed
-            if (!rule.hasDomainContent) return@forEachIndexed
-
-            val dnsServer = dnsForRule(rule)
+        // 3) 路由规则自动推导（需求 4 + 5：同时命中只生成一条合并规则）
+        state.routeRules.filter { it.enabled }.forEach { rule ->
+            if (rule.action == RuleAction.BLOCK) return@forEach
+            if (!rule.hasDomainContent) return@forEach
+            val dnsServer = resolveDnsTag(rule.dnsTag, groupOfTag, state)
             val strategy = ipStrategy(rule.ipv4, rule.ipv6)
+            if (dnsServer == null && strategy == null) return@forEach
 
-            val base = rule.tagBase(index)
-
-            when {
-                // 需求 4 + 5 同时命中：只生成一条（合并 DNS 服务器与 ip_strategy）
-                dnsServer != null && strategy != null -> {
-                    result.add(buildJsonObject {
-                        putDomainMatchers(rule)
-                        put("server", dnsServer)
-                        put("ip_strategy", strategy)
-                    })
-                }
-                dnsServer != null -> {
-                    result.add(buildJsonObject {
-                        putDomainMatchers(rule)
-                        put("server", dnsServer)
-                    })
-                }
-                strategy != null -> {
-                    result.add(buildJsonObject {
-                        putDomainMatchers(rule)
-                        put("server", "dns-default")
-                        put("ip_strategy", strategy)
-                    })
-                }
-            }
+            result.add(buildJsonObject {
+                if (rule.domains.isNotEmpty()) putJsonArray("domain") { rule.domains.forEach(::add) }
+                if (rule.domainSuffixes.isNotEmpty()) putJsonArray("domain_suffix") { rule.domainSuffixes.forEach(::add) }
+                if (rule.domainKeywords.isNotEmpty()) putJsonArray("domain_keyword") { rule.domainKeywords.forEach(::add) }
+                if (rule.domainRegexes.isNotEmpty()) putJsonArray("domain_regex") { rule.domainRegexes.forEach(::add) }
+                put("server", dnsServer ?: defaultDnsTag)
+                if (strategy != null) put("ip_strategy", strategy)
+            })
         }
 
         return result
     }
 
-    private fun JsonObjectBuilderCompat.putDomainMatchers(rule: RouteRule) {
-        if (rule.domains.isNotEmpty()) putJsonArray("domain") { rule.domains.forEach(::add) }
-        if (rule.domainSuffixes.isNotEmpty()) putJsonArray("domain_suffix") { rule.domainSuffixes.forEach(::add) }
-        if (rule.domainKeywords.isNotEmpty()) putJsonArray("domain_keyword") { rule.domainKeywords.forEach(::add) }
-        if (rule.domainRegexes.isNotEmpty()) putJsonArray("domain_regex") { rule.domainRegexes.forEach(::add) }
-    }
-
     private fun ipStrategy(ipv4: Boolean, ipv6: Boolean): String? = when {
         ipv4 && !ipv6 -> "ipv4_only"
         !ipv4 && ipv6 -> "ipv6_only"
-        !ipv4 && !ipv6 -> "ipv4_only"
-        else -> null
+        else -> null   // 全选或全不选都不生成策略
     }
 
-    private fun RouteRule.tagBase(index: Int): String =
-        name.ifBlank { "rule-$index" }
+    fun nodeTagOf(node: com.sbai.data.ProxyNode): String = nodeTag(node)
 
     private fun nodeTag(node: com.sbai.data.ProxyNode): String =
         runCatching {
             json.parseToJsonElement(node.outboundJson).jsonObject["tag"]?.jsonPrimitive?.content
         }.getOrNull() ?: node.name.ifBlank { node.id }
 
-    /** 仅用于工具与测试：生成后交给 Libbox.checkConfig 校验。 */
+    /** 交给 Libbox.checkConfig 校验；返回 null 表示通过 */
     fun validate(configJson: String): String? =
         runCatching {
             io.nekohasekai.libbox.Libbox.checkConfig(configJson)

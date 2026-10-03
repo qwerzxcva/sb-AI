@@ -113,6 +113,35 @@ class ShareLinkParserTest {
     }
 
     @Test
+    fun `password containing at sign is not truncated`() {
+        val o = outboundOf("trojan://p%40ss%40word@trojan.example.com:443?sni=t.example.com#n")
+        assertEquals("p@ss@word", o["password"]!!.jsonPrimitive.content)
+        assertEquals("trojan.example.com", o["server"]!!.jsonPrimitive.content)
+        assertEquals("443", o["server_port"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `vless uuid containing at sign`() {
+        val o = outboundOf("vless://ui%40d@1.2.3.4:443?security=tls#n")
+        assertEquals("ui@d", o["uuid"]!!.jsonPrimitive.content)
+        assertEquals("1.2.3.4", o["server"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `invalid port is rejected not silently defaulted`() {
+        assertNull(ShareLinkParser.parse("trojan://pw@host.example.com:99999#n"))
+        assertNull(ShareLinkParser.parse("trojan://pw@host.example.com:0#n"))
+        assertNull(ShareLinkParser.parse("trojan://pw@host.example.com:abc#n"))
+    }
+
+    @Test
+    fun `ipv6 host literal`() {
+        val o = outboundOf("trojan://pw@[2001:db8::1]:443?sni=t.example.com#n")
+        assertEquals("2001:db8::1", o["server"]!!.jsonPrimitive.content)
+        assertEquals("443", o["server_port"]!!.jsonPrimitive.content)
+    }
+
+    @Test
     fun `unsupported protocol returns null`() {
         assertNull(ShareLinkParser.parse("ssr://something"))
         assertNull(ShareLinkParser.parse("http://example.com"))

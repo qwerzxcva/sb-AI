@@ -47,6 +47,9 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -69,7 +72,9 @@ import com.sbai.data.LoadBalanceConfig
 import com.sbai.data.LoadBalanceMode
 import com.sbai.data.ProxyNode
 import com.sbai.data.RuleStore
+import com.sbai.data.StickyHashKey
 import com.sbai.data.Subscription
+import com.sbai.data.UrltestMode
 import com.sbai.service.SbAiVpnService
 import com.sbai.service.SbCommandClient
 import com.sbai.service.SingBoxConfigGenerator
@@ -285,7 +290,8 @@ fun HomeScreen() {
                 item {
                     SbCollapsibleGroup(
                         title = "负载均衡参数",
-                        summary = "测速 URL · 间隔 ${lb.intervalSeconds}s · tolerance ${lb.toleranceMs}ms",
+                        summary = "测速间隔 ${lb.interval} · tolerance ${lb.toleranceMs}ms · 选点 ${lb.urltestMode.displayName}" +
+                            if (lb.urltestMode == UrltestMode.ROUND_ROBIN) " · 池 ${lb.pool} 节点" else "",
                     ) {
                         item {
                             SbItem(title = "测速 URL", subtitle = lb.checkUrl, onClick = {
@@ -295,9 +301,9 @@ fun HomeScreen() {
                             })
                         }
                         item {
-                            SbItem(title = "测速间隔（秒）", subtitle = lb.intervalSeconds.toString(), onClick = {
-                                editingText = Triple("测速间隔（秒）", lb.intervalSeconds.toString()) { v ->
-                                    v.toIntOrNull()?.let { n -> store.updateLoadBalance(lb.copy(intervalSeconds = n)) }
+                            SbItem(title = "测速间隔", subtitle = "${lb.interval}（sing-box duration，如 5m/15m/1h）", onClick = {
+                                editingText = Triple("测速间隔（如 15m）", lb.interval) { v ->
+                                    if (v.isNotBlank()) store.updateLoadBalance(lb.copy(interval = v.trim()))
                                 }
                             })
                         }
@@ -309,11 +315,87 @@ fun HomeScreen() {
                             })
                         }
                         item {
-                            SbItem(title = "idle_timeout（秒）", subtitle = lb.idleTimeoutSeconds.toString(), onClick = {
-                                editingText = Triple("idle_timeout（秒）", lb.idleTimeoutSeconds.toString()) { v ->
-                                    v.toIntOrNull()?.let { n -> store.updateLoadBalance(lb.copy(idleTimeoutSeconds = n)) }
+                            SbItem(title = "idle_timeout", subtitle = "${lb.idleTimeout}（如 30m）", onClick = {
+                                editingText = Triple("idle_timeout（如 30m）", lb.idleTimeout) { v ->
+                                    if (v.isNotBlank()) store.updateLoadBalance(lb.copy(idleTimeout = v.trim()))
                                 }
                             })
+                        }
+                        // 选点模式（LxBox §208）
+                        item {
+                            Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                                Text("选点模式", style = MaterialTheme.typography.labelLarge)
+                                Spacer(Modifier.height(4.dp))
+                                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                                    UrltestMode.entries.forEachIndexed { i, mode ->
+                                        SegmentedButton(
+                                            selected = lb.urltestMode == mode,
+                                            onClick = {
+                                                store.updateLoadBalance(lb.copy(urltestMode = mode))
+                                            },
+                                            shape = SegmentedButtonDefaults.itemShape(
+                                                index = i, count = UrltestMode.entries.size,
+                                            ),
+                                        ) { Text(mode.displayName) }
+                                }
+                                }
+                                Text(
+                                    if (lb.urltestMode == UrltestMode.LEAST_TEST) {
+                                        "始终选用延迟最低的一个节点（上游行为）"
+                                    } else {
+                                        "在下方「节点池」大小的节点集合内轮询分摊流量（fork 扩展）"
+                                    },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                        // 节点池大小 N（仅 round_robin 生效）
+                        if (lb.urltestMode == UrltestMode.ROUND_ROBIN) {
+                            item {
+                                SbItem(
+                                    title = "节点池大小（仅用 N 个节点）",
+                                    subtitle = "${lb.pool} 个节点参与负载均衡",
+                                    onClick = {
+                                        editingText = Triple("节点池大小 N", lb.pool.toString()) { v ->
+                                            v.toIntOrNull()?.takeIf { it >= 1 }
+                                                ?.let { n -> store.updateLoadBalance(lb.copy(pool = n)) }
+                                        }
+                                    },
+                                )
+                            }
+                            item {
+                                SbItem(
+                                    title = "pool_tolerance（毫秒）",
+                                    subtitle = "${lb.poolTolerance}（0 = 保持池内节点存活；>0 = 每轮按延迟选最优 N 个）",
+                                    onClick = {
+                                        editingText = Triple("pool_tolerance（毫秒）", lb.poolTolerance.toString()) { v ->
+                                            v.toIntOrNull()?.takeIf { it >= 0 }
+                                                ?.let { n -> store.updateLoadBalance(lb.copy(poolTolerance = n)) }
+                                        }
+                                    },
+                                )
+                            }
+                            item {
+                                Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                                    Text("粘性会话（sticky_hash）", style = MaterialTheme.typography.labelLarge)
+                                    Spacer(Modifier.height(4.dp))
+                                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        StickyHashKey.entries.forEach { key ->
+                                            val selected = key in lb.stickyHash
+                                            FilterChip(
+                                                selected = selected,
+                                                onClick = {
+                                                    val next = if (selected) lb.stickyHash - key
+                                                    else (lb.stickyHash - StickyHashKey.NONE) + key
+                                                    store.updateLoadBalance(lb.copy(stickyHash = next))
+                                                },
+                                                label = { Text(key.displayName) },
+                                            )
+                                        }
+                                    }
+                                }
+                            }
                         }
                         item {
                             SbSwitchItem(
@@ -516,7 +598,9 @@ fun HomeScreen() {
     }
 
     if (showNodesPicker) {
-        val nodeTags = state.proxyNodes.filter { it.enabled }.map { it.name.ifBlank { it.id } }
+        // 与生成器同口径解析节点 tag（避免显示名与配置 tag 不一致导致勾选无效）
+        val nodeTags = state.proxyNodes.filter { it.enabled }
+            .map { SingBoxConfigGenerator.nodeTagOf(it) }.distinct()
         AlertDialog(
             onDismissRequest = { showNodesPicker = false },
             title = { Text("参与负载均衡的节点") },
@@ -648,29 +732,80 @@ private fun SubscriptionEditorDialog(
     var name by remember { mutableStateOf(initial.name) }
     var url by remember { mutableStateOf(initial.url) }
     var autoUpdate by remember { mutableStateOf(initial.autoUpdate) }
+    var intervalHours by remember { mutableStateOf(initial.updateIntervalHours.toString()) }
+    var userAgent by remember { mutableStateOf(initial.userAgent ?: "") }
+    var includeKw by remember { mutableStateOf(initial.includeKeyword) }
+    var excludeKw by remember { mutableStateOf(initial.excludeKeyword) }
     var error by remember { mutableStateOf<String?>(null) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(if (initial.url.isBlank()) "添加订阅源" else "订阅源") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("名称") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(value = url, onValueChange = { url = it }, label = { Text("订阅 URL") }, modifier = Modifier.fillMaxWidth(), minLines = 2)
+                OutlinedTextField(value = url, onValueChange = { url = it }, label = { Text("订阅 URL（仅 https）") }, modifier = Modifier.fillMaxWidth(), minLines = 2)
+                OutlinedTextField(
+                    value = userAgent, onValueChange = { userAgent = it },
+                    label = { Text("User-Agent（可选）") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+                )
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Switch(checked = autoUpdate, onCheckedChange = { autoUpdate = it })
                     Spacer(Modifier.size(8.dp))
                     Text("自动更新")
+                }
+                if (autoUpdate) {
+                    OutlinedTextField(
+                        value = intervalHours, onValueChange = { intervalHours = it },
+                        label = { Text("更新间隔（小时，0 = 每次启动检查）") }, singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+                OutlinedTextField(
+                    value = includeKw, onValueChange = { includeKw = it },
+                    label = { Text("包含关键字（空格分隔，可选）") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = excludeKw, onValueChange = { excludeKw = it },
+                    label = { Text("排除关键字（空格分隔，可选）") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+                )
+
+                // 流量信息展示（来自 subscription-userinfo 头）
+                if (initial.trafficTotal > 0) {
+                    val used = initial.trafficUpload + initial.trafficDownload
+                    Text(
+                        "流量: ${com.sbai.ui.monitor.formatBytes(used)} / " +
+                            "${com.sbai.ui.monitor.formatBytes(initial.trafficTotal)}" +
+                            if (initial.trafficExpire > 0) {
+                                " · 到期: " + SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+                                    .format(Date(initial.trafficExpire * 1000))
+                            } else "",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.secondary,
+                    )
                 }
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             }
         },
         confirmButton = {
             TextButton(onClick = {
-                if (!url.startsWith("http://") && !url.startsWith("https://")) {
-                    error = "请输入 http/https 订阅地址"; return@TextButton
+                if (!url.startsWith("https://")) {
+                    error = "请输入 https 订阅地址"; return@TextButton
                 }
-                onSave(initial.copy(name = name.trim(), url = url.trim(), autoUpdate = autoUpdate))
+                onSave(
+                    initial.copy(
+                        name = name.trim(), url = url.trim(), autoUpdate = autoUpdate,
+                        updateIntervalHours = intervalHours.toIntOrNull()?.coerceAtLeast(0) ?: 24,
+                        userAgent = userAgent.ifBlank { null },
+                        includeKeyword = includeKw.trim(),
+                        excludeKeyword = excludeKw.trim(),
+                    ),
+                )
             }) { Text("保存") }
         },
         dismissButton = {

@@ -1,5 +1,6 @@
 package com.sbai.ui.monitor
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -8,14 +9,17 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ClearAll
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
@@ -24,6 +28,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -46,7 +51,9 @@ fun MonitorScreen() {
 
     val status by SbCommandClient.status.collectAsState()
     val logs by SbCommandClient.logs.collectAsState()
+    val connections by SbCommandClient.connections.collectAsState()
     val connected by SbCommandClient.connectedToService.collectAsState()
+    var query by remember { mutableStateOf("") }
 
     Column(
         modifier = Modifier
@@ -56,7 +63,8 @@ fun MonitorScreen() {
         Spacer(Modifier.height(16.dp))
         TabRow(selectedTabIndex = tab) {
             Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("状态") })
-            Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("日志（${logs.size}）") })
+            Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("连接（${connections.size}）") })
+            Tab(selected = tab == 2, onClick = { tab = 2 }, text = { Text("日志（${logs.size}）") })
         }
 
         if (tab == 0) {
@@ -92,6 +100,64 @@ fun MonitorScreen() {
                 }
                 item { Spacer(Modifier.height(112.dp)) }
             }
+        } else if (tab == 1) {
+            // ---- 连接列表（三大代理交集功能，LxBox connections_screen 基准）----
+            val filtered = remember(connections, query) {
+                if (query.isBlank()) connections
+                else connections.filter {
+                    it.domain.contains(query, true) || it.destination.contains(query, true) ||
+                        it.outbound.contains(query, true) || it.processPath.contains(query, true) ||
+                        it.rule.contains(query, true)
+                }
+            }
+            Column(Modifier.fillMaxSize()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    OutlinedTextField(
+                        value = query,
+                        onValueChange = { query = it },
+                        label = { Text("搜索域名 / 出口 / 进程 / 规则") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f),
+                    )
+                    IconButton(
+                        onClick = { SbCommandClient.closeAllConnections() },
+                        enabled = connected && connections.isNotEmpty(),
+                    ) {
+                        Icon(Icons.Filled.Close, contentDescription = "关闭全部连接")
+                    }
+                }
+                if (!connected) {
+                    Text(
+                        "服务未运行，无连接数据。",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else if (filtered.isEmpty()) {
+                    Text(
+                        if (connections.isEmpty()) "当前无活跃连接。" else "无匹配连接。",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    LazyColumn(
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.fillMaxSize(),
+                    ) {
+                        items(filtered, key = { it.id }) { c ->
+                            ConnectionCard(
+                                entry = c,
+                                onClose = { SbCommandClient.closeConnection(c.id) },
+                            )
+                        }
+                        item { Spacer(Modifier.height(112.dp)) }
+                    }
+                }
+            }
         } else {
             Column(Modifier.fillMaxSize()) {
                 Row(
@@ -119,15 +185,15 @@ fun MonitorScreen() {
                     verticalArrangement = Arrangement.spacedBy(2.dp),
                     modifier = Modifier.fillMaxSize(),
                 ) {
-                    items(logs, key = { it.hashCode() + it.length }) { line ->
+                    items(logs, key = { it.seq }) { line ->
                         Text(
-                            line,
+                            line.text,
                             style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
                             color = when {
                                 // libbox 日志级别：panic=0 fatal=1 error=2 warn=3 info=4 debug=5 trace=6
-                                line.startsWith("[0]") || line.startsWith("[1]") || line.startsWith("[2]") ->
+                                line.text.startsWith("[0]") || line.text.startsWith("[1]") || line.text.startsWith("[2]") ->
                                     MaterialTheme.colorScheme.error
-                                line.startsWith("[3]") -> MaterialTheme.colorScheme.tertiary
+                                line.text.startsWith("[3]") -> MaterialTheme.colorScheme.tertiary
                                 else -> MaterialTheme.colorScheme.onSurfaceVariant
                             },
                         )
@@ -143,6 +209,75 @@ fun MonitorScreen() {
 private fun SbStatBadge(text: String, ok: Boolean) {
     val color = if (ok) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
     Text(text, style = MaterialTheme.typography.labelMedium, color = color)
+}
+
+@Composable
+private fun ConnectionCard(entry: SbCommandClient.ConnectionEntry, onClose: () -> Unit) {
+    val title = entry.domain.ifBlank { entry.destination }.ifBlank { "(unknown)" }
+    val app = entry.processPath.substringAfterLast('/').ifBlank { entry.userName }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(
+                MaterialTheme.colorScheme.surfaceContainer,
+                MaterialTheme.shapes.small,
+            )
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    title,
+                    style = MaterialTheme.typography.titleSmall,
+                    maxLines = 1,
+                )
+                Text(
+                    buildString {
+                        append(entry.network.uppercase())
+                        if (entry.protocol.isNotBlank()) append(" · ${entry.protocol}")
+                        if (app.isNotBlank()) append(" · $app")
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                )
+            }
+            IconButton(onClick = onClose) {
+                Icon(
+                    Icons.Filled.Close,
+                    contentDescription = "关闭连接",
+                    tint = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            if (entry.outbound.isNotBlank()) {
+                Text(
+                    "→ ${entry.outbound}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+            if (entry.rule.isNotBlank()) {
+                Text(
+                    "rule: ${entry.rule}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            Text(
+                "↑${formatBytes(entry.uplinkTotal)} ↓${formatBytes(entry.downlinkTotal)}",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.secondary,
+            )
+        }
+    }
 }
 
 internal fun formatBytes(bytes: Long): String {

@@ -1,0 +1,12 @@
+5c8187b9a9693c72d52135c4ced5cce9028a3208edeb8dc1df74089bc3b3b0cc  libbox-1.14.2-lx.11.aar
+204cdb0f348109fcd5dcab09798bb236e0140a2fe4a5bd5f48c32f8d634e035a  libbox-legacy-1.14.2-lx.11.aar
+cc66480b5cd7eecd1c78bafbcc8b1c58c6bef1b9a663234a4da60146cb453ea7  sing-box-1.14.2-lx.11-darwin-amd64.tar.gz
+da1a9af637544f6f27f742527dea8d06e84fc00320b7578fa7cbaf90a791652c  sing-box-1.14.2-lx.11-darwin-arm64.tar.gz
+43d61efe7e9fa3d833b0898b9dc1fa46a670fcbb79634e02f4b0d870037ea952  sing-box-1.14.2-lx.11-linux-amd64.tar.gz
+32c99c611f0425973d3fe011754c56d3c0c795a37a9ed6990ddac6a33da45a70  sing-box-1.14.2-lx.11-linux-arm64.tar.gz
+0a8d50e831a74cd7acc3b9e0865e919e00129c866ff260fd7bc777395c1448d1  sing-box-1.14.2-lx.11-linux-armv7.tar.gz
+de08f3b432070ab72ee35d862f022ba0027c624d887913b5710fbfe994502a1f  sing-box-1.14.2-lx.11-linux-mips-softfloat.tar.gz
+fefb4c402a36a0dbff3de7499af49fd5f65173d342afd86248268a6ab5992db2  sing-box-1.14.2-lx.11-linux-mipsle-softfloat.tar.gz
+c9bf097cddee315ae7687824617963181a5a93366c967892b7fd3acec891a94d  sing-box-1.14.2-lx.11-windows-386-legacy-windows-7.zip
+0a63389570c675aa7a8820c0e0a61fa8c7a7f3346dcec9773b67bbcfc551bc85  sing-box-1.14.2-lx.11-windows-amd64.zip
+62e646cf80427a4812955a2fa1912c36ca83645df7e3dea418653085b4c80120  sing-box-1.14.2-lx.11-windows-arm64.zip

@@ -46,11 +46,16 @@ class SbAiVpnService : VpnService() {
             ACTION_START -> startVpn()
             ACTION_STOP -> stopVpn()
         }
-        return START_STICKY
+        // 系统重建时不自动恢复（VPN 需要用户授权上下文），避免无通知的僵尸服务
+        return START_NOT_STICKY
     }
 
     private fun startVpn() {
-        if (_status.value == ServiceStatus.Running) return
+        // 仅允许从 Stopped / Error 进入启动流程，防止重入创建第二个 CommandServer
+        when (_status.value) {
+            ServiceStatus.Running, ServiceStatus.Starting, ServiceStatus.Stopping -> return
+            else -> Unit
+        }
         _status.value = ServiceStatus.Starting
         startForegroundWithNotification()
 
@@ -59,8 +64,13 @@ class SbAiVpnService : VpnService() {
                 LibboxRuntime.setup(this@SbAiVpnService)
 
                 val state = RuleStore.get(this@SbAiVpnService).state.value
-                val config = state.settings.customConfig?.takeIf { it.isNotBlank() }
-                    ?: SingBoxConfigGenerator.generate(state)
+                // generate() 内部已处理 configOverride（导入 JSON 覆盖合并），直接调用
+                val config = SingBoxConfigGenerator.generate(state)
+
+                // 配置出口闸门：启动前先过 checkConfig，失败直接给出可读错误
+                SingBoxConfigGenerator.validate(config)?.let { msg ->
+                    error("配置校验失败: $msg")
+                }
 
                 val configFile = LibboxRuntime.configFile(this@SbAiVpnService)
                 configFile.parentFile?.mkdirs()
@@ -80,6 +90,7 @@ class SbAiVpnService : VpnService() {
             } catch (t: Throwable) {
                 Log.e(TAG, "failed to start vpn", t)
                 _status.value = ServiceStatus.Error(t.message ?: "unknown")
+                stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
             }
         }

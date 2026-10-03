@@ -40,6 +40,12 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import com.sbai.ui.theme.LocalSbStyleTokens
 
+/**
+ * 悬浮玻璃底栏占用的高度（栏高 ~80dp + 下边距 12dp + 手势条余量）。
+ * 所有可滚动页面必须用它作为底部 contentPadding，否则最后几项会被底栏挡住。
+ */
+val BottomBarClearance = 132.dp
+
 // ---------------------------------------------------------------------------
 // Kototoro 风格分组容器：组内条目 2dp 间距，首/尾条目大圆角，中间小圆角
 // ---------------------------------------------------------------------------
