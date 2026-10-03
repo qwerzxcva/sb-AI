@@ -116,6 +116,18 @@ fun MonitorScreen() {
                     Spacer(Modifier.height(16.dp))
                 }
 
+                // LxBox 统计页核心：按路由规则聚合流量
+                item {
+                    TrafficByRuleCard(connections = connections)
+                    Spacer(Modifier.height(16.dp))
+                }
+
+                // 按出口聚合
+                item {
+                    TrafficByOutboundCard(connections = connections)
+                    Spacer(Modifier.height(16.dp))
+                }
+
                 item {
                     SbGroup(title = "内核详情") {
                         item {
@@ -337,6 +349,136 @@ internal fun formatBytes(bytes: Long): String {
 
 internal fun formatSpeed(bytesPerSec: Long): String =
     if (bytesPerSec <= 0) "0 B/s" else formatBytes(bytesPerSec) + "/s"
+
+// ---------------------------------------------------------------------------
+// LxBox 统计页：按规则 / 按出口聚合流量
+// ---------------------------------------------------------------------------
+
+private data class TrafficAgg(
+    val key: String,
+    val count: Int,
+    val up: Long,
+    val down: Long,
+)
+
+private fun aggregate(
+    connections: List<SbCommandClient.ConnectionEntry>,
+    keyOf: (SbCommandClient.ConnectionEntry) -> String,
+): List<TrafficAgg> = connections
+    .groupBy { keyOf(it).ifBlank { "（未匹配）" } }
+    .map { (k, list) ->
+        TrafficAgg(
+            key = k,
+            count = list.size,
+            up = list.sumOf { it.uplinkTotal },
+            down = list.sumOf { it.downlinkTotal },
+        )
+    }
+    .sortedByDescending { it.up + it.down }
+
+@Composable
+private fun TrafficByRuleCard(connections: List<SbCommandClient.ConnectionEntry>) {
+    AggregationCard(
+        title = "按路由规则统计",
+        subtitle = "${connections.size} 条活跃连接",
+        rows = aggregate(connections) { it.rule },
+        emptyText = "暂无连接数据",
+    )
+}
+
+@Composable
+private fun TrafficByOutboundCard(connections: List<SbCommandClient.ConnectionEntry>) {
+    AggregationCard(
+        title = "按出口统计",
+        subtitle = "各出口承载的流量",
+        rows = aggregate(connections) { it.outbound },
+        emptyText = "暂无连接数据",
+    )
+}
+
+@Composable
+private fun AggregationCard(
+    title: String,
+    subtitle: String,
+    rows: List<TrafficAgg>,
+    emptyText: String,
+) {
+    val colors = MaterialTheme.colorScheme
+    val maxTotal = rows.maxOfOrNull { it.up + it.down }?.coerceAtLeast(1) ?: 1
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        color = colors.surfaceContainerLow,
+        tonalElevation = 2.dp,
+    ) {
+        Column(Modifier.padding(18.dp)) {
+            Text(title, style = MaterialTheme.typography.titleMedium, color = colors.onSurface)
+            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
+            Spacer(Modifier.height(14.dp))
+
+            if (rows.isEmpty()) {
+                Text(emptyText, style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant)
+            } else {
+                rows.take(8).forEach { row ->
+                    Column(Modifier.padding(vertical = 6.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                row.key,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = colors.onSurface,
+                                modifier = Modifier.weight(1f),
+                                maxLines = 1,
+                            )
+                            Text(
+                                "${row.count} 条",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = colors.onSurfaceVariant,
+                            )
+                        }
+                        Spacer(Modifier.height(4.dp))
+                        // 双向占比条：上传 tertiary、下载 primary
+                        val upRatio = row.up.toFloat() / maxTotal
+                        val downRatio = row.down.toFloat() / maxTotal
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(6.dp)
+                                .background(colors.surfaceContainerHighest, CircleShape),
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth(upRatio.coerceIn(0f, 1f))
+                                    .height(6.dp)
+                                    .background(colors.tertiary, CircleShape),
+                            )
+                        }
+                        Spacer(Modifier.height(2.dp))
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(6.dp)
+                                .background(colors.surfaceContainerHighest, CircleShape),
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth(downRatio.coerceIn(0f, 1f))
+                                    .height(6.dp)
+                                    .background(colors.primary, CircleShape),
+                            )
+                        }
+                        Spacer(Modifier.height(3.dp))
+                        Text(
+                            "↑ ${formatBytes(row.up)}    ↓ ${formatBytes(row.down)}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = colors.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
 
 // ---------------------------------------------------------------------------
 // 状态大卡 / 流量卡（ClashFest 首页观感：有色彩层次，避免「黑的要死」）

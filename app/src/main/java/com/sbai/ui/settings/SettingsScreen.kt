@@ -8,6 +8,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -42,6 +44,7 @@ import androidx.compose.material.icons.filled.VpnKey
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -77,7 +80,7 @@ import com.sbai.ui.components.SbSwitchItem
 import com.sbai.ui.theme.LocalSbStyleTokens
 import kotlinx.serialization.json.Json
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun SettingsScreen() {
     val context = LocalContext.current
@@ -209,6 +212,22 @@ fun SettingsScreen() {
                             )
                         }
                     }
+                    // TUN 网络栈（system / gvisor / mixed）
+                    item {
+                        Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                            Text("TUN 网络栈", style = MaterialTheme.typography.labelLarge)
+                            Spacer(Modifier.height(8.dp))
+                            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                                listOf("system", "gvisor", "mixed").forEachIndexed { i, stack ->
+                                    SegmentedButton(
+                                        selected = settings.tunStack == stack,
+                                        onClick = { store.updateSettings(settings.copy(tunStack = stack)) },
+                                        shape = SegmentedButtonDefaults.itemShape(index = i, count = 3),
+                                    ) { Text(stack) }
+                                }
+                            }
+                        }
+                    }
                     // TUN 地址段自定义（LxBox tun_address / tun_address6）
                     item {
                         Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
@@ -243,13 +262,14 @@ fun SettingsScreen() {
                         Column(Modifier.padding(16.dp)) {
                             Text("日志级别", style = MaterialTheme.typography.labelLarge)
                             Spacer(Modifier.height(8.dp))
-                            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                                LogLevel.entries.take(5).forEachIndexed { i, level ->
-                                    SegmentedButton(
+                            // 5 个级别用 segmented 按钮会挤爆（debug 文字被截断），改用 FlowRow chips
+                            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                LogLevel.entries.forEach { level ->
+                                    FilterChip(
                                         selected = settings.logLevel == level,
                                         onClick = { store.updateSettings(settings.copy(logLevel = level)) },
-                                        shape = SegmentedButtonDefaults.itemShape(index = i, count = 5),
-                                    ) { Text(level.wireName) }
+                                        label = { Text(level.wireName) },
+                                    )
                                 }
                             }
                         }

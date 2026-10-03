@@ -14,7 +14,9 @@ import com.sbai.data.RuleLogic
 import com.sbai.data.RouteRuleSet
 import com.sbai.data.RuleSetType
 import com.sbai.service.SingBoxConfigGenerator
+import com.sbai.service.RouteRuleJsonCodec
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -44,7 +46,7 @@ class SingBoxConfigGeneratorTest {
     fun `route rule with per-line values and multi-select network protocol`() {
         val rule = RouteRule(
             name = "test",
-            action = RuleAction.PROXY,
+            action = RuleAction.ROUTE_PROXY,
             domains = listOf("a.com", "b.com"),
             ipCidrs = listOf("1.2.3.0/24"),
             networks = listOf("tcp", "udp"),
@@ -80,7 +82,7 @@ class SingBoxConfigGeneratorTest {
 
     @Test
     fun `disabling auto and lb falls back to direct`() {
-        val rule = RouteRule(action = RuleAction.PROXY, domains = listOf("a.com"))
+        val rule = RouteRule(action = RuleAction.ROUTE_PROXY, domains = listOf("a.com"))
         val state = AppState(
             routeRules = listOf(rule),
             loadBalance = LoadBalanceConfig(enabled = false, autoEnabled = false),
@@ -93,7 +95,7 @@ class SingBoxConfigGeneratorTest {
     fun `and logic flattens into single rule with invert`() {
         // AND 语义 = sing-box 单条 rule 的默认行为：所有字段类别平铺（不包 logical）
         val rule = RouteRule(
-            action = RuleAction.DIRECT,
+            action = RuleAction.ROUTE_DIRECT,
             domains = listOf("a.com"),
             ipCidrs = listOf("1.2.3.0/24"),
             logic = RuleLogic.AND,
@@ -112,7 +114,7 @@ class SingBoxConfigGeneratorTest {
     @Test
     fun `dns group resolves to first server for route rule dns rule`() {
         val rule = RouteRule(
-            action = RuleAction.PROXY,
+            action = RuleAction.ROUTE_PROXY,
             domains = listOf("a.com"),
             dnsTag = "my-group",
         )
@@ -133,7 +135,7 @@ class SingBoxConfigGeneratorTest {
     @Test
     fun `ipv4-only route rule generates ip_strategy dns rule`() {
         val rule = RouteRule(
-            action = RuleAction.DIRECT,
+            action = RuleAction.ROUTE_DIRECT,
             domains = listOf("a.com"),
             ipv4 = true,
             ipv6 = false,
@@ -147,7 +149,7 @@ class SingBoxConfigGeneratorTest {
     fun `dns group and ip strategy merge into single dns rule`() {
         // 需求 4 + 5：同时选择 DNS 和取消 IPv6 时，只生成一条 DNS 规则
         val rule = RouteRule(
-            action = RuleAction.PROXY,
+            action = RuleAction.ROUTE_PROXY,
             domains = listOf("a.com"),
             dnsTag = "d1",
             ipv4 = true,
@@ -168,7 +170,7 @@ class SingBoxConfigGeneratorTest {
     @Test
     fun `block rule generates no dns rule`() {
         val rule = RouteRule(
-            action = RuleAction.BLOCK,
+            action = RuleAction.REJECT,
             domains = listOf("a.com"),
             dnsTag = "d1",
             ipv4 = true,
@@ -188,7 +190,7 @@ class SingBoxConfigGeneratorTest {
     @Test
     fun `ip-only rule generates no dns rule`() {
         val rule = RouteRule(
-            action = RuleAction.DIRECT,
+            action = RuleAction.ROUTE_DIRECT,
             ipCidrs = listOf("1.2.3.0/24"),
             dnsTag = "d1",
         )
@@ -241,7 +243,7 @@ class SingBoxConfigGeneratorTest {
     @Test
     fun `empty dns group does not emit dangling server reference`() {
         val rule = RouteRule(
-            action = RuleAction.PROXY,
+            action = RuleAction.ROUTE_PROXY,
             domains = listOf("a.com"),
             dnsTag = "empty-group",
         )
@@ -258,7 +260,7 @@ class SingBoxConfigGeneratorTest {
     @Test
     fun `both ipv4 and ipv6 unchecked emits no ip_strategy rule`() {
         val rule = RouteRule(
-            action = RuleAction.DIRECT,
+            action = RuleAction.ROUTE_DIRECT,
             domains = listOf("a.com"),
             ipv4 = false,
             ipv6 = false,
@@ -501,7 +503,7 @@ class SingBoxConfigGeneratorTest {
             server = "d1",
         )
         val autoSrc = RouteRule(
-            action = RuleAction.DIRECT,
+            action = RuleAction.ROUTE_DIRECT,
             domains = listOf("auto.com"),
             dnsTag = "d1",
         )
@@ -521,7 +523,7 @@ class SingBoxConfigGeneratorTest {
     @Test
     fun `auto dns rules helper reflects route rules for UI preview`() {
         val rule = RouteRule(
-            action = RuleAction.DIRECT,
+            action = RuleAction.ROUTE_DIRECT,
             domains = listOf("a.com"),
             dnsTag = "d1",
         )
@@ -538,7 +540,7 @@ class SingBoxConfigGeneratorTest {
     @Test
     fun `or logic with single category flattens instead of wrapping logical`() {
         val rule = RouteRule(
-            action = RuleAction.DIRECT,
+            action = RuleAction.ROUTE_DIRECT,
             domains = listOf("a.com"),
             logic = RuleLogic.OR,
         )
@@ -552,7 +554,7 @@ class SingBoxConfigGeneratorTest {
     @Test
     fun `or logic with multiple categories wraps logical or`() {
         val rule = RouteRule(
-            action = RuleAction.DIRECT,
+            action = RuleAction.ROUTE_DIRECT,
             domains = listOf("a.com"),
             ipCidrs = listOf("1.2.3.0/24"),
             logic = RuleLogic.OR,
@@ -569,7 +571,7 @@ class SingBoxConfigGeneratorTest {
         val url1 = "https://example.com/geoip-cn.srs"
         val url2 = "https://example.com/geosite-ads.srs"
         val rule = RouteRule(
-            action = RuleAction.DIRECT,
+            action = RuleAction.ROUTE_DIRECT,
             ruleSetTags = listOf(url1, "existing-tag", url2, url1), // url1 重复
         )
         val state = AppState(routeRules = listOf(rule), routeRuleSets = listOf())
@@ -597,7 +599,7 @@ class SingBoxConfigGeneratorTest {
     @Test
     fun `inline url rule set works alongside manual domain and ip`() {
         val rule = RouteRule(
-            action = RuleAction.DIRECT,
+            action = RuleAction.ROUTE_DIRECT,
             domains = listOf("a.com"),
             ipCidrs = listOf("1.2.3.0/24"),
             ruleSetTags = listOf("https://example.com/geoip-cn.srs"),
@@ -637,7 +639,7 @@ class SingBoxConfigGeneratorTest {
 
     @Test
     fun `block action emits reject with method not outbound`() {
-        val rule = RouteRule(action = RuleAction.BLOCK, domains = listOf("ad.com"), rejectMethod = "drop")
+        val rule = RouteRule(action = RuleAction.REJECT, domains = listOf("ad.com"), rejectMethod = "drop")
         val cfg = parse(AppState(routeRules = listOf(rule)))
         val rr = routeRules(cfg).last().jsonObject
         assertEquals("reject", rr["action"]!!.jsonPrimitive.content)
@@ -647,7 +649,7 @@ class SingBoxConfigGeneratorTest {
 
     @Test
     fun `block default method emits reject without method`() {
-        val rule = RouteRule(action = RuleAction.BLOCK, domains = listOf("ad.com"))
+        val rule = RouteRule(action = RuleAction.REJECT, domains = listOf("ad.com"))
         val cfg = parse(AppState(routeRules = listOf(rule)))
         val rr = routeRules(cfg).last().jsonObject
         assertEquals("reject", rr["action"]!!.jsonPrimitive.content)
@@ -657,7 +659,7 @@ class SingBoxConfigGeneratorTest {
     @Test
     fun `source and app and network-env fields emitted in AND mode`() {
         val rule = RouteRule(
-            action = RuleAction.DIRECT,
+            action = RuleAction.ROUTE_DIRECT,
             sourceIpCidrs = listOf("192.168.0.0/16"),
             sourcePorts = listOf(8080),
             packageNames = listOf("com.example.app"),
@@ -688,7 +690,7 @@ class SingBoxConfigGeneratorTest {
     @Test
     fun `or logic splits into six categories`() {
         val rule = RouteRule(
-            action = RuleAction.DIRECT,
+            action = RuleAction.ROUTE_DIRECT,
             domains = listOf("a.com"),
             sourceIpCidrs = listOf("10.0.0.0/8"),
             packageNames = listOf("com.x"),
@@ -754,5 +756,67 @@ class SingBoxConfigGeneratorTest {
         )
         val rules = parse(state)["dns"]!!.jsonObject["rules"]!!.jsonArray
         assertEquals(0, rules.size)   // route 无有效 server → 整条跳过
+    }
+
+    @Test
+    fun `tun stack from settings`() {
+        val cfg = parse(AppState(settings = com.sbai.data.AppSettings(tunStack = "gvisor")))
+        assertEquals("gvisor", cfg["inbounds"]!!.jsonArray.first().jsonObject["stack"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `fakeip custom ranges and auto rules`() {
+        val state = AppState(
+            dnsServers = listOf(
+                DnsServer(tag = "fake", type = DnsServerType.FAKEIP, inet4Range = "198.20.0.0/16", inet6Range = "fc01::/17"),
+            ),
+        )
+        val cfg = parse(state)
+        val fake = cfg["dns"]!!.jsonObject["servers"]!!.jsonArray.first().jsonObject
+        assertEquals("198.20.0.0/16", fake["inet4_range"]!!.jsonPrimitive.content)
+        assertEquals("fc01::/17", fake["inet6_range"]!!.jsonPrimitive.content)
+        // fakeIP 联动 DNS 规则：query_type A/AAAA → fake
+        val dnsRules = cfg["dns"]!!.jsonObject["rules"]!!.jsonArray
+        assertTrue(dnsRules.any {
+            it.jsonObject["server"]?.jsonPrimitive?.content == "fake" &&
+                it.jsonObject["query_type"]?.jsonArray?.size == 2
+        })
+        // fakeIP 联动路由规则：fakeIP 段 → 代理
+        val routeRules = cfg["route"]!!.jsonObject["rules"]!!.jsonArray
+        val fakeRoute = routeRules.firstOrNull {
+            it.jsonObject["ip_cidr"] != null
+        }?.jsonObject
+        assertTrue(fakeRoute != null)
+        assertTrue(fakeRoute!!["ip_cidr"]!!.jsonArray.any { it.jsonPrimitive.content == "198.20.0.0/16" })
+    }
+
+    @Test
+    fun `full action set emits correct sing-box action`() {
+        fun ruleAction(a: RuleAction): JsonObject {
+            val r = RouteRule(action = a, domains = listOf("a.com"))
+            return parse(AppState(routeRules = listOf(r)))["route"]!!.jsonObject["rules"]!!.jsonArray.last().jsonObject
+        }
+        assertEquals("sniff", ruleAction(RuleAction.SNIFF)["action"]!!.jsonPrimitive.content)
+        assertEquals("resolve", ruleAction(RuleAction.RESOLVE)["action"]!!.jsonPrimitive.content)
+        assertEquals("hijack-dns", ruleAction(RuleAction.HIJACK_DNS)["action"]!!.jsonPrimitive.content)
+        assertEquals("route-options", ruleAction(RuleAction.ROUTE_OPTIONS)["action"]!!.jsonPrimitive.content)
+        // route 动作：outbound 而非 action
+        assertEquals("direct", ruleAction(RuleAction.ROUTE_DIRECT)["outbound"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `lxbox rule set inline with package_name_regex and reject parses`() {
+        // 用户反馈的 lxbox 格式：route 包裹 + inline rule_set + package_name_regex + action=reject
+        val text = """{
+          "route": {
+            "rule_set": [{"tag":"unknown","type":"inline","rules":[{"invert":true,"package_name_regex":"^"}]}],
+            "rules": [{"rule_set":"unknown","action":"reject"}]
+          }
+        }"""
+        val r = RouteRuleJsonCodec.fromJson(text)
+        assertTrue(r is RouteRuleJsonCodec.ParseResult.Success)
+        val rule = (r as RouteRuleJsonCodec.ParseResult.Success).rule
+        assertEquals(RuleAction.REJECT, rule.action)
+        assertEquals(listOf("unknown"), rule.ruleSetTags)
     }
 }

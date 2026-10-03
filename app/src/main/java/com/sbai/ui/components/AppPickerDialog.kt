@@ -77,6 +77,13 @@ fun AppPickerDialog(
         title = { Text("$title（${current.size}）") },
         text = {
             Column {
+                // 无 root 说明：进程级匹配需要 root/VPN 级别权限
+                Text(
+                    "提示：按应用（package_name）选择无需 root；进程名/进程参数/用户名等进程级匹配需 root 或 VPN 才能生效。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(8.dp))
                 OutlinedTextField(
                     value = query,
                     onValueChange = { query = it },

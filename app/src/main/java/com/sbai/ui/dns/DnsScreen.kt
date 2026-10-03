@@ -1,5 +1,6 @@
 package com.sbai.ui.dns
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,6 +18,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Delete
@@ -44,6 +46,7 @@ import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
+import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -483,6 +486,8 @@ private fun DnsServerEditorDialog(
     var clientSubnet by remember { mutableStateOf(initial.clientSubnet ?: "") }
     var echEnabled by remember { mutableStateOf(initial.echEnabled) }
     var echConfig by remember { mutableStateOf(initial.echConfig ?: "") }
+    var inet4Range by remember { mutableStateOf(initial.inet4Range) }
+    var inet6Range by remember { mutableStateOf(initial.inet6Range) }
     var typeExpanded by remember { mutableStateOf(false) }
     var resolverExpanded by remember { mutableStateOf(false) }
 
@@ -567,6 +572,25 @@ private fun DnsServerEditorDialog(
                 } else if (echEnabled) {
                     Text("当前类型不支持 ECH", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
                 }
+
+                // fakeIP 自定义段（仅 fakeip 类型）
+                if (type == DnsServerType.FAKEIP) {
+                    OutlinedTextField(
+                        value = inet4Range, onValueChange = { inet4Range = it },
+                        label = { Text("IPv4 段（可选，默认 198.18.0.0/15）") },
+                        singleLine = true, modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = inet6Range, onValueChange = { inet6Range = it },
+                        label = { Text("IPv6 段（可选，默认 fc00::/18）") },
+                        singleLine = true, modifier = Modifier.fillMaxWidth(),
+                    )
+                    Text(
+                        "创建 fakeIP 后，路由规则页会自动生成 fakeIP 段路由规则。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
         },
         confirmButton = {
@@ -580,6 +604,8 @@ private fun DnsServerEditorDialog(
                         clientSubnet = clientSubnet.ifBlank { null },
                         echEnabled = echEnabled && supportsEch,
                         echConfig = echConfig.ifBlank { null },
+                        inet4Range = inet4Range.trim(),
+                        inet6Range = inet6Range.trim(),
                     ),
                 )
             }) { Text("保存") }
@@ -651,14 +677,61 @@ private fun DnsRuleEditorDialog(
         extra = r.extra.joinToString("\n"); timeout = r.timeout
     }
 
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(if (initial.autoFromRouteRuleId != null) "DNS 规则（自动）" else if (initial.name.isBlank()) "添加 DNS 规则" else "编辑 DNS 规则") },
-        text = {
+    // #7：整页编辑器（不再是弹窗）；拦截系统返回/侧滑回到 DNS 列表
+    BackHandler(enabled = true) { onDismiss() }
+
+    fun doSave() {
+        if (ruleAction == "route" && server.isBlank()) { error = "route 动作必须选择目标 DNS / group"; return }
+        onSave(
+            initial.copy(
+                name = name.trim(),
+                domains = domains.toLines(), domainSuffixes = suffixes.toLines(),
+                domainKeywords = keywords.toLines(), domainRegexes = regexes.toLines(),
+                ipCidrs = ipCidrs.toLines(), ruleSetTags = sets.toLines(),
+                networks = networks.toLines(),
+                ports = portsText.toLines().mapNotNull { it.toIntOrNull() },
+                queryTypes = queryTypes.toList().sorted(),
+                server = server,
+                ipStrategy = ipStrategy,
+                disableCache = disableCache,
+                rewriteTtl = rewriteTtl.toIntOrNull(),
+                clientSubnet = clientSubnet.ifBlank { null },
+                action = ruleAction,
+                rcode = rcode,
+                answers = answers.toLines(),
+                ns = ns.toLines(),
+                extra = extra.toLines(),
+                timeout = timeout.trim(),
+            ),
+        )
+    }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text(if (initial.autoFromRouteRuleId != null) "DNS 规则（自动）" else if (initial.name.isBlank()) "添加 DNS 规则" else "编辑 DNS 规则") },
+                navigationIcon = {
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                    }
+                },
+                actions = {
+                    if (onDelete != null) {
+                        IconButton(onClick = onDelete) {
+                            Icon(Icons.Filled.Delete, contentDescription = "删除", tint = MaterialTheme.colorScheme.error)
+                        }
+                    }
+                    TextButton(onClick = { doSave() }) { Text("保存") }
+                },
+            )
+        },
+    ) { padding ->
             Column(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState()),
+                    .fillMaxSize()
+                    .padding(padding)
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 20.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 if (initial.autoFromRouteRuleId != null) {
@@ -789,43 +862,7 @@ private fun DnsRuleEditorDialog(
                 )
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             }
-        },
-        confirmButton = {
-            TextButton(onClick = {
-                if (ruleAction == "route" && server.isBlank()) { error = "route 动作必须选择目标 DNS / group"; return@TextButton }
-                onSave(
-                    initial.copy(
-                        name = name.trim(),
-                        domains = domains.toLines(), domainSuffixes = suffixes.toLines(),
-                        domainKeywords = keywords.toLines(), domainRegexes = regexes.toLines(),
-                        ipCidrs = ipCidrs.toLines(), ruleSetTags = sets.toLines(),
-                        networks = networks.toLines(),
-                        ports = portsText.toLines().mapNotNull { it.toIntOrNull() },
-                        queryTypes = queryTypes.toList().sorted(),
-                        server = server,
-                        ipStrategy = ipStrategy,
-                        disableCache = disableCache,
-                        rewriteTtl = rewriteTtl.toIntOrNull(),
-                        clientSubnet = clientSubnet.ifBlank { null },
-                        action = ruleAction,
-                        rcode = rcode,
-                        answers = answers.toLines(),
-                        ns = ns.toLines(),
-                        extra = extra.toLines(),
-                        timeout = timeout.trim(),
-                    ),
-                )
-            }) { Text("保存") }
-        },
-        dismissButton = {
-            Row {
-                if (onDelete != null) {
-                    TextButton(onClick = onDelete) { Text("删除", color = MaterialTheme.colorScheme.error) }
-                }
-                TextButton(onClick = onDismiss) { Text("取消") }
-            }
-        },
-    )
+    }
 
     if (showJsonPaste) {
         DnsJsonPasteDialog(

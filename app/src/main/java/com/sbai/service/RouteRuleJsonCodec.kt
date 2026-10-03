@@ -36,18 +36,29 @@ object RouteRuleJsonCodec {
         data class Failure(val message: String) : ParseResult
     }
 
+    /** 完整解析结果：规则 + 附带的规则集定义（lxbox 格式的 route.rule_set） */
+    data class FullResult(
+        val rule: RouteRule,
+        val ruleSets: List<kotlinx.serialization.json.JsonObject> = emptyList(),
+    )
+
     fun fromJson(text: String): ParseResult {
         val trimmed = text.trim()
         if (trimmed.isEmpty()) return ParseResult.Failure("内容为空")
 
-        val obj = runCatching { json.parseToJsonElement(trimmed).jsonObject }
+        var obj = runCatching { json.parseToJsonElement(trimmed).jsonObject }
             .getOrElse { return ParseResult.Failure("不是合法的 JSON 对象：${it.message}") }
+
+        // lxbox / 完整配置格式：{"route":{"rule_set":[...],"rules":[...]}} 剥掉 route 包裹
+        if (obj.containsKey("route")) {
+            obj = runCatching { obj["route"]!!.jsonObject }.getOrElse { obj }
+        }
 
         // 先判 logical（它自身也含 rules 数组，不能误当包裹）；再允许 {"rules":[{...}]} 包裹取首个
         val isLogical = obj["type"]?.jsonPrimitive?.content == "logical"
         val rule = when {
             isLogical -> obj
-            obj.containsKey("rules") -> runCatching {
+            obj.containsKey("rules") && obj["rules"] is JsonArray -> runCatching {
                 obj["rules"]!!.jsonArray.firstOrNull()?.jsonObject
             }.getOrNull() ?: return ParseResult.Failure("rules 数组为空")
             else -> obj
@@ -79,17 +90,22 @@ object RouteRuleJsonCodec {
             }.distinct()
 
             val outbound = sources.mapNotNull { it["outbound"]?.jsonPrimitive?.content }.firstOrNull()
+            val action = sources.mapNotNull { it["action"]?.jsonPrimitive?.content }.firstOrNull()
             val invert = sources.any { it["invert"]?.jsonPrimitive?.booleanOrNull == true } ||
                     rule["invert"]?.jsonPrimitive?.booleanOrNull == true
+
+            // action=reject（含 no_drop）等价于 BLOCK；action=route/resolve/sniff 等映射
+            val resolvedAction = when {
+                action == "reject" -> RuleAction.REJECT
+                outbound == "block" -> RuleAction.REJECT
+                outbound == "direct" -> RuleAction.ROUTE_DIRECT
+                else -> RuleAction.ROUTE_PROXY
+            }
 
             ParseResult.Success(
                 RouteRule(
                     name = "",
-                    action = when (outbound) {
-                        "block" -> RuleAction.BLOCK
-                        "direct" -> RuleAction.DIRECT
-                        else -> RuleAction.PROXY
-                    },
+                    action = resolvedAction,
                     domains = strings("domain"),
                     domainSuffixes = strings("domain_suffix"),
                     domainKeywords = strings("domain_keyword"),
@@ -104,8 +120,11 @@ object RouteRuleJsonCodec {
                     sourcePorts = ints("source_port"),
                     sourcePortRanges = strings("source_port_range"),
                     packageNames = strings("package_name"),
+                    // lxbox 的 package_name_regex（正则匹配包名）
+                    packageNameRegexes = strings("package_name_regex"),
                     processNames = strings("process_name"),
                     processPaths = strings("process_path"),
+                    processPathRegexes = strings("process_path_regex"),
                     users = strings("user"),
                     userIds = ints("user_id"),
                     networkTypes = strings("network_type"),
@@ -126,9 +145,11 @@ object RouteRuleJsonCodec {
     /** 反向：把表单规则导出为 sing-box route rule JSON 片段（供用户复制/校验） */
     fun toJson(rule: RouteRule, entryTag: String = "proxy"): String {
         val outbound = when (rule.action) {
-            RuleAction.BLOCK -> "block"
-            RuleAction.DIRECT -> "direct"
-            RuleAction.PROXY -> entryTag
+            RuleAction.REJECT -> "block"
+            RuleAction.ROUTE_DIRECT -> "direct"
+            RuleAction.ROUTE_PROXY -> entryTag
+            // 非路由动作导出为 route 到代理（片段仅供 UI 校验/复制）
+            else -> entryTag
         }
 
         fun putAll(b: kotlinx.serialization.json.JsonObjectBuilder, domain: Boolean, ip: Boolean, transport: Boolean) {

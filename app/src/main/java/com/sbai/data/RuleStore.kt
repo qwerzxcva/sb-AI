@@ -70,11 +70,23 @@ class RuleStore private constructor(context: Context) {
         s.copy(routeRules = reordered + rest)
     }
 
+    /** 按顺序生成不冲突的 tag：prefix-1, prefix-2, ... */
+    private fun nextTag(existing: List<String>, prefix: String): String {
+        val used = existing.toSet()
+        var n = 1
+        while ("$prefix-$n" in used) n++
+        return "$prefix-$n"
+    }
+
     // ---- Route rule sets ----
     fun upsertRuleSet(rs: RouteRuleSet) = update { s ->
+        // 未填 tag 时按顺序自动生成（ruleset-1, ...）
+        val target = if (rs.tag.isBlank()) {
+            rs.copy(tag = nextTag(s.routeRuleSets.map { it.tag }, "ruleset"))
+        } else rs
         val list = s.routeRuleSets.toMutableList()
-        val idx = list.indexOfFirst { it.id == rs.id }
-        if (idx >= 0) list[idx] = rs else list.add(rs)
+        val idx = list.indexOfFirst { it.id == target.id }
+        if (idx >= 0) list[idx] = target else list.add(target)
         s.copy(routeRuleSets = list)
     }
 
@@ -98,9 +110,13 @@ class RuleStore private constructor(context: Context) {
 
     // ---- DNS servers ----
     fun upsertDnsServer(server: DnsServer) = update { s ->
+        // 未填 tag 时按顺序自动生成（dns-1, dns-2, ...）
+        val target = if (server.tag.isBlank()) {
+            server.copy(tag = nextTag(s.dnsServers.map { it.tag }, "dns"))
+        } else server
         val list = s.dnsServers.toMutableList()
-        val idx = list.indexOfFirst { it.id == server.id }
-        if (idx >= 0) list[idx] = server else list.add(server)
+        val idx = list.indexOfFirst { it.id == target.id }
+        if (idx >= 0) list[idx] = target else list.add(target)
         s.copy(dnsServers = list)
     }
 
@@ -116,9 +132,12 @@ class RuleStore private constructor(context: Context) {
 
     // ---- DNS groups ----
     fun upsertDnsGroup(group: DnsGroup) = update { s ->
+        val target = if (group.name.isBlank()) {
+            group.copy(name = nextTag(s.dnsGroups.map { it.name }, "group"))
+        } else group
         val list = s.dnsGroups.toMutableList()
-        val idx = list.indexOfFirst { it.id == group.id }
-        if (idx >= 0) list[idx] = group else list.add(group)
+        val idx = list.indexOfFirst { it.id == target.id }
+        if (idx >= 0) list[idx] = target else list.add(target)
         s.copy(dnsGroups = list)
     }
 

@@ -8,10 +8,27 @@ import java.util.UUID
 // ---------------------------------------------------------------------------
 
 @Serializable
-enum class RuleAction(val outboundTag: String?) {
-    PROXY(null),      // resolved at build time to the proxy entry outbound
-    DIRECT("direct"),
-    BLOCK("block"),
+enum class RuleAction(val displayName: String) {
+    /** 路由到代理出口 */
+    ROUTE_PROXY("代理"),
+
+    /** 路由到直连 */
+    ROUTE_DIRECT("直连"),
+
+    /** 拦截（reject） */
+    REJECT("拦截"),
+
+    /** 仅嗅探协议，不改路由 */
+    SNIFF("嗅探"),
+
+    /** 仅解析 DNS，不改路由 */
+    RESOLVE("仅解析 DNS"),
+
+    /** 劫持为 DNS 查询 */
+    HIJACK_DNS("劫持 DNS"),
+
+    /** 仅修改路由选项 */
+    ROUTE_OPTIONS("路由选项"),
 }
 
 /** 逻辑运算：AND（全部满足）/ OR（任一满足）。
@@ -28,7 +45,7 @@ data class RouteRule(
     val id: String = UUID.randomUUID().toString(),
     val name: String = "",
     val enabled: Boolean = true,
-    val action: RuleAction = RuleAction.PROXY,
+    val action: RuleAction = RuleAction.ROUTE_PROXY,
 
     // 一行一条：域名 / 域名后缀 / IP / IP CIDR / 远程规则集 tag
     val domains: List<String> = emptyList(),          // 精确域名
@@ -50,8 +67,10 @@ data class RouteRule(
     val sourcePorts: List<Int> = emptyList(),         // 源端口
     val sourcePortRanges: List<String> = emptyList(), // 源端口段
     val packageNames: List<String> = emptyList(),     // 应用包名
+    val packageNameRegexes: List<String> = emptyList(), // 应用包名正则（lxbox 兼容）
     val processNames: List<String> = emptyList(),     // 进程名
     val processPaths: List<String> = emptyList(),     // 进程路径
+    val processPathRegexes: List<String> = emptyList(), // 进程路径正则
     val users: List<String> = emptyList(),            // 用户名
     val userIds: List<Int> = emptyList(),             // 用户 ID
     val networkTypes: List<String> = emptyList(),     // wifi / cellular / ethernet
@@ -122,6 +141,10 @@ data class DnsServer(
     val echEnabled: Boolean = false,
     /** ECH 配置（PEM/echconfiglist），可选；留空表示仅启用 ECH 自动获取 */
     val echConfig: String? = null,
+    /** fakeIP 自定义 IPv4 段（仅 fakeip 类型）；空 = 内核默认 198.18.0.0/15 */
+    val inet4Range: String = "",
+    /** fakeIP 自定义 IPv6 段（仅 fakeip 类型）；空 = 内核默认 fc00::/18 */
+    val inet6Range: String = "",
 )
 
 @Serializable
@@ -318,6 +341,8 @@ data class Subscription(
     val removeUnavailable: Boolean = false,
     /** 按延迟排序（仅 urlTestAfterUpdate 开启时生效） */
     val sortByLatency: Boolean = false,
+    /** 订阅更新走哪个出口：direct（直连）/ proxy（代理）；空 = 跟随系统 */
+    val detour: String = "direct",
 )
 
 // ---------------------------------------------------------------------------
@@ -404,6 +429,8 @@ data class AppSettings(
     val subscriptionVerOs: String = "",
     /** x-device-model override；空 = Build.MODEL */
     val subscriptionDeviceModel: String = "",
+    /** TUN 网络栈：system / gvisor / mixed（sing-box stack） */
+    val tunStack: String = "mixed",
 )
 
 // ---------------------------------------------------------------------------

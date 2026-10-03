@@ -1,5 +1,6 @@
 package com.sbai.ui.routes
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -10,11 +11,13 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Dataset
@@ -40,6 +43,7 @@ import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -277,9 +281,13 @@ private fun RouteRuleCard(
 @Composable
 private fun ActionBadge(action: RuleAction) {
     val (label, color) = when (action) {
-        RuleAction.PROXY -> "代理" to MaterialTheme.colorScheme.primary
-        RuleAction.DIRECT -> "直连" to MaterialTheme.colorScheme.secondary
-        RuleAction.BLOCK -> "拦截" to MaterialTheme.colorScheme.error
+        RuleAction.ROUTE_PROXY -> "代理" to MaterialTheme.colorScheme.primary
+        RuleAction.ROUTE_DIRECT -> "直连" to MaterialTheme.colorScheme.secondary
+        RuleAction.REJECT -> "拦截" to MaterialTheme.colorScheme.error
+        RuleAction.SNIFF -> "嗅探" to MaterialTheme.colorScheme.tertiary
+        RuleAction.RESOLVE -> "解析" to MaterialTheme.colorScheme.tertiary
+        RuleAction.HIJACK_DNS -> "劫持DNS" to MaterialTheme.colorScheme.tertiary
+        RuleAction.ROUTE_OPTIONS -> "路由选项" to MaterialTheme.colorScheme.tertiary
     }
     SbBadge(label, color)
 }
@@ -348,7 +356,7 @@ private fun RouteRuleEditorDialog(
     var jsonError by remember { mutableStateOf<String?>(null) }
     var showAppPicker by remember { mutableStateOf(false) }
 
-    val isBlock = action == RuleAction.BLOCK
+    val isBlock = action == RuleAction.REJECT
     val hasDomains = listOf(domains, suffixes, keywords, regexes).any { it.isNotBlank() }
     val ipOnly = !hasDomains && (ipCidrs.isNotBlank() || sets.isNotBlank())
 
@@ -372,45 +380,97 @@ private fun RouteRuleEditorDialog(
         dnsTag = r.dnsTag ?: ""
     }
 
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(if (initial.name.isBlank() && initial.domains.isEmpty()) "添加路由规则" else "编辑路由规则") },
-        text = {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    OutlinedTextField(
-                        value = name, onValueChange = { name = it },
-                        label = { Text("规则名称（可选）") }, singleLine = true,
-                        modifier = Modifier.weight(1f),
-                    )
-                    Spacer(Modifier.size(8.dp))
-                    Button(onClick = { showJsonPaste = true }) {
-                        Icon(Icons.Filled.ContentPaste, contentDescription = null)
-                        Text("粘贴 JSON")
+    // 保存逻辑（整页顶部按钮用）
+    fun doSave() {
+        onSave(
+            initial.copy(
+                name = name.trim(),
+                action = action,
+                domains = domains.toLines(),
+                domainSuffixes = suffixes.toLines(),
+                domainKeywords = keywords.toLines(),
+                domainRegexes = regexes.toLines(),
+                ipCidrs = ipCidrs.toLines(),
+                ruleSetTags = sets.toLines(),
+                networks = networks.toList().sorted(),
+                protocols = protocols.toList().sorted(),
+                ports = ports.toLines().mapNotNull { it.toIntOrNull() },
+                portRanges = portRanges.toLines(),
+                sourceIpCidrs = sourceIpCidrs.toLines(),
+                sourcePorts = sourcePorts.toLines().mapNotNull { it.toIntOrNull() },
+                sourcePortRanges = sourcePortRanges.toLines(),
+                packageNames = packageNames.toLines(),
+                processNames = processNames.toLines(),
+                processPaths = processPaths.toLines(),
+                users = users.toLines(),
+                userIds = userIds.toLines().mapNotNull { it.toIntOrNull() },
+                networkTypes = networkTypes.toList().sorted(),
+                wifiSsids = wifiSsids.toLines(),
+                wifiBssids = wifiBssids.toLines(),
+                inbounds = inbounds.toLines(),
+                clashMode = clashMode.trim(),
+                sourceIpIsPrivate = sourceIpIsPrivate,
+                ipIsPrivate = ipIsPrivate,
+                networkIsExpensive = networkIsExpensive,
+                rejectMethod = rejectMethod,
+                logic = logic,
+                invert = invert,
+                ipv4 = ipv4,
+                ipv6 = ipv6,
+                dnsTag = dnsTag.ifBlank { null },
+            ),
+        )
+    }
+
+    // 整页编辑器（不再是弹窗）：TopAppBar 返回 + 顶部保存
+    // #6：拦截系统返回/侧滑退出，回到路由列表而不是首页
+    BackHandler(enabled = true) { onDismiss() }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text(if (initial.name.isBlank() && initial.domains.isEmpty()) "添加路由规则" else "编辑路由规则") },
+                navigationIcon = {
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
                     }
+                },
+                actions = {
+                    TextButton(onClick = { doSave() }) { Text("保存") }
+                },
+            )
+        },
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    value = name, onValueChange = { name = it },
+                    label = { Text("规则名称（可选）") }, singleLine = true,
+                    modifier = Modifier.weight(1f),
+                )
+                Spacer(Modifier.size(8.dp))
+                // 小图标按钮（不占宽度），名称框获得更多空间
+                IconButton(onClick = { showJsonPaste = true }) {
+                    Icon(Icons.Filled.ContentPaste, contentDescription = "粘贴 JSON")
                 }
+            }
 
                 Text("动作", style = MaterialTheme.typography.labelLarge)
-                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                    RuleAction.entries.forEachIndexed { i, a ->
-                        SegmentedButton(
+                // 7 个动作放不下 segmented 按钮，改用 FlowRow 多选 chips（单选）
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    RuleAction.entries.forEach { a ->
+                        FilterChip(
                             selected = action == a,
                             onClick = { action = a },
-                            shape = SegmentedButtonDefaults.itemShape(index = i, count = RuleAction.entries.size),
-                        ) {
-                            Text(
-                                when (a) {
-                                    RuleAction.PROXY -> "代理"
-                                    RuleAction.DIRECT -> "直连"
-                                    RuleAction.BLOCK -> "拦截"
-                                },
-                            )
-                        }
+                            label = { Text(a.displayName) },
+                        )
                     }
                 }
                 if (isBlock) {
@@ -486,6 +546,11 @@ private fun RouteRuleEditorDialog(
                                 "应用包名（${packageNames.toLines().size}）",
                                 style = MaterialTheme.typography.labelLarge,
                             )
+                            Text(
+                                "无需 root：通过 Android VPN API 解析连接归属 UID",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.secondary,
+                            )
                             if (packageNames.isNotBlank()) {
                                 Text(
                                     packageNames.toLines().take(3).joinToString(", ") +
@@ -498,10 +563,22 @@ private fun RouteRuleEditorDialog(
                         }
                         Button(onClick = { showAppPicker = true }) { Text("选择应用") }
                     }
-                    MultiLineField("进程名（一行一条）", processNames) { processNames = it }
-                    MultiLineField("进程路径（一行一条）", processPaths) { processPaths = it }
-                    MultiLineField("用户名（一行一条）", users) { users = it }
-                    MultiLineField("用户 ID（一行一个）", userIds) { userIds = it }
+
+                    // 以下字段在 Android 无 root 时不生效（内核无法读取 /proc 归属）
+                    Text(
+                        "⚠ 以下进程级字段需要 root 才能在 Android 生效（无 root 时规则不会命中）：",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                    MultiLineField("进程名 process_name（需 root）", processNames) { processNames = it }
+                    MultiLineField("进程路径 process_path（需 root）", processPaths) { processPaths = it }
+                    MultiLineField("用户名 user（需 root）", users) { users = it }
+                    MultiLineField("用户 ID user_id（需 root）", userIds) { userIds = it }
+                    Text(
+                        "无 root 请改用「应用包名」——Android 上包名即进程身份，效果等价。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
 
                 EditorSection("网络环境") {
@@ -580,51 +657,7 @@ private fun RouteRuleEditorDialog(
                     Text("纯 IP / 远程规则集规则不生成 DNS 联动规则。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
-        },
-        confirmButton = {
-            TextButton(onClick = {
-                onSave(
-                    initial.copy(
-                        name = name.trim(),
-                        action = action,
-                        domains = domains.toLines(),
-                        domainSuffixes = suffixes.toLines(),
-                        domainKeywords = keywords.toLines(),
-                        domainRegexes = regexes.toLines(),
-                        ipCidrs = ipCidrs.toLines(),
-                        ruleSetTags = sets.toLines(),
-                        networks = networks.toList().sorted(),
-                        protocols = protocols.toList().sorted(),
-                        ports = ports.toLines().mapNotNull { it.toIntOrNull() },
-                        portRanges = portRanges.toLines(),
-                        sourceIpCidrs = sourceIpCidrs.toLines(),
-                        sourcePorts = sourcePorts.toLines().mapNotNull { it.toIntOrNull() },
-                        sourcePortRanges = sourcePortRanges.toLines(),
-                        packageNames = packageNames.toLines(),
-                        processNames = processNames.toLines(),
-                        processPaths = processPaths.toLines(),
-                        users = users.toLines(),
-                        userIds = userIds.toLines().mapNotNull { it.toIntOrNull() },
-                        networkTypes = networkTypes.toList().sorted(),
-                        wifiSsids = wifiSsids.toLines(),
-                        wifiBssids = wifiBssids.toLines(),
-                        inbounds = inbounds.toLines(),
-                        clashMode = clashMode.trim(),
-                        sourceIpIsPrivate = sourceIpIsPrivate,
-                        ipIsPrivate = ipIsPrivate,
-                        networkIsExpensive = networkIsExpensive,
-                        rejectMethod = rejectMethod,
-                        logic = logic,
-                        invert = invert,
-                        ipv4 = ipv4,
-                        ipv6 = ipv6,
-                        dnsTag = dnsTag.ifBlank { null },
-                    ),
-                )
-            }) { Text("保存") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
-    )
+    }
 
     if (showJsonPaste) {
         JsonPasteDialog(
@@ -685,7 +718,7 @@ private fun EditorSection(title: String, content: @Composable () -> Unit) {
     }
 }
 
-/** 粘贴 sing-box route rule JSON 片段（LxBox 风格），解析后回填表单 */
+/** 编辑/粘贴 sing-box route rule JSON 片段（LxBox 风格），解析后回填表单 */
 @Composable
 private fun JsonPasteDialog(
     onDismiss: () -> Unit,
@@ -695,16 +728,14 @@ private fun JsonPasteDialog(
     var text by remember { mutableStateOf("") }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("粘贴规则 JSON 片段") },
-        // 用更大的面板，粘贴区更高、等宽字体，便于查看与编辑
+        title = { Text("编辑 / 粘贴规则 JSON") },
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 4.dp),
         text = {
             Column {
                 Text(
-                    "只需 route.rules 里的单个规则对象（或含 rules 的数组），例如：\n" +
-                        "{\"domain_suffix\":[\"example.com\"],\"network\":[\"tcp\"],\"outbound\":\"proxy\"}",
+                    "可直接输入或粘贴 route.rules 里的单个规则对象（也支持含 rules 的数组 / 完整 route 配置）：",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -714,11 +745,11 @@ private fun JsonPasteDialog(
                     onValueChange = { text = it },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(420.dp),
+                        .heightIn(min = 200.dp, max = 440.dp),
                     textStyle = MaterialTheme.typography.bodySmall.copy(
                         fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                     ),
-                    maxLines = Int.MAX_VALUE,
+                    placeholder = { Text("{\"domain_suffix\":[\"example.com\"],\"network\":[\"tcp\"],\"outbound\":\"proxy\"}") },
                 )
                 error?.let {
                     Spacer(Modifier.height(6.dp))
@@ -726,7 +757,7 @@ private fun JsonPasteDialog(
                 }
             }
         },
-        confirmButton = { TextButton(onClick = { onApply(text) }) { Text("解析并回填") } },
+        confirmButton = { TextButton(onClick = { onApply(text) }, enabled = text.isNotBlank()) { Text("解析并回填") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
     )
 }

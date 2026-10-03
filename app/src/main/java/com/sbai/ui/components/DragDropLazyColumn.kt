@@ -1,6 +1,7 @@
 package com.sbai.ui.components
 
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -11,7 +12,6 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.foundation.layout.Box
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
@@ -20,10 +20,13 @@ import androidx.compose.ui.zIndex
 /**
  * 长按拖动排序的 LazyColumn（越靠上优先级越高）。
  *
- * 实现要点（修复索引过期问题）：
- *  - 以「key」而非「index」跟踪被拖项，重排后实时用 indexOfFirst 求当前索引，
- *    避免 pointerInput 闭包捕获过期 index。
- *  - 用 hasDragged 标记，仅真正拖过才在松手时提交顺序（首次组合/取消不触发落盘）。
+ * 关键修复（之前拖拽失效/中断的根因）：
+ *  - pointerInput 的 key 用 items.size（列表尺寸），**不用**被拖项的 key。
+ *    被拖项的 key 会在重排时移动 index，导致 pointerInput 被重组销毁、拖拽中断。
+ *  - 用 draggingKey（内容 key）跟踪被拖项，重排后用 indexOfFirst 求实时 index。
+ *  - 位移用累计 offset，越过相邻项高度一半即交换数据源（onMove），
+ *    交换后从 offset 里减去该项高度，保证视觉连续、不跳变。
+ *  - 松手（onDragEnd）提交最终顺序；取消（onDragCancel）只复位不提交。
  */
 @Composable
 fun <T> DragDropLazyColumn(
@@ -42,6 +45,7 @@ fun <T> DragDropLazyColumn(
     var dragOffset by remember { mutableFloatStateOf(0f) }
     var hasDragged by remember { mutableStateOf(false) }
 
+    // 被拖项的实时 index（重排后自动跟随）
     val draggingIndex = draggingKey?.let { k -> items.indexOfFirst { keyOf(it) == k } } ?: -1
 
     LazyColumn(
@@ -68,7 +72,8 @@ fun <T> DragDropLazyColumn(
 
             Box(
                 modifier = itemModifier
-                    .pointerInput(thisKey) {
+                    // 关键：key 用 items.size 而非 thisKey，避免重排时 pointerInput 被销毁
+                    .pointerInput(items.size) {
                         detectDragGesturesAfterLongPress(
                             onDragStart = {
                                 draggingKey = thisKey
@@ -106,7 +111,6 @@ fun <T> DragDropLazyColumn(
                                 hasDragged = false
                             },
                             onDragCancel = {
-                                // 取消不提交，仅复位
                                 draggingKey = null
                                 dragOffset = 0f
                                 hasDragged = false

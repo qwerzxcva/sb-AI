@@ -56,6 +56,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -103,10 +104,11 @@ fun HomeScreen() {
     val status by SbAiVpnService.status.collectAsState()
     val commandStatus by SbCommandClient.status.collectAsState()
     val proxyGroups by SbCommandClient.groups.collectAsState()
+    val coreConnected by SbCommandClient.connectedToService.collectAsState()
     val scope = rememberCoroutineScope()
     val tokens = LocalSbStyleTokens.current
 
-    val subManager = remember { SubscriptionManager(store) }
+    val subManager = remember { SubscriptionManager(store, context.applicationContext) }
     var refreshingId by remember { mutableStateOf<String?>(null) }
 
     var editingNode by remember { mutableStateOf<ProxyNode?>(null) }
@@ -125,6 +127,26 @@ fun HomeScreen() {
 
     val running = status is SbAiVpnService.ServiceStatus.Running
     val lb = state.loadBalance
+
+    // 进程隔离后：UI 进程自建 CommandClient 连接 :core 进程的 CommandServer（unix socket 跨进程），
+    // 以 connectedToService 作为「内核是否在跑」的真源（StateFlow 不跨进程共享）。
+    LaunchedEffect(Unit) {
+        SbCommandClient.connect()
+    }
+    val coreRunning = running || coreConnected
+
+    // 节点编辑器：整页（二级页面），不是弹窗
+    editingNode?.let { node ->
+        NodeEditorScreen(
+            initial = node,
+            onBack = { editingNode = null },
+            onSave = {
+                store.upsertProxyNode(it)
+                editingNode = null
+            },
+        )
+        return
+    }
 
     Scaffold { padding ->
         LazyColumn(
@@ -149,7 +171,7 @@ fun HomeScreen() {
                                 else -> MaterialTheme.colorScheme.onSurfaceVariant
                             },
                         )
-                        if (running) {
+                        if (coreRunning) {
                             Text(
                                 "↑ ${com.sbai.ui.monitor.formatSpeed(commandStatus.uplink)} · " +
                                     "↓ ${com.sbai.ui.monitor.formatSpeed(commandStatus.downlink)}",
@@ -162,7 +184,7 @@ fun HomeScreen() {
                     Surface(
                         onClick = {
                             when {
-                                running -> stopVpn(context)
+                                coreRunning -> stopVpn(context)
                                 status is SbAiVpnService.ServiceStatus.Starting ||
                                     status is SbAiVpnService.ServiceStatus.Stopping -> Unit
                                 else -> {
@@ -172,15 +194,15 @@ fun HomeScreen() {
                             }
                         },
                         shape = RoundedCornerShape(tokens.groupCornerRadius),
-                        color = if (running) MaterialTheme.colorScheme.errorContainer
+                        color = if (coreRunning) MaterialTheme.colorScheme.errorContainer
                         else MaterialTheme.colorScheme.primaryContainer,
                         modifier = Modifier.size(72.dp),
                     ) {
                         Box(contentAlignment = Alignment.Center) {
                             Icon(
                                 Icons.Filled.PowerSettingsNew,
-                                contentDescription = if (running) "停止" else "启动",
-                                tint = if (running) MaterialTheme.colorScheme.onErrorContainer
+                                contentDescription = if (coreRunning) "停止" else "启动",
+                                tint = if (coreRunning) MaterialTheme.colorScheme.onErrorContainer
                                 else MaterialTheme.colorScheme.onPrimaryContainer,
                                 modifier = Modifier.size(32.dp),
                             )
@@ -191,7 +213,7 @@ fun HomeScreen() {
             }
 
             // ---- 实时流量卡（ClashFest 首页观感；运行中显示） ----
-            if (running) {
+            if (coreRunning) {
                 item {
                     HomeTrafficCard(commandStatus)
                     SbSpacer()
@@ -251,7 +273,7 @@ fun HomeScreen() {
             }
 
             // ---- 代理组（运行中：延迟/切换/测速） ----
-            if (running && proxyGroups.isNotEmpty()) {
+            if (coreRunning && proxyGroups.isNotEmpty()) {
                 item {
                     SbGroup(title = "代理组") {
                         proxyGroups.forEach { group ->
@@ -537,14 +559,6 @@ fun HomeScreen() {
     }
 
     // ---- 对话框 ----
-    editingNode?.let { node ->
-        NodeEditorDialog(
-            initial = node,
-            onDismiss = { editingNode = null },
-            onSave = { store.upsertProxyNode(it); editingNode = null },
-        )
-    }
-
     editingSub?.let { sub ->
         SubscriptionEditorDialog(
             initial = sub,
@@ -794,46 +808,6 @@ private fun stopVpn(context: Context) {
 // ---------------------------------------------------------------------------
 
 @Composable
-private fun NodeEditorDialog(
-    initial: ProxyNode,
-    onDismiss: () -> Unit,
-    onSave: (ProxyNode) -> Unit,
-) {
-    var name by remember { mutableStateOf(initial.name) }
-    var json by remember { mutableStateOf(initial.outboundJson) }
-    var error by remember { mutableStateOf<String?>(null) }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(if (initial.outboundJson.isBlank()) "添加节点" else "编辑节点") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("名称") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(
-                    value = json, onValueChange = { json = it },
-                    label = { Text("sing-box outbound JSON") },
-                    modifier = Modifier.fillMaxWidth(), minLines = 4,
-                    placeholder = { Text("{\"type\":\"vless\",\"tag\":\"...\",...}") },
-                )
-                error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = {
-                val parsed = runCatching { Json.parseToJsonElement(json).jsonObject }.getOrElse {
-                    error = "JSON 无效: ${it.message}"; return@TextButton
-                }
-                if (parsed["type"] == null || parsed["tag"] == null) {
-                    error = "outbound 必须包含 type 与 tag"; return@TextButton
-                }
-                onSave(initial.copy(name = name, outboundJson = json))
-            }) { Text("保存") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
-    )
-}
-
-@Composable
 private fun SubscriptionEditorDialog(
     initial: Subscription,
     onDismiss: () -> Unit,
@@ -852,6 +826,7 @@ private fun SubscriptionEditorDialog(
     var urlTestAfterUpdate by remember { mutableStateOf(initial.urlTestAfterUpdate) }
     var removeUnavailable by remember { mutableStateOf(initial.removeUnavailable) }
     var sortByLatency by remember { mutableStateOf(initial.sortByLatency) }
+    var detour by remember { mutableStateOf(initial.detour) }
     var error by remember { mutableStateOf<String?>(null) }
 
     AlertDialog(
@@ -864,8 +839,34 @@ private fun SubscriptionEditorDialog(
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("名称") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(value = url, onValueChange = { url = it }, label = { Text("订阅 URL（仅 https）") }, modifier = Modifier.fillMaxWidth(), minLines = 2)
+                OutlinedTextField(
+                    value = name, onValueChange = { name = it },
+                    label = { Text("名称（留空则自动识别机场名）") }, singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(value = url, onValueChange = { url = it }, label = { Text("订阅 URL（http/https）") }, modifier = Modifier.fillMaxWidth(), minLines = 2)
+
+                // #13：订阅更新走哪个出口
+                Text("更新出口", style = MaterialTheme.typography.labelLarge)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(
+                        selected = detour == "direct",
+                        onClick = { detour = "direct" },
+                        label = { Text("直连") },
+                    )
+                    FilterChip(
+                        selected = detour == "proxy",
+                        onClick = { detour = "proxy" },
+                        label = { Text("代理") },
+                    )
+                }
+                Text(
+                    if (detour == "proxy") "通过当前运行的代理隧道拉取（需先启动 VPN）"
+                    else "绕过代理直接拉取（订阅被墙时请改用代理）",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+
                 OutlinedTextField(
                     value = userAgent, onValueChange = { userAgent = it },
                     label = { Text("User-Agent（可选）") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
@@ -923,12 +924,13 @@ private fun SubscriptionEditorDialog(
         },
         confirmButton = {
             TextButton(onClick = {
-                if (!url.startsWith("https://")) {
-                    error = "请输入 https 订阅地址"; return@TextButton
+                val u = url.trim()
+                if (!u.startsWith("https://") && !u.startsWith("http://")) {
+                    error = "请输入 http/https 订阅地址"; return@TextButton
                 }
                 onSave(
                     initial.copy(
-                        name = name.trim(), url = url.trim(), autoUpdate = autoUpdate,
+                        name = name.trim(), url = u, autoUpdate = autoUpdate,
                         updateIntervalHours = intervalHours.toIntOrNull()?.coerceAtLeast(0) ?: 24,
                         userAgent = userAgent.ifBlank { null },
                         includeKeyword = includeKw.trim(),
@@ -938,6 +940,7 @@ private fun SubscriptionEditorDialog(
                         urlTestAfterUpdate = urlTestAfterUpdate,
                         removeUnavailable = removeUnavailable && urlTestAfterUpdate,
                         sortByLatency = sortByLatency && urlTestAfterUpdate,
+                        detour = detour,
                     ),
                 )
             }) { Text("保存") }

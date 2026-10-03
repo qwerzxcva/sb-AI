@@ -28,15 +28,15 @@ class RouteRuleJsonCodecTest {
         assertEquals(listOf("tcp", "udp"), rule.networks.sorted())
         assertEquals(listOf("quic", "tls"), rule.protocols.sorted())
         assertEquals(listOf(443, 8443), rule.ports)
-        assertEquals(RuleAction.PROXY, rule.action)
+        assertEquals(RuleAction.ROUTE_PROXY, rule.action)
         assertTrue(rule.invert)
         assertEquals(RuleLogic.AND, rule.logic)
     }
 
     @Test
     fun `parse block and direct actions`() {
-        assertEquals(RuleAction.BLOCK, parseSuccess("""{"domain":["a.com"],"outbound":"block"}""").action)
-        assertEquals(RuleAction.DIRECT, parseSuccess("""{"domain":["a.com"],"outbound":"direct"}""").action)
+        assertEquals(RuleAction.REJECT, parseSuccess("""{"domain":["a.com"],"outbound":"block"}""").action)
+        assertEquals(RuleAction.ROUTE_DIRECT, parseSuccess("""{"domain":["a.com"],"outbound":"direct"}""").action)
     }
 
     @Test

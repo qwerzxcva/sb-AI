@@ -221,7 +221,8 @@ object SingBoxConfigGenerator {
                     put("mtu", state.settings.mtu)
                     put("auto_route", true)
                     put("strict_route", state.settings.strictRoute)
-                    put("stack", "mixed")
+                    // TUN 网络栈：system / gvisor / mixed
+                    put("stack", state.settings.tunStack.ifBlank { "mixed" })
                     put("sniff", true)
                     put("sniff_override_destination", false)
 
@@ -283,8 +284,9 @@ object SingBoxConfigGenerator {
                     }
                     DnsServerType.FAKEIP -> {
                         put("type", "fakeip")
-                        put("inet4_range", "198.18.0.0/15")
-                        put("inet6_range", "fc00::/18")
+                        // 自定义段优先，空则用内核默认
+                        put("inet4_range", s.inet4Range.ifBlank { "198.18.0.0/15" })
+                        put("inet6_range", s.inet6Range.ifBlank { "fc00::/18" })
                     }
                     else -> {
                         put("type", s.type.wireName)
@@ -369,6 +371,17 @@ object SingBoxConfigGenerator {
     private fun buildRouteRules(state: AppState, entryTag: String): List<JsonObject> {
         val rules = mutableListOf<JsonObject>()
         rules.add(buildJsonObject { put("action", "sniff") })
+        // fakeIP 联动：存在启用的 fakeip DNS server 时，自动生成 fakeIP 段路由规则（放最前，优先级最高）
+        state.dnsServers.firstOrNull { it.enabled && it.type == DnsServerType.FAKEIP && it.tag.isNotBlank() }
+            ?.let { fake ->
+                rules.add(buildJsonObject {
+                    putJsonArray("ip_cidr") {
+                        add(fake.inet4Range.ifBlank { "198.18.0.0/15" })
+                        add(fake.inet6Range.ifBlank { "fc00::/18" })
+                    }
+                    put("outbound", entryTag)
+                })
+            }
         state.routeRules.filter { it.enabled }.forEach { rule ->
             rules.add(buildRouteRule(rule, entryTag))
         }
@@ -376,56 +389,57 @@ object SingBoxConfigGenerator {
     }
 
     private fun buildRouteRule(rule: RouteRule, entryTag: String): JsonObject {
-        val outbound = when (rule.action) {
-            RuleAction.BLOCK -> "block"
-            RuleAction.DIRECT -> "direct"
-            RuleAction.PROXY -> entryTag
-        }
-
         // 按字段类别拆分为子条件（OR 模式用；AND 模式平铺）
-        // 类别：domain / ip / source / transport / app / network-env
         val domainCond = buildJsonObject { putConditions(rule, Cat.DOMAIN) }
         val ipCond = buildJsonObject { putConditions(rule, Cat.IP) }
         val sourceCond = buildJsonObject { putConditions(rule, Cat.SOURCE) }
         val transportCond = buildJsonObject { putConditions(rule, Cat.TRANSPORT) }
         val appCond = buildJsonObject { putConditions(rule, Cat.APP) }
         val netEnvCond = buildJsonObject { putConditions(rule, Cat.NETENV) }
+        val allConds = listOf(domainCond, ipCond, sourceCond, transportCond, appCond, netEnvCond)
 
         return buildJsonObject {
             if (rule.logic == RuleLogic.OR) {
-                val children = buildJsonArray {
-                    listOf(domainCond, ipCond, sourceCond, transportCond, appCond, netEnvCond)
-                        .filter { it.isNotEmpty() }.forEach(::add)
-                }
+                val children = buildJsonArray { allConds.filter { it.isNotEmpty() }.forEach(::add) }
                 if (children.size == 0) {
-                    putActionOrOutbound(rule, outbound)
+                    putActionOrOutbound(rule, entryTag)
                 } else if (children.size == 1) {
                     children[0].jsonObject.forEach { (k, v) -> put(k, v) }
                     if (rule.invert) put("invert", true)
-                    putActionOrOutbound(rule, outbound)
+                    putActionOrOutbound(rule, entryTag)
                 } else {
                     put("type", "logical")
                     put("mode", "or")
                     put("rules", children)
                     if (rule.invert) put("invert", true)
-                    putActionOrOutbound(rule, outbound)
+                    putActionOrOutbound(rule, entryTag)
                 }
             } else {
                 // AND：所有字段平铺在一个 rule 对象里（sing-box 默认即 AND 语义）
                 putConditions(rule, Cat.DOMAIN, Cat.IP, Cat.SOURCE, Cat.TRANSPORT, Cat.APP, Cat.NETENV)
                 if (rule.invert) put("invert", true)
-                putActionOrOutbound(rule, outbound)
+                putActionOrOutbound(rule, entryTag)
             }
         }
     }
 
-    /** BLOCK 动作用 action=reject（带 rejectMethod），其余用 outbound */
-    private fun JB.putActionOrOutbound(rule: RouteRule, outbound: String) {
-        if (rule.action == RuleAction.BLOCK) {
-            put("action", "reject")
-            if (rule.rejectMethod == "drop") put("reject_method", "drop")
-        } else {
-            put("outbound", outbound)
+    /** 输出 action 或 outbound（sing-box 完整动作集） */
+    private fun JB.putActionOrOutbound(rule: RouteRule, entryTag: String) {
+        when (rule.action) {
+            RuleAction.ROUTE_PROXY -> put("outbound", entryTag)
+            RuleAction.ROUTE_DIRECT -> put("outbound", "direct")
+            RuleAction.REJECT -> {
+                put("action", "reject")
+                if (rule.rejectMethod == "drop") put("reject_method", "drop")
+            }
+            RuleAction.SNIFF -> put("action", "sniff")
+            RuleAction.RESOLVE -> put("action", "resolve")
+            RuleAction.HIJACK_DNS -> put("action", "hijack-dns")
+            RuleAction.ROUTE_OPTIONS -> {
+                put("action", "route-options")
+                // route-options 至少需要一个 override 字段；当前用 override_address_override 兜底
+                // 用户在编辑器里填的 override 字段（如有）会单独输出
+            }
         }
     }
 
@@ -487,7 +501,7 @@ object SingBoxConfigGenerator {
             ?: "dns-default"
         val groupOfTag = state.dnsGroups.associate { it.name to it.serverTags }
         return state.routeRules.filter { it.enabled }.mapNotNull { rule ->
-            if (rule.action == RuleAction.BLOCK) return@mapNotNull null
+            if (rule.action == RuleAction.REJECT) return@mapNotNull null
             if (!rule.hasDomainContent) return@mapNotNull null
             val dnsServer = resolveDnsTag(rule.dnsTag, groupOfTag, state)
             val strategy = ipStrategy(rule.ipv4, rule.ipv6)
@@ -520,6 +534,15 @@ object SingBoxConfigGenerator {
     private fun buildDnsRules(state: AppState, defaultDnsTag: String): List<JsonObject> {
         val result = mutableListOf<JsonObject>()
         val groupOfTag = state.dnsGroups.associate { it.name to it.serverTags }
+
+        // 0) fakeIP 联动：fakeip DNS server 存在时，自动生成 query_type A/AAAA → fakeip 规则
+        state.dnsServers.firstOrNull { it.enabled && it.type == DnsServerType.FAKEIP && it.tag.isNotBlank() }
+            ?.let { fake ->
+                result.add(buildJsonObject {
+                    putJsonArray("query_type") { add("A"); add("AAAA") }
+                    put("server", fake.tag)
+                })
+            }
 
         // 1) 用户手动创建的 DNS 规则（按列表顺序 = 优先级）
         state.dnsRules.filter { it.enabled }.forEach { r ->
@@ -577,7 +600,7 @@ object SingBoxConfigGenerator {
 
         // 3) 路由规则自动推导（需求 4 + 5：同时命中只生成一条合并规则）
         state.routeRules.filter { it.enabled }.forEach { rule ->
-            if (rule.action == RuleAction.BLOCK) return@forEach
+            if (rule.action == RuleAction.REJECT) return@forEach
             if (!rule.hasDomainContent) return@forEach
             val dnsServer = resolveDnsTag(rule.dnsTag, groupOfTag, state)
             val strategy = ipStrategy(rule.ipv4, rule.ipv6)

@@ -1,60 +1,61 @@
-# sb-AI 进度（第 6 段续跑起点）
+# sb-AI 进度（第 10 段续跑起点）
 
-> 目标：Kototoro/ClashFest 风格 UI + LxBox 内核/功能基准 + AsteriskBOX 全量规则字段 + 全面审核循环。
+> 目标：Kototoro 液态玻璃 + 二级页面重构 + 完整 action + 修复正确性 bug。
 > 仅 ARMv8，Kotlin/Compose，不集成 Root/Magisk。
 
-## 环境关键事实（与前几段相同）
+## 环境关键事实
 
-- `github.com:443` 不可达；推送用 `/workspace/push_api.py`（token 在 `/workspace/.gh_token`）。
-- 远端 `qwerzxcva/sb-AI@master`，最近推送 `7c09468`（第 5 轮）。本段有未推送改动。
-- 内核：`Leadaxe/sing-box-lx` v1.14.2-lx.11，`scripts/fetch-libbox.sh` 下载+校验+裁剪 arm64。
-- 参考仓库：`/workspace/LxBox`、`/workspace/AsteriskBOX`、`/workspace/ThroneForAndroid`、`/workspace/references`(Kototoro)、`/workspace/flclash`、`/workspace/clashfest`(Nemu-x)。
-- 子代理必须 `model: "inherit"`。
-- **体积优化已生效**：`app/build.gradle.kts` release 里 `useLegacyPackaging=true`（libbox.so DEFLATE 压缩）+ `isMinifyEnabled=true` + `isShrinkResources=true` → 89MB→28MB。单测仍全绿。
-- Python heredoc 与后续命令**换行分隔时是独立语句**，前面失败后面照样执行——拼接文件时务必用 `&&` 串联或全部放 heredoc 里。
+- 推送用 `/workspace/push_api.py`（token 在 `/workspace/.gh_token`），github.com 直连不可达。
+- 远端 `qwerzxcva/sb-AI@master`，最近推送 `997fb39`（第 8 轮）。本轮代码**未推送**。
+- 内核 `Leadaxe/sing-box-lx` v1.14.2-lx.11，`scripts/fetch-libbox.sh` 下载。
+- 体积优化已生效：89MB→28MB（DEFLATE + R8 + shrinkResources）。
+- CI（`.github/workflows/build.yml`）已在 runner 上成功构建（release 27.7MB + debug 45.7MB）。
+- backdrop 液态玻璃：vendor `io.github.kyant0:backdrop:2.0.0` 源码进 `backdrop/` 模块（30 个 kt 文件），
+  compileSdk 34 兼容 patch 完成（lens 改 no-op、context params 改显式参数、blendMode/colorFilter 改普通字段）。
+  Kotlin 已回退 2.0.21（context params 已移除，无需 2.2）。compileSdk 34 本地/CI 一致（35/37 平台目录命名 `android-37.0` 非标准，AGP 解析失败，不可用）。
+- 子代理 `model:"inherit"` 可用但慢；自定义模型 temperature 报错。
 
-## 用户第 6 轮反馈 → 完成状态
+## 用户第 9 轮反馈 → 完成状态
 
 | 反馈 | 状态 |
 |---|---|
-| 体积 90MB→40MB 左右 | ✅ 28MB（DEFLATE + R8 + shrinkResources） |
-| 路由/DNS 规则参数太少（参考 AsteriskBOX） | ⏳ 模型+生成器+RouteRuleJsonCodec 已扩充全量字段；**编辑器 UI 拼接未完成（见下）** |
-| 监控页黑/丑 | ⏳ 已加 StatusHeroCard/TrafficCard（第 5 段），haze 参数已调 |
-| 底栏玻璃磨砂 | ✅ haze 参数调到 Kototoro 水平（blur 16dp、surface 0.5 alpha、hairline） |
-| hwid（LxBox） | ✅ 订阅身份系统：AppSettings.subscriptionUserAgent/subscriptionSendHwid/subscriptionHwid/deviceOs/verOs/deviceModel；SubscriptionManager 发 x-hwid/x-device-os/x-ver-os/x-device-model；设置页 UI + UUID 懒生成 |
-| user agent（AsteriskBOX） | ✅ 全局 subscriptionUserAgent（订阅级 override > 全局 > 品牌 UA） |
-| 功能还缺一半 | ⏳ 持续补齐中 |
+| 去重应该按配置不是同名 | ✅ `normalizeOutbound()` 忽略 tag/name 按配置去重 |
+| lxbox JSON 格式识别 | ✅ `RouteRuleJsonCodec` 支持 route 包裹 + inline rule_set + package_name_regex + action=reject |
+| 拖拽失效 | ✅ `DragDropLazyColumn` 改用 `pointerInput(items.size)`（不用被拖项 key，避免重排销毁） |
+| 底栏下滑隐藏 | ✅ MainActivity nestedScroll 监听方向 + offset 动画 |
+| 监控页 UI/布局 | ⏳ 已有渐变+标题，待进一步重设计 |
+| 完整 action | ✅ RuleAction 7 个（ROUTE_PROXY/ROUTE_DIRECT/REJECT/SNIFF/RESOLVE/HIJACK_DNS/ROUTE_OPTIONS），生成器+UI 补全 |
+| fakeIP 自定义段 | ✅ DnsServer.inet4Range/inet6Range + 编辑器字段 |
+| fakeIP 联动路由规则 | ✅ 生成器自动加 fakeIP 段 route 规则 + query_type A/AAAA DNS 规则 |
+| tun stack system/gvisor/mixed | ✅ AppSettings.tunStack + 设置页 segmented + 生成器 |
+| 二级页面（路由/DNS 编辑） | ⏳ **路由编辑器改成 Scaffold 整页时括号错位（当前卡点）**，DNS 编辑器还没改 |
+| 规则名称框大/字被挡/放置不均 | ⏳ 待修（编辑器名称行 Row 布局） |
+| JSON 只能粘贴不能输入 | ⏳ 待改为 editable TextField |
+| 应用选择器无 root 说明 | ⏳ 待加提示 |
 
 ## 当前卡点（必须先解决）
 
-**RouteRuleEditorDialog 拼接失败**：
-- 新编辑器全文在 `/workspace/sb-AI/new_editor.kt`（全量字段 + EditorSection 折叠 + 粘贴 JSON + rejectMethod）。
-- 旧编辑器在 `app/src/main/java/com/sbai/ui/routes/RouteRulesScreen.kt`。
-- 需要：定位旧编辑器的精确行范围（从 `// 路由规则编辑器` 注释块到 RouteRuleEditorDialog 函数的收尾 `}`），
-  用 new_editor.kt 内容替换。**不要再猜行号**——先用 `grep -n` 找到 `private fun RouteRuleEditorDialog(` 的行号 start，
-  再找它后面第一个独立的 `}`（函数结束）行号 end，用 python 按 [start-1 .. end] 替换。
-  替换后删掉 new_editor.kt，确认 `EditorSection` 只有一个定义。
-- 新编辑器引用 `EditorSection`（折叠区块）、`rejectMethod`、所有新字段，拼完必须编译验证。
-
-## 新字段清单（已加入 RouteRule 模型）
-
-sourceIpCidrs, sourcePorts, sourcePortRanges, packageNames, processNames, processPaths,
-users, userIds, networkTypes(wifi/cellular/ethernet), wifiSsids, wifiBssids, inbounds,
-clashMode, sourceIpIsPrivate, ipIsPrivate, networkIsExpensive, rejectMethod(default/drop)。
-
-生成器：AND 平铺 / OR 按 6 类（DOMAIN/IP/SOURCE/TRANSPORT/APP/NETENV）拆分；
-BLOCK 用 `action=reject` + `reject_method`（不再用 outbound=block）。
+`app/src/main/java/com/sbai/ui/routes/RouteRulesScreen.kt` 的 RouteRuleEditorDialog：
+- 我把 AlertDialog 外壳改成了 Scaffold（整页），但删弹窗 confirmButton/dismissButton 时多删了一个 `}`，
+  导致 639 行附近括号错位（Scaffold body lambda 提前闭合，后面的 `if (showJsonPaste)` 变成顶层声明，TopAppBar/ArrowBack 未 import）。
+- **正确结构**：Scaffold(topBar={TopAppBar(...)}) { padding -> Column(...){ ...内容... } } 之后才是 `if (showJsonPaste)` 和 `if (showAppPicker)`。
+- 需要：在 Scaffold body Column 结束后（内容最后一项 `}`）加 `}` 闭合 Scaffold body，再加 `}` 闭合函数……
+  实际只需让 `if (showJsonPaste)`/`if (showAppPicker)` 仍在函数体内、且在 Scaffold 之外即可。
+- 补 import：`androidx.compose.material3.TopAppBar`、`androidx.compose.material.icons.automirrored.filled.ArrowBack`。
 
 ## 下一步
 
-1. 完成编辑器拼接（见上），编译。
-2. DNS 规则字段扩充（参考 AsteriskBOX SingBoxDnsRuleState：rcode/answer/ns/extra/timeout 等）→ DnsRule 模型 + 生成器 + 编辑器。
-3. `./gradlew :app:testDebugUnitTest :app:assembleRelease` 全绿。
-4. 推送 → 全面审核（model=inherit）→ 修复 → 复验 → 推送。
+1. 修 RouteRulesScreen 编辑器括号 + import，编译通过。
+2. DNS 编辑器同样改整页（参考路由编辑器的 Scaffold 模式）。
+3. 监控页重设计（对齐 ClashFest 状态卡/流量卡/订阅卡）。
+4. 规则名称框布局修复（Row weight 不均）。
+5. JSON 粘贴框改为 editable。
+6. 应用选择器加「无 root 时 process_name/process_path/user 不生效」提示。
+7. 构建+单测+推送+审核。
 
-## 用户历史反馈红线（务必遵守）
+## 用户历史红线
 
-只 ARMv8；无 Root；UI 参考 Kototoro/ClashFest；负载均衡并入首页；规则集与路由规则合并显示优先级；
-长按拖动排序；network 含 icmp；protocol 全量 10 项；逻辑运算只有 AND/OR；DNS 页有手动+自动规则；
-路由规则可粘贴 JSON 片段；配置覆盖双优先级；订阅有 UA/hwid/关键字过滤；TUN 地址段可自定义；
-体积要 40MB 左右（已达 28MB）。
+只 ARMv8；无 Root；UI 参考 Kototoro/ClashFest；液态玻璃用 backdrop；开关/LB 解耦；
+network 含 icmp；protocol 全量 10 项；逻辑运算只有 AND/OR；规则集与路由规则合并显示；
+长按拖动排序；路由/DNS 规则可粘贴 JSON；配置覆盖双优先级；订阅有 UA/hwid/去重（按配置）；
+TUN 地址段+stack 自定义；fakeIP 自定义段+联动；体积 40MB 内（已 28MB）；二级页面而非弹窗。

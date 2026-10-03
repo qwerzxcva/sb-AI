@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
@@ -25,10 +26,13 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
@@ -82,7 +86,31 @@ private fun MainScaffold() {
     // Kototoro 同款液态玻璃底栏：页面内容捕获为 LayerBackdrop，底栏采样折射
     val pageBackdrop = rememberLayerBackdrop()
 
-    Box(modifier = Modifier.fillMaxSize()) {
+    // 下滑隐藏 / 上滑显示底栏（nested scroll 监听滚动方向）
+    var barVisible by remember { mutableStateOf(true) }
+    val barOffset by androidx.compose.animation.core.animateDpAsState(
+        targetValue = if (barVisible) 0.dp else 120.dp,
+        animationSpec = androidx.compose.animation.core.tween(250),
+        label = "bottomBarSlide",
+    )
+    val nestedScrollConnection = remember {
+        object : androidx.compose.ui.input.nestedscroll.NestedScrollConnection {
+            override fun onPreScroll(
+                available: androidx.compose.ui.geometry.Offset,
+                source: androidx.compose.ui.input.nestedscroll.NestedScrollSource,
+            ): androidx.compose.ui.geometry.Offset {
+                if (available.y < -1f) barVisible = false      // 内容向下滚 → 隐藏
+                else if (available.y > 1f) barVisible = true   // 内容向上滚 → 显示
+                return androidx.compose.ui.geometry.Offset.Zero
+            }
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .nestedScroll(nestedScrollConnection),
+    ) {
         NavHost(
             navController = navController,
             startDestination = Screen.Home.route,
@@ -113,7 +141,9 @@ private fun MainScaffold() {
                 .align(Alignment.BottomCenter)
                 .navigationBarsPadding()
                 .padding(horizontal = 20.dp)
-                .padding(bottom = 12.dp),
+                .padding(bottom = 12.dp)
+                // 下滑隐藏：整体下移出屏幕
+                .offset(y = barOffset),
         )
     }
 }
