@@ -20,7 +20,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.background
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Apps
@@ -66,6 +68,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.sbai.data.AppState
+import com.sbai.data.ConfigProfile
 import com.sbai.data.LogLevel
 import com.sbai.data.OverridePriority
 import com.sbai.data.PerAppProxyMode
@@ -96,6 +99,9 @@ fun SettingsScreen() {
     var backupMessage by remember { mutableStateOf<String?>(null) }
     var editingText by remember { mutableStateOf<Triple<String, String, (String) -> Unit>?>(null) }
     var splitDomainsText by remember { mutableStateOf("") }
+    var showProfileDialog by remember { mutableStateOf(false) }
+    var profileNameInput by remember { mutableStateOf("") }
+    var editingProfile by remember { mutableStateOf<ConfigProfile?>(null) }
 
     val backupJson = Json { prettyPrint = true; encodeDefaults = true; ignoreUnknownKeys = true }
 
@@ -439,6 +445,85 @@ fun SettingsScreen() {
                 SbSpacer()
             }
 
+            // ---- 多配置 Profiles（Throne 基准） ----
+            item {
+                SbGroup(title = "配置快照（${state.profiles.size}）") {
+                    item {
+                        SbItem(
+                            title = "保存当前配置为快照",
+                            subtitle = if (state.activeProfileId.isEmpty()) "当前未处于快照模式" else "当前在快照: ${state.profiles.find { it.id == state.activeProfileId }?.name}",
+                            icon = Icons.Filled.Save,
+                            onClick = {
+                                profileNameInput = ""
+                                showProfileDialog = true
+                            },
+                        )
+                    }
+                    if (state.profiles.isNotEmpty()) {
+                        item {
+                            Column(Modifier.padding(horizontal = 8.dp)) {
+                                state.profiles.forEach { profile ->
+                                    val isActive = state.activeProfileId == profile.id
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(vertical = 6.dp)
+                                            .background(
+                                                if (isActive) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+                                                else MaterialTheme.colorScheme.surfaceContainerHighest,
+                                                RoundedCornerShape(8.dp),
+                                            )
+                                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                profile.name,
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                color = if (isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                                            )
+                                            Text(
+                                                java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.getDefault()).format(java.util.Date(profile.createdAt)),
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            )
+                                        }
+                                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                            androidx.compose.material3.FilledTonalButton(
+                                                onClick = {
+                                                    editingProfile = profile
+                                                    profileNameInput = profile.name
+                                                    showProfileDialog = true
+                                                },
+                                                contentPadding = androidx.compose.foundation.layout.PaddingValues(8.dp),
+                                            ) {
+                                                Text("重命名", style = MaterialTheme.typography.labelSmall)
+                                            }
+                                            if (!isActive) {
+                                                androidx.compose.material3.OutlinedButton(
+                                                    onClick = { store.activateProfile(profile.id) },
+                                                    contentPadding = androidx.compose.foundation.layout.PaddingValues(8.dp),
+                                                ) {
+                                                    Text("加载", style = MaterialTheme.typography.labelSmall)
+                                                }
+                                            }
+                                            androidx.compose.material3.OutlinedButton(
+                                                onClick = { store.deleteProfile(profile.id) },
+                                                contentPadding = androidx.compose.foundation.layout.PaddingValues(8.dp),
+                                            ) {
+                                                Text("删除", style = MaterialTheme.typography.labelSmall)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                SbSpacer()
+            }
+
             // ---- 订阅身份（LxBox SubscriptionIdentity 基准） ----
             item {
                 SbGroup(title = "订阅身份") {
@@ -627,6 +712,35 @@ fun SettingsScreen() {
             initial = initialValue,
             onDismiss = { editingText = null },
             onDone = { onDone(it); editingText = null },
+        )
+    }
+
+    if (showProfileDialog) {
+        var name by remember { mutableStateOf(profileNameInput) }
+        AlertDialog(
+            onDismissRequest = { showProfileDialog = false },
+            title = { Text(if (editingProfile != null) "重命名快照" else "保存快照") },
+            text = {
+                OutlinedTextField(
+                    value = name, onValueChange = { name = it },
+                    label = { Text("快照名称") }, singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    if (name.trim().isEmpty()) return@TextButton
+                    if (editingProfile != null) {
+                        store.update { s ->
+                            s.copy(profiles = s.profiles.map { p -> if (p.id == editingProfile!!.id) p.copy(name = name.trim()) else p })
+                        }
+                    } else {
+                        store.createProfile(name.trim(), state)
+                    }
+                    showProfileDialog = false
+                }) { Text("确定") }
+            },
+            dismissButton = { TextButton(onClick = { showProfileDialog = false }) { Text("取消") } },
         )
     }
 }

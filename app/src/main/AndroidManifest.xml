@@ -83,6 +83,18 @@
             android:enabled="true"
             android:exported="false" />
 
+        <receiver
+            android:name=".service.VpnControlReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.sbai.action.START_VPN" />
+                <action android:name="com.sbai.action.STOP_VPN" />
+                <action android:name="com.sbai.action.SUB_UPDATE" />
+                <action android:name="com.sbai.action.STATUS" />
+            </intent-filter>
+        </receiver>
+
         <provider
             android:name="androidx.startup.InitializationProvider"
             android:authorities="${applicationId}.androidx-startup"

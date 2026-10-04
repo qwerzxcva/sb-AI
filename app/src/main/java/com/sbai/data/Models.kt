@@ -168,6 +168,16 @@ data class HostsEntry(
     val ips: List<String> = emptyList(),
 )
 
+/** 配置 Profile（Throne 多配置基准） */
+@Serializable
+data class ConfigProfile(
+    val id: String = UUID.randomUUID().toString(),
+    val name: String = "",
+    val createdAt: Long = System.currentTimeMillis(),
+    /** snapshot 为 AppState JSON 快照，导入时 replaceAll 还原 */
+    val snapshot: String = "",
+)
+
 /** DNS group：一组 DNS server 的命名集合（无需指定出口） */
 @Serializable
 data class DnsGroup(
@@ -465,4 +475,8 @@ data class AppState(
     /** 静态 hosts 映射（hosts 类型 DNS 服务器使用，单独编辑，不在 DNS 服务器创建里） */
     val customHosts: List<HostsEntry> = emptyList(),
     val settings: AppSettings = AppSettings(),
+    /** 配置快照列表（Throne 多配置基准） */
+    val profiles: List<ConfigProfile> = emptyList(),
+    /** 当前激活的 profile id（空 = 无快照模式） */
+    val activeProfileId: String = "",
 )

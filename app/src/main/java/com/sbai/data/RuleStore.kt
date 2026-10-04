@@ -256,6 +256,28 @@ class RuleStore private constructor(context: Context) {
     /** 备份导入：整体替换应用状态 */
     fun replaceAll(state: AppState) = persist(state)
 
+    // ---- Config Profiles（Throne 多配置基准） ----
+    fun createProfile(name: String, state: AppState): ConfigProfile {
+        val snapshot = json.encodeToString(AppState.serializer(), state)
+        val profile = ConfigProfile(name = name, snapshot = snapshot)
+        update { s -> s.copy(profiles = s.profiles + profile, activeProfileId = profile.id) }
+        return profile
+    }
+
+    fun deleteProfile(id: String) = update { s ->
+        val list = s.profiles.filterNot { it.id == id }
+        s.copy(profiles = list, activeProfileId = if (s.activeProfileId == id) "" else s.activeProfileId)
+    }
+
+    fun activateProfile(id: String) {
+        val profile = _state.value.profiles.find { it.id == id } ?: return
+        persist(_state.value.copy(activeProfileId = id))
+        // 快照还原到内存 StateFlow（磁盘存的是当前编辑态，profile.snapshot 保持原始快照）
+        val restored = runCatching { json.decodeFromString(AppState.serializer(), profile.snapshot) }
+            .getOrElse { _state.value }
+        _state.value = restored.copy(activeProfileId = id)
+    }
+
     companion object {
         private const val PREFS_NAME = "sb_ai_rules"
         private const val KEY_STATE = "app_state"
