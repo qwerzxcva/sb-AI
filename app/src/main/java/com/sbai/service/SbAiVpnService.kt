@@ -56,30 +56,42 @@ class SbAiVpnService : VpnService() {
             ServiceStatus.Running, ServiceStatus.Starting, ServiceStatus.Stopping -> return
             else -> Unit
         }
+        Log.i(TAG, "startVpn: current status=${_status.value}")
         _status.value = ServiceStatus.Starting
         startForegroundWithNotification()
 
         scope.launch {
             try {
+                Log.i(TAG, "startVpn: calling LibboxRuntime.setup")
                 LibboxRuntime.setup(this@SbAiVpnService)
+                Log.i(TAG, "startVpn: LibboxRuntime.setup completed")
 
                 // :core 进程的 RuleStore 是首次构造时的磁盘快照，必须 reload 才能拿到 UI 刚改的配置
                 val state = RuleStore.get(this@SbAiVpnService).reload()
+                Log.i(TAG, "startVpn: state reloaded, subscriptions=${state.subscriptions.size}")
+                
                 // generate() 内部已处理 configOverride（导入 JSON 覆盖合并），直接调用
                 val config = SingBoxConfigGenerator.generate(state)
+                Log.i(TAG, "startVpn: config generated, length=${config.length}")
 
                 // 配置出口闸门：启动前先过 checkConfig，失败直接给出可读错误
                 SingBoxConfigGenerator.validate(config)?.let { msg ->
+                    Log.e(TAG, "startVpn: config validation failed: $msg")
                     error("配置校验失败: $msg")
                 }
 
                 val configFile = LibboxRuntime.configFile(this@SbAiVpnService)
                 configFile.parentFile?.mkdirs()
                 configFile.writeText(config)
+                Log.i(TAG, "startVpn: config written to ${configFile.absolutePath}")
 
+                Log.i(TAG, "startVpn: creating platform interface")
                 val platform = SbPlatformInterface(this@SbAiVpnService)
+                Log.i(TAG, "startVpn: creating runtime")
                 val rt = LibboxServiceRuntime(platform) { stopVpn() }
+                Log.i(TAG, "startVpn: starting runtime")
                 rt.start(config)
+                Log.i(TAG, "startVpn: runtime started successfully")
 
                 runCatching { SbCommandClient.connect() }
                     .onFailure { Log.w(TAG, "command client unavailable", it) }
@@ -89,6 +101,7 @@ class SbAiVpnService : VpnService() {
                 _status.value = ServiceStatus.Running
                 persistError(null)   // 启动成功，清除旧错误
                 updateNotification(getString(R.string.vpn_notification_title))
+                Log.i(TAG, "startVpn: VPN running")
             } catch (t: Throwable) {
                 Log.e(TAG, "failed to start vpn", t)
                 _status.value = ServiceStatus.Error(t.message ?: "unknown")

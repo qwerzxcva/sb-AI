@@ -4,8 +4,8 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.util.Log
+import androidx.work.WorkManager
 import com.sbai.data.RuleStore
-import kotlinx.coroutines.runBlocking
 
 /**
  * 定时/重复性订阅更新入口。
@@ -30,26 +30,8 @@ class SubscriptionUpdateReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != ACTION_SUB_UPDATE) return
         Log.i(TAG, "subscription update tick")
-        val store = RuleStore.get(context)
-        val subs = store.state.value.subscriptions.filter { it.enabled && it.autoUpdate }
-        if (subs.isEmpty()) return
-        val now = System.currentTimeMillis()
-        val eligible = subs
-            .filter { s ->
-                val gap = now - s.lastUpdatedAt
-                s.lastUpdatedAt == 0L || gap >= (s.updateIntervalHours.coerceAtLeast(1) * 3600_000L)
-            }
-            .sortedBy { it.lastUpdatedAt } // 先刷最老的
-            .take(MAX_PER_RUN)
-        if (eligible.isEmpty()) return
-        val manager = SubscriptionManager(store, context)
-        eligible.forEach { sub ->
-            try {
-                val job = runBlocking { manager.refresh(sub) }
-                Log.i(TAG, "subscription ${sub.name}: ${if (job is SubscriptionManager.Result.Success) "ok (${job.nodeCount})" else "fail: ${(job as SubscriptionManager.Result.Failure).message}"}")
-            } catch (e: Exception) {
-                Log.w(TAG, "subscription ${sub.name} failed", e)
-            }
-        }
+        // 委托给 WorkManager 异步执行，避免阻塞主线程
+        val work = androidx.work.OneTimeWorkRequest.Builder(SubUpdateWork::class.java).build()
+        androidx.work.WorkManager.getInstance(context).enqueue(work)
     }
 }
