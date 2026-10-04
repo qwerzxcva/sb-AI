@@ -44,10 +44,12 @@ class SubscriptionUpdateReceiver : BroadcastReceiver() {
         if (eligible.isEmpty()) return
         val manager = SubscriptionManager(store, context)
         eligible.forEach { sub ->
-            val job = try { runBlocking { manager.refresh(sub) } } catch (e: Exception) {
-                SubscriptionManager.Result.Failure(e.message ?: "refresh failed")
+            try {
+                val job = runBlocking { manager.refresh(sub) }
+                Log.i(TAG, "subscription ${sub.name}: ${if (job is SubscriptionManager.Result.Success) "ok (${job.nodeCount})" else "fail: ${(job as SubscriptionManager.Result.Failure).message}"}")
+            } catch (e: Exception) {
+                Log.w(TAG, "subscription ${sub.name} failed", e)
             }
-            Log.i(TAG, "subscription ${sub.name}: ${if (job is SubscriptionManager.Result.Success) "ok (${job.nodeCount})" else "fail: ${(job as SubscriptionManager.Result.Failure).message}"}")
         }
     }
 }

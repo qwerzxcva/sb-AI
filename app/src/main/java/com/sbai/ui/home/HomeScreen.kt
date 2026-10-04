@@ -848,7 +848,7 @@ private fun HomeTrafficCard(status: com.sbai.service.SbCommandClient.DashboardSt
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.large,
-        color = colors.primaryContainer,
+        color = colors.surfaceContainer,
     ) {
         Row(
             modifier = Modifier

@@ -6,6 +6,7 @@ import android.content.Intent
 import android.net.VpnService
 import android.util.Log
 import androidx.core.content.ContextCompat
+import kotlinx.coroutines.runBlocking
 import com.sbai.data.RuleStore
 
 /**
@@ -148,7 +149,7 @@ class VpnControlReceiver : BroadcastReceiver() {
         val manager = SubscriptionManager(store, context)
         eligible.forEach { sub ->
             try {
-                val job = kotlinx.coroutines.runBlocking { manager.refresh(sub) }
+                val job = runBlocking { manager.refresh(sub) }
                 Log.i(TAG, "subscription ${sub.name}: ${if (job is SubscriptionManager.Result.Success) "ok (${job.nodeCount})" else "fail: ${(job as SubscriptionManager.Result.Failure).message}"}")
             } catch (e: Exception) {
                 Log.w(TAG, "subscription ${sub.name} failed", e)
