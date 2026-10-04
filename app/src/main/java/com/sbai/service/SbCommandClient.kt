@@ -107,6 +107,8 @@ object SbCommandClient : CommandClientHandler {
             addCommand(Libbox.CommandGroup)
             addCommand(Libbox.CommandLog)
             addCommand(Libbox.CommandConnections)
+            addCommand(Libbox.CommandOutbounds)  // lxbox: 节点明细回调
+            addCommand(Libbox.CommandDNS)       // lxbox: DNS 查询回调
             statusInterval = StatusIntervalNanos
         }
         val c = Libbox.newCommandClient(this, options)
