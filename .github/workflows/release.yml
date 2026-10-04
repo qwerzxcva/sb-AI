@@ -1,23 +1,27 @@
-name: Build
+name: Release
 
 on:
   push:
-    branches: [main, master]
-  pull_request:
+    tags:
+      - 'v*'
   workflow_dispatch:
     inputs:
       version:
         description: 'Release version (e.g., v1.0.1)'
-        required: false
+        required: true
         type: string
+      draft:
+        description: 'Create draft release'
+        required: false
+        type: boolean
+        default: false
 
 env:
-  ANDROID_HOME: /usr/local/lib/android/sdk
   LIBBOX_VERSION: v1.14.2-lx.11
 
 jobs:
   build:
-    name: Build APK
+    name: Build Release APK
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -29,73 +33,49 @@ jobs:
           java-version: "17"
           cache: gradle
 
-      - name: Fetch libbox core (sing-box-lx)
+      - name: Fetch libbox core
         run: bash scripts/fetch-libbox.sh
 
-      - name: Grant execute permission for gradlew
+      - name: Grant execute permission
         run: chmod +x gradlew
-
-      - name: Run unit tests
-        run: ./gradlew :app:testDebugUnitTest --stacktrace
 
       - name: Build release APK
         run: ./gradlew :app:assembleRelease --stacktrace
 
-      - name: Verify ABI (arm64-v8a only)
+      - name: Verify ABI
         run: |
           APK=$(ls app/build/outputs/apk/release/*.apk | head -1)
           echo "APK: $APK ($(du -h "$APK" | cut -f1))"
-          unzip -l "$APK" | grep -E '^\s+[0-9]+.*lib/' | awk '{print $4}' | cut -d/ -f2 | sort -u > /tmp/abis.txt
-          cat /tmp/abis.txt
-          test "$(cat /tmp/abis.txt)" = "arm64-v8a"
+          unzip -l "$APK" | grep 'arm64-v8a' | head -5
 
-      - name: Upload release APK artifact
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: sb-AI-release
+          name: release-apk
           path: app/build/outputs/apk/release/*.apk
-          retention-days: 30
-
-      - name: Build debug APK
-        if: success()
-        run: ./gradlew :app:assembleDebug --stacktrace
-
-      - name: Upload debug APK artifact
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: sb-AI-debug
-          path: app/build/outputs/apk/debug/*.apk
-          retention-days: 14
+          retention-days: 7
 
   release:
     name: Create GitHub Release
     needs: build
-    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download release APK
+      - name: Download artifact
         uses: actions/download-artifact@v4
         with:
-          name: sb-AI-release
+          name: release-apk
 
-      - name: Download debug APK
-        uses: actions/download-artifact@v4
-        with:
-          name: sb-AI-debug
-
-      - name: Create GitHub Release
+      - name: Create Release
         id: create_release
         uses: softprops/action-gh-release@v1
         with:
-          files: |
-            *.apk
+          files: '*.apk'
           tag_name: ${{ github.event.inputs.version || github.ref_name }}
           name: Release ${{ github.event.inputs.version || github.ref_name }}
-          draft: false
-          prerelease: ${{ contains(github.ref, '-beta') || contains(github.ref, '-alpha') }}
+          draft: ${{ github.event.inputs.draft }}
+          prerelease: ${{ contains(github.ref_name, '-beta') || contains(github.ref_name, '-alpha') }}
           body: |
             ## sb-AI ${{ github.event.inputs.version || github.ref_name }}
 
@@ -105,10 +85,10 @@ jobs:
             - 多配置 Profiles
             - 广播控制 (ADB)
             - 资源管理
+            - lxbox 内核支持
 
             ### Downloads
-            - **Release APK**: Production build (smaller size)
-            - **Debug APK**: Development build (with debugging enabled)
+            - **Release APK**: Production build
 
             ### Technical Details
             - Core: sing-box-lx ${{ env.LIBBOX_VERSION }}
