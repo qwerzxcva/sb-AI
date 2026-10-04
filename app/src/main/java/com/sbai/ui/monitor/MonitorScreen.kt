@@ -487,8 +487,9 @@ private fun AggregationCard(
 @Composable
 private fun StatusHeroCard(connected: Boolean, status: SbCommandClient.DashboardStatus) {
     val colors = MaterialTheme.colorScheme
-    val bg = if (connected) colors.primaryContainer else colors.surfaceContainerHigh
-    val fg = if (connected) colors.onPrimaryContainer else colors.onSurfaceVariant
+    // 与首页等其他页面保持一致：使用 surfaceContainer，避免 primaryContainer 造成视觉反差
+    val bg = colors.surfaceContainer
+    val fg = colors.onSurface
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.extraLarge,

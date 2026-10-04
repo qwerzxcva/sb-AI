@@ -157,6 +157,14 @@ fun HomeScreen() {
         }
     }
     val coreRunning = running || coreConnected
+    // 低频重试：每 8s 尝试重连，防止 :core 启动慢导致 UI 一直卡在「已停止」
+    LaunchedEffect(coreRunning) {
+        if (!coreRunning) return@LaunchedEffect
+        while (true) {
+            kotlinx.coroutines.delay(8_000L)
+            if (coreRunning) SbCommandClient.connectWithRetry(attempts = 3, delayMs = 500L)
+        }
+    }
 
     // 节点编辑器：整页（二级页面），不是弹窗
     editingNode?.let { node ->
