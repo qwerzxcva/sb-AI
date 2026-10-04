@@ -46,29 +46,30 @@
 
 ### Bug 修复 ✅
 1. **首页 VPN 点击不变化** — 新增 LaunchedEffect(coreRunning) 低频重试协程（每 8s 重连 CommandServer），确保 UI 状态最终同步
-2. **监控页颜色反差过大** — StatusHeroCard 统一使用 surfaceContainer，不再高饱和 primaryContainer
+2. **监控页颜色反差过大** — StatusHeroCard 统一使用 surfaceContainer，不再因连接状态跳色
 
 ### P0 功能实现 ✅
 3. **FakeIP 真实生效验证** — 已完整实现：DnsServerType.FAKEIP 生成 fakeip 段（默认 10.0.0.0/8）+ DNS 自动规则（query_type A/AAAA 兜底）+ 路由自动规则（fakeIP 段 → proxy），所有规则在 generateObject() 中生成并通过测试
-4. **节点健康检测（URLTest）** — loadBalance.urlTestInterval/urlTestCheckUrl 字段已有；sing-box config 已支持 urltest 类型组（generateObject 第 106/142 行）。**当前阻塞**：需实现"测速结果 → 禁用不可用节点"的反馈机制
+4. **节点健康检测（URLTest）** — loadBalance.urlTestInterval/urlTestCheckUrl 字段已有；sing-box config 已支持 urltest 类型组。当前阻塞：需实现"测速结果 → 禁用不可用节点"的反馈机制
 5. **订阅自动更新** — 已实现：WorkManager 周期性 Worker（5h 周期/15min flex）+ SubscriptionUpdateReceiver（每轮最多 10 个订阅，按冷却期过滤）+ SubUpdateInitializer（AndroidX Startup 注册）
 
 ### P1 功能实现 ✅
-6. **节点列表过滤器** — 已实现：名称搜索框 + 无延迟过滤 + 名称/延迟排序（SegmentedButtonRow + SingleChoiceSegmentedButtonRow）+ 协议/地区关键字过滤（Subscription.filterProtocol/filterRegion）
-7. **L7Filter 协议/地区过滤** — SubscriptionManager.refresh() 已集成 filterProtocol + filterRegion 过滤逻辑
+6. **节点列表过滤器** — 已实现：名称搜索框 + 无延迟过滤 + 名称/延迟排序（SingleChoiceSegmentedButtonRow）
+7. **L7Filter 协议/地区关键字过滤** — SubscriptionManager.refresh() 已集成 filterProtocol + filterRegion 过滤逻辑
+
+### P1 功能实现 ✅
+8. **拆分隧道（Split Tunneling）** — 已实现：SplitTunnel 模型（enabled/domains）+ SingBoxConfigGenerator 自动插入直连规则 + SettingsScreen UI（多行域名编辑）
 
 ### 🚫 待做
 - [ ] JSON 配置编辑器 + Schema 校验（Throne）
 - [ ] FakeIP 测速后死节点禁用（连接 URLTest 结果 → 节点禁用）
-- [ ] 拆分隧道（Split Tunneling）
-- [ ] 多配置 Profiles
-- [ ] 广播控制（ADB 远程控制）
-- [ ] GitHub push（网络不稳定，需重试）
+- [ ] 多配置 Profiles（Throne）
+- [ ] 广播控制（ADB 远程控制，AsteriskBOX）
 
-### 📦 编译状态
-- `./gradlew assembleDebug` BUILD SUCCESSFUL
-- `./gradlew testDebugUnitTest` BUILD SUCCESSFUL
-- 本地 commit 已就绪，push 等待网络恢复
+### 📦 编译/推送状态
+- `./gradlew assembleDebug` BUILD SUCCESSFUL ✅
+- `./gradlew testDebugUnitTest` BUILD SUCCESSFUL ✅
+- 最新 commit `b48542d` 已推送到 GitHub ✅
 
 > 仅 ARMv8，Kotlin/Compose，不集成 Root/Magisk。
 
