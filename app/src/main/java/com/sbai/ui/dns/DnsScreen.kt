@@ -815,7 +815,7 @@ private fun DnsRuleEditorDialog(
                     }
                 }
 
-                // 动作（AsteriskBOX 基准）
+                // 动作（sb-AI 基准）
                 Text("动作", style = MaterialTheme.typography.labelLarge)
                 SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
                     listOf("route" to "路由", "route-options" to "改写应答", "reject" to "拒绝", "pre-defined" to "预定义")

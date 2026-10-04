@@ -196,7 +196,7 @@ object SingBoxConfigGenerator {
                             }
                         })
                     }
-                    // AsteriskBOX 资源注入：China IP 列表
+                    // 资源注入：China IP 列表
                     state.settings.resources
                         .filter { it.enabled && it.resType == com.sbai.data.ResourceType.CHINA_IP && it.content.isNotEmpty() }
                         .forEach { res ->
@@ -404,7 +404,7 @@ object SingBoxConfigGenerator {
                     put("outbound", entryTag)
                 })
             }
-        // 拆分隧道：按域名强制走直连（LxBox split tunneling 基准）
+        // 拆分隧道：按域名强制走直连
         if (state.settings.splitTunnel.enabled && state.settings.splitTunnel.domains.isNotEmpty()) {
             rules.add(0, buildJsonObject {
                 putJsonArray("domain_keyword") {
@@ -413,7 +413,7 @@ object SingBoxConfigGenerator {
                 put("outbound", "direct")
             })
         }
-        // AsteriskBOX 资源注入：China IP 列表 → geoip 规则集（直连）
+        // 资源注入：China IP 列表 → geoip 规则集（直连）
         val chinaIpResource = state.settings.resources.firstOrNull { r -> r.enabled && r.resType == com.sbai.data.ResourceType.CHINA_IP && r.content.isNotEmpty() }
         if (chinaIpResource != null) {
             // 规则已在 rule_set 块中注入（inline format），此处无需重复；保留标记以便未来扩展
@@ -633,7 +633,7 @@ object SingBoxConfigGenerator {
                 r.clientSubnet?.takeIf { it.isNotBlank() }?.let { put("client_subnet", it) }
                 if (r.timeout.isNotBlank()) put("timeout", r.timeout)
 
-                // 动作（AsteriskBOX 基准）
+                // 动作
                 when (r.action) {
                     "reject" -> {
                         put("action", "reject")

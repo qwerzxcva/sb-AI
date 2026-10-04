@@ -10,7 +10,7 @@ import kotlinx.coroutines.withContext
 import java.util.concurrent.TimeUnit
 
 /**
- * 周期性订阅更新 Worker（参考 LxBox PeriodicSyncWorker）。
+ * 周期性订阅更新 Worker（参考 sb-AI PeriodicSyncWorker）。
  *
  * 由 AppStartup 注册为 PeriodicWorkRequest（5h 周期，最小 15min 偏移），
  * 每次触发时向 SubscriptionUpdateReceiver 发广播，由 receiver 执行实际刷新。

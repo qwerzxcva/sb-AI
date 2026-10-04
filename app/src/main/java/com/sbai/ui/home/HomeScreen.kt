@@ -137,7 +137,7 @@ fun HomeScreen() {
         }
     }
 
-    // 节点过滤状态（LxBox NodeListFilter 基准）
+    // 节点过滤状态（sb-AI NodeListFilter 基准）
     var nodeFilterQuery by remember { mutableStateOf("") }
     var nodeFilterProtocol by remember { mutableStateOf("") }
     var nodeFilterRegion by remember { mutableStateOf("") }
@@ -414,7 +414,7 @@ fun HomeScreen() {
                                 }
                             })
                         }
-                        // 选点模式（LxBox §208）
+                        // 选点模式（sb-AI §208）
                         item {
                             Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
                                 Text("选点模式", style = MaterialTheme.typography.labelLarge)
@@ -553,7 +553,7 @@ fun HomeScreen() {
             // ---- 节点 ----
             item {
                 SbGroup(title = "节点（${state.proxyNodes.size}）") {
-                    // LxBox NodeListFilter：过滤栏
+                    // sb-AI NodeListFilter：过滤栏
                     item {
                         Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
                             OutlinedTextField(
@@ -1084,7 +1084,7 @@ private fun SubscriptionEditorDialog(
                     label = { Text("排除关键字（空格分隔，可选）") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
                 )
 
-                // ---- 节点后处理（Throne SubscriptionOptions 基准） ----
+                // ---- 节点后处理（SubscriptionOptions 基准） ----
                 Text("节点后处理", style = MaterialTheme.typography.labelLarge)
                 SubOptionSwitch("去重（同名节点保留第一个）", removeDuplicates) { removeDuplicates = it }
                 SubOptionSwitch("去除不安全节点（明文/无加密）", removeInsecure) { removeInsecure = it }

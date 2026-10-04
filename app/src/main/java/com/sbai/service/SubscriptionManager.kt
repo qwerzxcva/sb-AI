@@ -20,7 +20,7 @@ import java.net.URL
 /**
  * 订阅源管理：拉取订阅内容 → 解析分享链接 → 按关键字过滤 → 替换该订阅名下节点。
  *
- * 增强（参考 Throne/AsteriskBOX/NekoBoxPlus 的订阅处理）：
+ * 增强：
  *  - 自定义 User-Agent（机场常按 UA 返回不同格式）
  *  - 仅允许 https
  *  - 响应体 4MB 上限（防止 gzip 炸弹/超大订阅撑爆内存）
@@ -49,7 +49,7 @@ class SubscriptionManager(
             )
             val body = fetched.body
 
-            // 多格式解析：分享链接 / Clash YAML / sing-box-xray JSON（参考 LxBox 自动识别）
+            // 多格式解析：分享链接 / Clash YAML / sing-box JSON
             val parsedResult = SubscriptionFormat.parse(body)
             if (parsedResult == null || parsedResult.nodes.isEmpty()) {
                 // 给出可诊断的错误：说明拿到了什么格式
@@ -79,7 +79,7 @@ class SubscriptionManager(
                 }
             }
 
-            // LxBox L7Filter：协议 / 地区关键字过滤（空 = 不过滤）
+            // L7Filter：协议 / 地区关键字过滤（空 = 不过滤）
             val filterProto = subscription.filterProtocol.trim()
             val filterRegion = subscription.filterRegion.trim()
             if (filterProto.isNotEmpty()) {
@@ -101,7 +101,7 @@ class SubscriptionManager(
                 }
             }
 
-            // Throne SubscriptionOptions 基准：后处理
+            // 节点后处理选项
             if (subscription.removeInsecure) {
                 parsed = parsed.filter { !isInsecureNode(it.outboundJson) }
             }
@@ -315,7 +315,7 @@ class SubscriptionManager(
                 }
                 // 机场常用：声明客户端类型以拿到通用订阅格式
                 conn.setRequestProperty("Accept", "*/*")
-                // HWID + device-meta（LxBox SubscriptionIdentity 基准）
+                // HWID + device-meta 头部
                 if (settings.subscriptionSendHwid) {
                     settings.subscriptionHwid.takeIf { it.isNotBlank() }
                         ?.let { conn.setRequestProperty("x-hwid", it) }

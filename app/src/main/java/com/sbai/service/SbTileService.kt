@@ -6,7 +6,7 @@ import android.service.quicksettings.Tile
 import android.service.quicksettings.TileService
 import androidx.core.content.ContextCompat
 
-/** 通知栏 QS 磁贴：一键启停（三大代理软件交集功能，以 LxBox 为准） */
+/** 通知栏 QS 磁贴：一键启停 */
 class SbTileService : TileService() {
 
     override fun onStartListening() {

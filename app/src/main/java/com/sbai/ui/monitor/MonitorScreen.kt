@@ -116,7 +116,7 @@ fun MonitorScreen() {
                     Spacer(Modifier.height(16.dp))
                 }
 
-                // LxBox 统计页核心：按路由规则聚合流量
+                // sb-AI 统计页核心：按路由规则聚合流量
                 item {
                     TrafficByRuleCard(connections = connections)
                     Spacer(Modifier.height(16.dp))
@@ -154,7 +154,7 @@ fun MonitorScreen() {
                 item { Spacer(Modifier.height(BottomBarClearance)) }
             }
         } else if (tab == 1) {
-            // ---- 连接列表（三大代理交集功能，LxBox connections_screen 基准）----
+            // ---- 连接列表（三大代理交集功能，sb-AI connections_screen 基准）----
             val filtered = remember(connections, query) {
                 if (query.isBlank()) connections
                 else connections.filter {
@@ -351,7 +351,7 @@ internal fun formatSpeed(bytesPerSec: Long): String =
     if (bytesPerSec <= 0) "0 B/s" else formatBytes(bytesPerSec) + "/s"
 
 // ---------------------------------------------------------------------------
-// LxBox 统计页：按规则 / 按出口聚合流量
+// sb-AI 统计页：按规则 / 按出口聚合流量
 // ---------------------------------------------------------------------------
 
 private data class TrafficAgg(

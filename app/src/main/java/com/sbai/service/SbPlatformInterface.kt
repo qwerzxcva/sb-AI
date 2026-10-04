@@ -49,7 +49,6 @@ import io.nekohasekai.libbox.RoutePrefix as LibboxRoutePrefix
 
 /**
  * Android 平台接口实现（供 libbox Go 侧回调）。
- * 实现模式参考 AsteriskBOX（GPL-3.0）engine/vpn/AndroidLibboxPlatformInterface.kt。
  */
 class SbPlatformInterface(
     private val service: VpnService,

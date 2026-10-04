@@ -5,7 +5,7 @@ import com.sbai.data.RouteRule
 /**
  * 订阅内容格式检测与统一解析。
  *
- * 支持（对齐 LxBox 的格式识别 + 用户要求的 Clash YAML）：
+ * 支持的格式：
  *  1. 分享链接（vless/vmess/trojan/ss/hysteria2/…，可整体 base64）
  *  2. Clash YAML（proxies / proxy-groups / rules）
  *  3. sing-box / xray 完整 JSON 配置（提取 outbounds + route.rules）

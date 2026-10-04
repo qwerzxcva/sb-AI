@@ -15,7 +15,7 @@ import org.yaml.snakeyaml.Yaml
  *
  * 很多机场只提供 Clash 格式订阅。本解析器把 Clash 的
  * `proxies` / `proxy-groups` / `rules` 转换为 sb-AI 的节点、负载均衡组与路由规则，
- * 语义对齐 LxBox「自动识别配置里的节点、规则」的行为。
+ * 语义对齐「自动识别配置里的节点、规则」的行为。
  *
  * 支持的 Clash 协议：ss / vmess / vless / trojan / hysteria / hysteria2 /
  * http / socks5 / wireguard / tuic。

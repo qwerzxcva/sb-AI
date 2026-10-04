@@ -76,10 +76,10 @@ import com.sbai.ui.theme.LocalSbStyleTokens
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 
-/** LxBox kKnownNetworks：tcp / udp / icmp */
+/** sb-AI kKnownNetworks：tcp / udp / icmp */
 private val NETWORK_OPTIONS = listOf("tcp", "udp", "icmp")
 
-/** LxBox kKnownProtocols：L7 嗅探签名全集 */
+/** sb-AI kKnownProtocols：L7 嗅探签名全集 */
 private val PROTOCOL_OPTIONS = listOf(
     "bittorrent", "dns", "dtls", "http", "ntp", "quic", "rdp", "ssh", "stun", "tls",
 )
@@ -335,7 +335,7 @@ private fun ruleSummary(rule: RouteRule): String = buildList {
 }.joinToString(" ").ifBlank { "（空规则 = 匹配全部）" }
 
 // ---------------------------------------------------------------------------
-// 路由规则编辑器（AsteriskBOX 全量字段，按类别折叠）
+// 路由规则编辑器（sb-AI 全量字段，按类别折叠）
 // ---------------------------------------------------------------------------
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
@@ -749,7 +749,7 @@ private fun EditorSection(title: String, content: @Composable () -> Unit) {
     }
 }
 
-/** 编辑/粘贴 sing-box route rule JSON 片段（LxBox 风格），解析后回填表单 */
+/** 编辑/粘贴 sing-box route rule JSON 片段（sb-AI 风格），解析后回填表单 */
 @Composable
 private fun JsonPasteDialog(
     onDismiss: () -> Unit,

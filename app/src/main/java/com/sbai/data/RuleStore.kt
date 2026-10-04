@@ -256,7 +256,7 @@ class RuleStore private constructor(context: Context) {
     /** 备份导入：整体替换应用状态 */
     fun replaceAll(state: AppState) = persist(state)
 
-    // ---- Config Profiles（Throne 多配置基准） ----
+    // ---- Config Profiles（多配置快照） ----
     fun createProfile(name: String, state: AppState): ConfigProfile {
         val snapshot = json.encodeToString(AppState.serializer(), state)
         val profile = ConfigProfile(name = name, snapshot = snapshot)

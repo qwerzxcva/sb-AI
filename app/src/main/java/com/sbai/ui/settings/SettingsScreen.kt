@@ -239,7 +239,7 @@ fun SettingsScreen() {
                             }
                         }
                     }
-                    // TUN 地址段自定义（LxBox tun_address / tun_address6）
+                    // TUN 地址段自定义（sb-AI tun_address / tun_address6）
                     item {
                         Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
                             Text("TUN 地址段", style = MaterialTheme.typography.labelLarge)
@@ -332,7 +332,7 @@ fun SettingsScreen() {
                 SbSpacer()
             }
 
-            // ---- 拆分隧道（LxBox Split Tunneling 基准） ----
+            // ---- 拆分隧道（sb-AI Split Tunneling 基准） ----
             item {
                 SbGroup(title = "拆分隧道") {
                     item {
@@ -369,7 +369,7 @@ fun SettingsScreen() {
                 SbSpacer()
             }
 
-            // ---- AsteriskBOX 资源管理 ----
+            // ---- sb-AI 资源管理 ----
             item {
                 SbGroup(title = "资源管理（${settings.resources.size}）") {
                     item {
@@ -541,7 +541,7 @@ fun SettingsScreen() {
                 SbSpacer()
             }
 
-            // ---- 多配置 Profiles（Throne 基准） ----
+            // ---- 多配置 Profiles（多配置基准） ----
             item {
                 SbGroup(title = "配置快照（${state.profiles.size}）") {
                     item {
@@ -620,7 +620,7 @@ fun SettingsScreen() {
                 SbSpacer()
             }
 
-            // ---- 订阅身份（LxBox SubscriptionIdentity 基准） ----
+            // ---- 订阅身份（sb-AI SubscriptionIdentity 基准） ----
             item {
                 SbGroup(title = "订阅身份") {
                     item {
@@ -741,7 +741,7 @@ fun SettingsScreen() {
                     item {
                         SbItem(
                             title = "sb-AI",
-                            subtitle = "基于 sing-box（LxBox 同款 sing-box-lx 内核，含 AWG2/XHTTP/balancer 扩展）\nUI 风格参考 Kototoro；功能参考 LxBox / AsteriskBOX / ThroneForAndroid\n不集成 Root / Magisk 功能",
+                            subtitle = "基于 sing-box 内核，含 AWG2/XHTTP/balancer 扩展\nUI 风格参考 Kototoro；功能参考多个开源项目\n不集成 Root / Magisk 功能",
                             icon = Icons.Filled.Info,
                         )
                     }

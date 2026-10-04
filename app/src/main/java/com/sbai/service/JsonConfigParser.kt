@@ -11,7 +11,7 @@ import kotlinx.serialization.json.jsonPrimitive
 /**
  * 完整 JSON 配置解析（sing-box / xray 格式）。
  *
- * 对齐 LxBox 的 `kFallbackDocumentSources`：
+ * 支持多来源 fallback：
  *  - sing-box 完整配置（含 `outbounds[]`）→ 提取每个 outbound 为节点
  *  - sing-box outbounds 数组（`[...]`）→ 每个元素为节点
  *  - xray 完整配置 → 同上（`outbounds[]`）

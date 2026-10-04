@@ -15,7 +15,6 @@ import java.util.Locale
 
 /**
  * libbox 运行时：负责 Libbox.setup 初始化与 CommandServer 生命周期。
- * 实现模式参考 AsteriskBOX（GPL-3.0）engine/vpn/AndroidLibboxRuntime.kt。
  */
 object LibboxRuntime {
 

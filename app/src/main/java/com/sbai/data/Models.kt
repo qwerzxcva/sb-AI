@@ -62,12 +62,12 @@ data class RouteRule(
     val ports: List<Int> = emptyList(),               // 目标端口
     val portRanges: List<String> = emptyList(),       // 目标端口段 "8000:9000"
 
-    // ---- AsteriskBOX 全量字段（源侧 / 进程 / 应用 / 网络环境） ----
+    // ---- 全量字段（源侧 / 进程 / 应用 / 网络环境） ----
     val sourceIpCidrs: List<String> = emptyList(),    // 源 IP / CIDR
     val sourcePorts: List<Int> = emptyList(),         // 源端口
     val sourcePortRanges: List<String> = emptyList(), // 源端口段
     val packageNames: List<String> = emptyList(),     // 应用包名
-    val packageNameRegexes: List<String> = emptyList(), // 应用包名正则（lxbox 兼容）
+    val packageNameRegexes: List<String> = emptyList(), // 应用包名正则（兼容旧格式）
     val processNames: List<String> = emptyList(),     // 进程名
     val processPaths: List<String> = emptyList(),     // 进程路径
     val processPathRegexes: List<String> = emptyList(), // 进程路径正则
@@ -168,7 +168,7 @@ data class HostsEntry(
     val ips: List<String> = emptyList(),
 )
 
-/** 配置 Profile（Throne 多配置基准） */
+/** 配置 Profile（多配置快照） */
 @Serializable
 data class ConfigProfile(
     val id: String = UUID.randomUUID().toString(),
@@ -220,7 +220,7 @@ data class DnsRule(
     val rewriteTtl: Int? = null,
     /** 本条规则级别的 ECS 覆盖 */
     val clientSubnet: String? = null,
-    /** 规则动作（AsteriskBOX 基准）：route=路由到 server / route-options=改写应答 / reject=拒绝 / pre-defined=预定义 */
+    /** 规则动作：route=路由到 server / route-options=改写应答 / reject=拒绝 / pre-defined=预定义 */
     val action: String = "route",
     /** reject 方式的 rcode（route-options / reject 时用）：success / refused / formerror / notimp / nxdomain */
     val rcode: String = "",
@@ -235,7 +235,7 @@ data class DnsRule(
 )
 
 // ---------------------------------------------------------------------------
-// Load balance（参考 LxBox 的负载均衡 + “自动”模式）
+// Load balance（延迟优选 + "自动"模式）
 // ---------------------------------------------------------------------------
 
 @Serializable
@@ -250,7 +250,7 @@ enum class LoadBalanceMode(val displayName: String) {
     MANUAL("手动切换"),
 }
 
-/** urltest 选点模式（LxBox UrltestMode） */
+/** urltest 选点模式（sb-AI UrltestMode） */
 @Serializable
 enum class UrltestMode(val wire: String, val displayName: String) {
     /** 上游行为：始终选 delay 最低的一个节点 */
@@ -285,10 +285,10 @@ data class LoadBalanceConfig(
     val idleTimeout: String = "30m",
     val interruptExistConnections: Boolean = false,
 
-    /** urltest 选点模式（LxBox §208） */
+    /** urltest 选点模式（sb-AI §208） */
     val urltestMode: UrltestMode = UrltestMode.LEAST_TEST,
 
-    /** 仅使用 N 个节点参与负载均衡（LxBox balancer.pool）；round_robin 时生效 */
+    /** 仅使用 N 个节点参与负载均衡（balancer.pool）；round_robin 时生效 */
     val pool: Int = 3,
     /** balancer.pool_tolerance：0 = 保持池内节点存活；>0 = 按 delay 选最优 N 个 */
     val poolTolerance: Int = 0,
@@ -342,7 +342,7 @@ data class Subscription(
     val trafficDownload: Long = 0L,
     val trafficTotal: Long = 0L,
     val trafficExpire: Long = 0L,
-    // ---- Throne SubscriptionOptions 基准：节点后处理 ----
+    // ---- 节点后处理选项 ----
     /** 去重（按节点名/tag） */
     val removeDuplicates: Boolean = true,
     /** 去除不安全节点（如无加密的 ss / 无 tls 的 trojan） */
@@ -359,16 +359,16 @@ data class Subscription(
     val detour: String = "direct",
     /** 跳过 TLS 证书校验（机场 CDN 域名证书不匹配时用；不安全，仅该订阅生效） */
     val skipCertVerify: Boolean = false,
-    /** LxBox L7Filter：协议关键字过滤（空 = 不过滤；匹配 outboundJson 中的 type 字段） */
+    /** L7Filter：协议关键字过滤（空 = 不过滤；匹配 outboundJson 中的 type 字段） */
     val filterProtocol: String = "",
-    /** LxBox L7Filter：地区关键字过滤（空 = 不过滤；匹配节点名称或 outbound server 字段） */
+    /** L7Filter：地区关键字过滤（空 = 不过滤；匹配节点名称或 outbound server 字段） */
     val filterRegion: String = "",
 )
 
 @Serializable
 enum class LogLevel(val wireName: String) { TRACE("trace"), DEBUG("debug"), INFO("info"), WARN("warn"), ERROR("error"), FATAL("fatal"), PANIC("panic") }
 
-/** 分应用代理（LxBox 基准：include/exclude 名单） */
+/** 分应用代理（include/exclude 名单） */
 @Serializable
 enum class PerAppProxyMode { OFF, INCLUDE, EXCLUDE }
 
@@ -378,7 +378,7 @@ data class PerAppProxy(
     val packages: List<String> = emptyList(),
 )
 
-/** 拆分隧道（Split Tunneling，LxBox split tunnel 基准）：按域名走直连，其余走代理 */
+/** 拆分隧道（Split Tunneling）：按域名走直连，其余走代理 */
 @Serializable
 data class SplitTunnel(
     val enabled: Boolean = false,
@@ -420,7 +420,7 @@ data class ConfigOverride(
 )
 
 /**
- * 资源条目（AsteriskBOX 基准）：可配置 URL 自动更新的资源
+ * 资源条目：可配置 URL 自动更新的资源（China IP 列表、GeoIP、规则集等）
  * （China IP 列表、GeoIP 规则集、Hosts 等）。
  * 通过 VpnControlReceiver RESOURCE_UPDATE 触发批量更新。
  */
@@ -473,12 +473,12 @@ data class AppSettings(
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
     /** 外观：Material You 动态取色（Android 12+） */
     val dynamicColor: Boolean = true,
-    /** TUN IPv4 地址段（LxBox tun_address） */
+    /** TUN IPv4 地址段 */
     val tunAddress: String = "172.18.0.1/30",
-    /** TUN IPv6 地址段（LxBox tun_address6） */
+    /** TUN IPv6 地址段 */
     val tunAddress6: String = "fdfe:dcba:9876::1/126",
 
-    // ---- 订阅身份（LxBox SubscriptionIdentity 基准：UA + HWID + device-meta） ----
+    // ---- 订阅身份（UA + HWID + device-meta） ----
     /** 全局订阅 User-Agent override；空 = 品牌 UA `sb-AI/<ver>` */
     val subscriptionUserAgent: String = "",
     /** 是否发送 x-hwid + device-meta 头（Remnawave 设备限制面板用；默认关） */
@@ -494,7 +494,7 @@ data class AppSettings(
     /** TUN 网络栈：system / gvisor / mixed（sing-box stack） */
     val tunStack: String = "mixed",
 
-    // ---- AsteriskBOX 资源管理：自定义 URL 列表（IP 列表、规则集等） ----
+    // ---- 资源管理：自定义 URL 列表（IP 列表、规则集等） ----
     /** 资源列表：可配置 URL 自动更新（如 China IP 列表、GeoIP 规则集等） */
     val resources: List<Resource> = emptyList(),
 )
@@ -517,7 +517,7 @@ data class AppState(
     /** 静态 hosts 映射（hosts 类型 DNS 服务器使用，单独编辑，不在 DNS 服务器创建里） */
     val customHosts: List<HostsEntry> = emptyList(),
     val settings: AppSettings = AppSettings(),
-    /** 配置快照列表（Throne 多配置基准） */
+    /** 配置快照列表（多配置基准） */
     val profiles: List<ConfigProfile> = emptyList(),
     /** 当前激活的 profile id（空 = 无快照模式） */
     val activeProfileId: String = "",

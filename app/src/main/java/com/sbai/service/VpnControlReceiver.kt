@@ -9,7 +9,7 @@ import androidx.core.content.ContextCompat
 import com.sbai.data.RuleStore
 
 /**
- * ADB/广播控制入口（参考 AsteriskBOX 广播控制）。
+ * ADB/广播控制入口（参考 sb-AI 广播控制）。
  *
  * 支持的 action：
  *  - com.sbai.action.START_VPN   — 启动 VPN（需已授权）

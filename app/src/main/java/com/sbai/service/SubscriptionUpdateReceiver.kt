@@ -14,7 +14,7 @@ import kotlinx.coroutines.runBlocking
  * 每次触发时遍历 RuleStore 中所有 enabled + autoUpdate 的订阅，
  * 按 updateIntervalHours 冷却期过滤后逐个刷新。
  *
- * 与 LxBox 的 PeriodicSyncWorker 对标：
+ * 与 sb-AI 的 PeriodicSyncWorker 对标：
  *  - 最短冷却 15 min，防止频繁请求触发机场限流；
  *  - 每轮最多 10 个，避免一次性打爆网络；
  *  - 失败只写 lastError，不影响其他订阅。

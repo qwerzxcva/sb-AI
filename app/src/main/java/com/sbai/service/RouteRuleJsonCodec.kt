@@ -18,7 +18,7 @@ import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 
 /**
- * 路由规则 JSON 片段编解码（LxBox 风格：可直接粘贴 route.rules 里的单个规则对象）。
+ * 路由规则 JSON 片段编解码：可直接粘贴 route.rules 里的单个规则对象。
  *
  * 支持解析：domain / domain_suffix / domain_keyword / domain_regex / ip_cidr / rule_set /
  * network / protocol / port / port_range / invert / outbound / type=logical(mode,rules)。
@@ -36,7 +36,7 @@ object RouteRuleJsonCodec {
         data class Failure(val message: String) : ParseResult
     }
 
-    /** 完整解析结果：规则 + 附带的规则集定义（lxbox 格式的 route.rule_set） */
+    /** 完整解析结果：规则 + 附带的规则集定义 */
     data class FullResult(
         val rule: RouteRule,
         val ruleSets: List<kotlinx.serialization.json.JsonObject> = emptyList(),
@@ -49,7 +49,7 @@ object RouteRuleJsonCodec {
         var obj = runCatching { json.parseToJsonElement(trimmed).jsonObject }
             .getOrElse { return ParseResult.Failure("不是合法的 JSON 对象：${it.message}") }
 
-        // lxbox / 完整配置格式：{"route":{"rule_set":[...],"rules":[...]}} 剥掉 route 包裹
+        // 完整配置格式：{"route":{"rule_set":[...],"rules":[...]}} 剥掉 route 包裹
         if (obj.containsKey("route")) {
             obj = runCatching { obj["route"]!!.jsonObject }.getOrElse { obj }
         }
@@ -120,7 +120,7 @@ object RouteRuleJsonCodec {
                     sourcePorts = ints("source_port"),
                     sourcePortRanges = strings("source_port_range"),
                     packageNames = strings("package_name"),
-                    // lxbox 的 package_name_regex（正则匹配包名）
+                    // 包名正则匹配（兼容旧格式）
                     packageNameRegexes = strings("package_name_regex"),
                     processNames = strings("process_name"),
                     processPaths = strings("process_path"),
