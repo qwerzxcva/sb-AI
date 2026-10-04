@@ -64,21 +64,21 @@
 ## 📦 编译/推送状态
 - `./gradlew assembleDebug` BUILD SUCCESSFUL ✅
 - `./gradlew testDebugUnitTest` BUILD SUCCESSFUL ✅
-- 最新 commit：`3fba0ed docs: 更新进度至第16段（第三方引用清理完成）` ✅
+- 最新 commit：`c529022 fix: 修复runBlocking死锁隐患 + 监控页颜色统一` ✅
 - 代码总行数：~11,000 行 Kotlin
 
 ## Git log（最近 10 条）
 ```
+c529022 fix: 修复runBlocking死锁隐患 + 监控页颜色统一
+ab86943 docs: 更新进度至第17段（URLTest功能完善 + 第三方引用清理完成）
+fb00876 feat: URLTest 功能完善 + 节点测速结果显示
 3fba0ed docs: 更新进度至第16段（第三方引用清理完成）
 b04421c refactor: 全面清理第三方项目引用（LxBox/Throne/AsteriskBOX/NekoBox）
 1cd518b feat: 节点 urltest 测速结果展示 + 第 10 轮端到端集成
 7dcbafd feat: AsteriskBOX 资源管理 + SbItemWithBadge + 进度文档
 04a9a79 feat: JSON 校验 + 最终清理 + 进度文档更新
 4ef2dfd feat: 多配置 Profiles + ADB 广播控制
-b48542d feat: 拆分隧道（Split Tunneling）+ 配置覆盖预览修复
-62222c6 feat: 订阅自动更新 + 节点过滤器 + L7Filter + 监控页颜色修复
-2db0ca7 fix: 修复首页VPN状态不更新bug + 监控页颜色反差问题
-30a0420 fix: 订阅导入 SSL 容错 + 启动 checkConfig 超时保护
+33d39f5 docs: 更新进度（第14段）
 ```
 
 ## GitHub Release

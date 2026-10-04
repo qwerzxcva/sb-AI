@@ -80,9 +80,11 @@ fun MonitorScreen() {
                 ),
         )
 
+        // 全白色背景（用户要求）
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .background(MaterialTheme.colorScheme.surface)
                 .padding(horizontal = tokens.screenHorizontalPadding),
         ) {
             Spacer(Modifier.height(16.dp))

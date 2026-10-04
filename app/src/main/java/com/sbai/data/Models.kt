@@ -62,17 +62,18 @@ data class RouteRule(
     val ports: List<Int> = emptyList(),               // 目标端口
     val portRanges: List<String> = emptyList(),       // 目标端口段 "8000:9000"
 
-    // ---- 全量字段（源侧 / 进程 / 应用 / 网络环境） ----
+    // ---- 全量字段（源侧 / 进程 / 应用 / 网络环境）----
+    // 注意：以下字段需要 root 权限才能在 Android 上生效，UI 中默认隐藏
     val sourceIpCidrs: List<String> = emptyList(),    // 源 IP / CIDR
     val sourcePorts: List<Int> = emptyList(),         // 源端口
     val sourcePortRanges: List<String> = emptyList(), // 源端口段
-    val packageNames: List<String> = emptyList(),     // 应用包名
+    val packageNames: List<String> = emptyList(),     // 应用包名 (需 root)
     val packageNameRegexes: List<String> = emptyList(), // 应用包名正则（兼容旧格式）
-    val processNames: List<String> = emptyList(),     // 进程名
-    val processPaths: List<String> = emptyList(),     // 进程路径
+    val processNames: List<String> = emptyList(),     // 进程名 (需 root)
+    val processPaths: List<String> = emptyList(),     // 进程路径 (需 root)
     val processPathRegexes: List<String> = emptyList(), // 进程路径正则
-    val users: List<String> = emptyList(),            // 用户名
-    val userIds: List<Int> = emptyList(),             // 用户 ID
+    val users: List<String> = emptyList(),            // 用户名 (需 root)
+    val userIds: List<Int> = emptyList(),             // 用户 ID (需 root)
     val networkTypes: List<String> = emptyList(),     // wifi / cellular / ethernet
     val wifiSsids: List<String> = emptyList(),        // WiFi SSID
     val wifiBssids: List<String> = emptyList(),       // WiFi BSSID

@@ -131,11 +131,15 @@ fun HomeScreen() {
     val vpnPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult(),
     ) { result ->
+        android.util.Log.i("SbAI_VPN", "vpnPermissionLauncher callback: resultCode=${result.resultCode}")
         if (result.resultCode == Activity.RESULT_OK) {
+            android.util.Log.i("SbAI_VPN", "VPN permission granted, starting service")
             startVpn(context)
             scope.launch(kotlinx.coroutines.Dispatchers.IO) {
                 SbCommandClient.connectWithRetry()
             }
+        } else {
+            android.util.Log.w("SbAI_VPN", "VPN permission denied or cancelled")
         }
     }
 
@@ -240,13 +244,22 @@ fun HomeScreen() {
                     // 大号启动按钮
                     Surface(
                         onClick = {
+                            android.util.Log.i("SbAI_VPN", "VPN button clicked, coreRunning=$coreRunning, status=$status")
                             when {
-                                coreRunning -> stopVpn(context)
+                                coreRunning -> {
+                                    android.util.Log.i("SbAI_VPN", "Stopping VPN")
+                                    stopVpn(context)
+                                }
                                 status is SbAiVpnService.ServiceStatus.Starting ||
                                     status is SbAiVpnService.ServiceStatus.Stopping -> Unit
                                 else -> {
                                     val intent = VpnService.prepare(context)
-                                    if (intent != null) vpnPermissionLauncher.launch(intent) else {
+                                    android.util.Log.i("SbAI_VPN", "VpnService.prepare returned: ${if (intent == null) "null (already authorized)" else "non-null (need permission)"}")
+                                    if (intent != null) {
+                                        android.util.Log.i("SbAI_VPN", "Launching permission dialog")
+                                        vpnPermissionLauncher.launch(intent)
+                                    } else {
+                                        android.util.Log.i("SbAI_VPN", "Starting VPN directly (already authorized)")
                                         startVpn(context)
                                         // 启动后轮询重连 CommandClient，让 UI 状态跟上 :core 进程
                                         scope.launch(kotlinx.coroutines.Dispatchers.IO) {
@@ -948,8 +961,10 @@ private fun clipboardText(context: Context): String? = runCatching {
 }.getOrNull()
 
 private fun startVpn(context: Context) {
+    android.util.Log.i("SbAI_VPN", "startVpn called")
     val intent = Intent(context, SbAiVpnService::class.java).setAction(SbAiVpnService.ACTION_START)
     ContextCompat.startForegroundService(context, intent)
+    android.util.Log.i("SbAI_VPN", "startVpn completed - service starting")
 }
 
 private fun stopVpn(context: Context) {
