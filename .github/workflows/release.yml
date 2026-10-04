@@ -35,6 +35,15 @@ jobs:
 
       - name: Fetch libbox core
         run: bash scripts/fetch-libbox.sh
+        continue-on-error: true
+
+      - name: Verify libbox.aar exists
+        run: |
+          if [ ! -f app/libs/libbox.aar ]; then
+            echo "❌ libbox.aar not found after fetch script"
+            exit 1
+          fi
+          echo "✓ libbox.aar found ($(du -h app/libs/libbox.aar | cut -f1))"
 
       - name: Grant execute permission
         run: chmod +x gradlew
