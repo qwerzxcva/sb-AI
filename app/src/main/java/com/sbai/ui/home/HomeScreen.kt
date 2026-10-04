@@ -174,10 +174,13 @@ fun HomeScreen() {
     val coreRunning = running || coreConnected
     // 低频重试：每 8s 尝试重连，防止 :core 启动慢导致 UI 一直卡在「已停止」
     LaunchedEffect(coreRunning) {
-        if (!coreRunning) return@LaunchedEffect
+        if (coreRunning) return@LaunchedEffect  // 已连接，不需要重试
         while (true) {
             kotlinx.coroutines.delay(8_000L)
-            if (coreRunning) SbCommandClient.connectWithRetry(attempts = 3, delayMs = 500L)
+            if (!coreRunning) {
+                android.util.Log.i("SbAI_VPN", "retrying command client connect, coreRunning=false")
+                SbCommandClient.connectWithRetry(attempts = 3, delayMs = 500L)
+            }
         }
     }
 
