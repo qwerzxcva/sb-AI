@@ -616,10 +616,16 @@ fun HomeScreen() {
                         ))
                     filtered.take(30).forEach { node ->
                         item {
+                            val displayDelay = if (node.urlTestDelay > 0) "${node.urlTestDelay}ms" else null
                             SbItem(
                                 title = node.name.ifBlank { "未命名节点" },
-                                subtitle = node.outboundJson.nodeSummary(),
+                                subtitle = buildString {
+                                    append(node.outboundJson.nodeSummary())
+                                    displayDelay?.let { append(" · ${it}") }
+                                    if (!node.enabled) append(" · 已禁用")
+                                },
                                 icon = Icons.Filled.Widgets,
+                                iconTint = if (node.enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                                 onClick = { editingNode = node },
                                 trailing = {
                                     Row(verticalAlignment = Alignment.CenterVertically) {

@@ -312,6 +312,10 @@ data class ProxyNode(
     val outboundJson: String = "",
     /** 来源订阅 id；手动添加为 null */
     val subscriptionId: String? = null,
+    /** urltest 测速结果（ms，0=未测，-1=失败，>0=延迟值） */
+    val urlTestDelay: Int = 0,
+    /** 最近一次测速时间戳（ms） */
+    val urlTestTime: Long = 0L,
 )
 
 /** 订阅源：拉取分享链接并解析为节点 */
