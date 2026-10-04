@@ -105,6 +105,8 @@ fun SettingsScreen() {
     var showProfileDialog by remember { mutableStateOf(false) }
     var profileNameInput by remember { mutableStateOf("") }
     var editingProfile by remember { mutableStateOf<ConfigProfile?>(null) }
+    // ---- 资源管理编辑状态 ----
+    var editingResource by remember { mutableStateOf<com.sbai.data.Resource?>(null) }
 
     val backupJson = Json { prettyPrint = true; encodeDefaults = true; ignoreUnknownKeys = true }
 
@@ -379,7 +381,7 @@ fun SettingsScreen() {
                                         }
                                         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                                             androidx.compose.material3.OutlinedButton(
-                                                onClick = { /* TODO: 编辑资源 */ },
+                                                onClick = { editingResource = res },
                                                 contentPadding = androidx.compose.foundation.layout.PaddingValues(8.dp),
                                             ) {
                                                 Text("编辑", style = MaterialTheme.typography.labelSmall)
@@ -802,6 +804,21 @@ fun SettingsScreen() {
             dismissButton = { TextButton(onClick = { showProfileDialog = false }) { Text("取消") } },
         )
     }
+
+    if (editingResource != null) {
+        ResourceEditorDialog(
+            resource = editingResource!!,
+            onDismiss = { editingResource = null },
+            onSave = { updated ->
+                store.updateSettings(
+                    settings.copy(resources = settings.resources.map { r ->
+                        if (r.id == updated.id) updated else r
+                    })
+                )
+                editingResource = null
+            },
+        )
+    }
 }
 
 /** 覆盖示例：常用「UI 没有生成的补充项」写法 */
@@ -886,3 +903,91 @@ private fun CustomConfigEditorDialog(
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
     )
 }
+
+// ---------------------------------------------------------------------------
+// 资源管理编辑器对话框
+// ---------------------------------------------------------------------------
+
+@Composable
+private fun ResourceEditorDialog(
+    resource: com.sbai.data.Resource,
+    onDismiss: () -> Unit,
+    onSave: (com.sbai.data.Resource) -> Unit,
+) {
+    var name by remember { mutableStateOf(resource.name) }
+    var resType by remember { mutableStateOf(resource.resType) }
+    var url by remember { mutableStateOf(resource.url) }
+    var content by remember { mutableStateOf(resource.content) }
+    var updateIntervalHours by remember { mutableStateOf(resource.updateIntervalHours.toString()) }
+    
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("编辑资源") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("资源名称") },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                
+                // 资源类型选择
+                Column {
+                    Text("资源类型", style = MaterialTheme.typography.labelLarge)
+                    Spacer(Modifier.height(4.dp))
+                    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                        com.sbai.data.ResourceType.entries.forEachIndexed { i, type ->
+                            SegmentedButton(
+                                selected = resType == type,
+                                onClick = { resType = type },
+                                shape = SegmentedButtonDefaults.itemShape(index = i, count = com.sbai.data.ResourceType.entries.size),
+                            ) { Text(type.displayName) }
+                        }
+                    }
+                }
+                
+                OutlinedTextField(
+                    value = url,
+                    onValueChange = { url = it },
+                    label = { Text("更新 URL（可选，留空则仅手动维护）") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                )
+                
+                OutlinedTextField(
+                    value = content,
+                    onValueChange = { content = it },
+                    label = { Text("资源内容（可手动编辑）") },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 120.dp),
+                    minLines = 6,
+                )
+                
+                OutlinedTextField(
+                    value = updateIntervalHours,
+                    onValueChange = { updateIntervalHours = it },
+                    label = { Text("更新间隔（小时）") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                val interval = updateIntervalHours.toIntOrNull() ?: 24
+                onSave(resource.copy(
+                    name = name.trim(),
+                    resType = resType,
+                    url = url.trim(),
+                    content = content,
+                    updateIntervalHours = interval,
+                ))
+            }) { Text("保存") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
+}
+
