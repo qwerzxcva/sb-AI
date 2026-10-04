@@ -43,6 +43,8 @@ import androidx.compose.material.icons.filled.Route
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.VpnKey
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Error
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -438,6 +440,19 @@ fun SettingsScreen() {
                                 subtitle = "预览 UI 配置 + 导入 JSON 合并后的 sing-box 配置",
                                 icon = Icons.Filled.Preview,
                                 onClick = { showOverridePreview = true },
+                            )
+                        }
+                        item {
+                            val jsonStr = settings.configOverride.json.trim()
+                            val isValid = runCatching { kotlinx.serialization.json.Json.parseToJsonElement(jsonStr) }.isSuccess
+                            SbItem(
+                                title = "JSON 校验",
+                                subtitle = if (isValid) "格式正确" else "格式错误",
+                                icon = if (isValid) Icons.Filled.CheckCircle else Icons.Filled.Error,
+                                iconTint = if (isValid) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                                onClick = {
+                                    if (!isValid) editingText = Triple("JSON 格式错误", "请检查 JSON 格式后重新粘贴", {})
+                                },
                             )
                         }
                     }
