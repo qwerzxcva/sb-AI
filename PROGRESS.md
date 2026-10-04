@@ -1,6 +1,92 @@
-# sb-AI 进度（第 12 段续跑起点）
+# sb-AI 进度（第 13 段续跑起点）
 
 > 目标：Kototoro 液态玻璃 UI + LxBox 内核/功能基准 + AsteriskBOX 全量规则字段 + 全面审核循环。
+> 当前核心状态（2026-05-04）：
+
+## ✅ 已完成（可运行、测试通过）
+
+### 首屏/路由
+- 路由规则 CRUD 编辑器（二级页面，非弹窗），含拖拽排序 + 导入粘贴
+- fakeIP 自定义段（inet/inet6）+ 自动 DNS 规则生成
+- 流量出口（proxy）+ 直连（direct）规则集
+- 协议匹配全量（biflow/dscp/interface/inbound/port/protocol/socket_type/type）
+- ICMP 出站（icmp → icmpv4/icmpv6）
+- 逻辑 AND/OR
+- 规则 JSON（raw + schema 校验）
+- 规则 Tag 留空自动生成（r-1/r-2）
+
+### 订阅/节点
+- 订阅编辑器表单（UA / hwid / dedupe / keywords / proxy / 机场名）
+- 订阅源列表，按 lastUpdated 降序
+- 订阅导入（HTTP + HTTPS，失败时自动回退 HTTP）
+- 进入首页卡顿优化（启动检查配置加超时保护，避免主线程阻塞）
+- 节点表单完整编辑器（UTLS / 多路复用 / http-socks 等高级字段）
+
+### UI/UX
+- Kototoro 液态玻璃底栏（玻璃拟态 + 悬浮效果）
+- 三端一致的圆角卡片间距
+- 底部导航栏
+- 节点池编辑
+- 负载均衡策略切换
+- 负载均衡分组
+- 负载均衡自动优选
+
+### DNS
+- DNS 服务器 CRUD（UDP/TCP/DoH/DoQ/DoT/Local/Hosts/FakeIP 全类型）
+- DNS 规则 CRUD（rule_set/geosite/anti_lens/domain/ip/source）
+- FakeIP 联动 DNS 自动规则（query_type A/AAAA）
+- FakeIP 唯一性校验（sing-box 只允许一个 fakeip server）
+
+### 其他
+- 进程隔离（:core + UI 双进程架构）
+
+---
+
+## 🔄 进行中（本次工作段）
+
+### Bug 修复
+1. **首页 VPN 点击不变化** ✅ 已修复并提交本地
+   - 根因：`connectWithRetry` 首次超时时，`:core` 进程实际已启动（只是 CommandServer 连接慢）
+   - 修复：新增 `LaunchedEffect(coreRunning)` 低频重试协程（每 8s 重连），确保状态最终同步
+   - 文件：`HomeScreen.kt` + `SbCommandClient.kt`（已有 `connectWithRetry(attempts, delayMs)` 重载）
+
+2. **监控页颜色反差过大** ✅ 已修复并提交本地
+   - 根因：`StatusHeroCard` 连接时使用 `primaryContainer`（高饱和蓝色），与首页的 `surfaceContainer` 不一致
+   - 修复：统一使用 `surfaceContainer` + `onSurface`，仅通过图标颜色区分状态
+   - 文件：`MonitorScreen.kt`
+
+### 调研项目
+- [ ] LxBox（功能最全）— 研究完毕，差距清单已列出
+- [ ] AsteriskBOX（规则字段最全）— 待研究
+- [ ] ThroneForAndroid（NekoBox 新版）— 待研究
+
+---
+
+## 📋 待做（移植清单）
+
+### 来自 LxBox（优先）
+- [ ] **节点健康检测**：URLTest ping 测速 + 死节点自动禁用
+- [ ] **订阅自动更新**：后台定时拉取（2min/小时触发），断网容错，crash-safe init
+- [ ] **拆分隧道**（Split Tunneling）：按 App 排除走直连
+- [ ] **跳板/中转**（Detour/Hop chains）：代理链节点支持
+- [ ] **节点列表过滤器**：按协议/地区/延迟/关键字筛选排序
+
+### 来自 AsteriskBOX
+- [ ] **完整规则字段**：geosite / geoip / rule_set 全量支持
+- [ ] **China IP 列表**直出优化
+- [ ] **出站接口选择**（Interface 规则）
+
+### 来自 ThroneForAndroid
+- [ ] **JSON 配置预览 + Schema 校验**（Throne 自带 sing-box schema check）
+- [ ] **多配置切换**（profiles 功能）
+
+---
+
+## 🚫 网络问题
+- GitHub push 当前持续失败（Connection reset by peer）
+- 本地 commit 已完成：`0511f50 fix: 修复首页VPN状态不更新bug + 监控页颜色反差问题`
+- 需网络恢复后推送
+
 > 仅 ARMv8，Kotlin/Compose，不集成 Root/Magisk。
 
 ## 环境关键事实
