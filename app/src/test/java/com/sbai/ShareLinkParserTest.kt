@@ -121,6 +121,15 @@ class ShareLinkParserTest {
     }
 
     @Test
+    fun `hysteria2 basic`() {
+        val o = outboundOf("hysteria2://e42ef740-7d13-47de-9174-708692245c08@1002us.debian13.com:18445?insecure=0&sni=releases.ubuntu26.com#美国")
+        assertEquals("hysteria2", o["type"]!!.jsonPrimitive.content)
+        assertEquals("1002us.debian13.com", o["server"]!!.jsonPrimitive.content)
+        assertEquals("18445", o["server_port"]!!.jsonPrimitive.content)
+        assertEquals("releases.ubuntu26.com", o["tls"]!!.jsonObject["server_name"]!!.jsonPrimitive.content)
+    }
+
+    @Test
     fun `vless uuid containing at sign`() {
         val o = outboundOf("vless://ui%40d@1.2.3.4:443?security=tls#n")
         assertEquals("ui@d", o["uuid"]!!.jsonPrimitive.content)

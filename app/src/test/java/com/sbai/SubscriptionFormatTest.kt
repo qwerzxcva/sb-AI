@@ -118,4 +118,18 @@ rules:
         assertEquals(null, SubscriptionFormat.parse(""))
         assertEquals(null, SubscriptionFormat.parse("random garbage text"))
     }
+
+    @Test
+    fun `hysteria2 share links parse correctly`() {
+        val hy2Link = "hysteria2://e42ef740-7d13-47de-9174-708692245c08@1002us.debian13.com:18445?insecure=0&sni=releases.ubuntu26.com#节点1"
+        val result = SubscriptionFormat.parse(hy2Link)
+        assertNotNull(result)
+        result!!
+        assertEquals("share_links", result.format)
+        assertEquals(1, result.nodes.size)
+        assertTrue(result.nodes[0].outboundJson.contains("\"hysteria2\""))
+        assertTrue(result.nodes[0].outboundJson.contains("\"1002us.debian13.com\""))
+        // server_port 是整数，JSON 序列化后不带引号
+        assertTrue(result.nodes[0].outboundJson.contains("18445"))
+    }
 }
