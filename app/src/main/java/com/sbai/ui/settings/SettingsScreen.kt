@@ -45,6 +45,7 @@ import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.VpnKey
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Error
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -361,6 +362,86 @@ fun SettingsScreen() {
                                     minLines = 5,
                                     maxLines = 10,
                                 )
+                            }
+                        }
+                    }
+                }
+                SbSpacer()
+            }
+
+            // ---- AsteriskBOX 资源管理 ----
+            item {
+                SbGroup(title = "资源管理（${settings.resources.size}）") {
+                    item {
+                        SbItem(
+                            title = "添加资源",
+                            subtitle = "新增 IP 列表/规则集等资源条目",
+                            icon = Icons.Filled.Add,
+                            onClick = {
+                                store.updateSettings(settings.copy(resources = settings.resources + com.sbai.data.Resource()))
+                            },
+                        )
+                    }
+                    if (settings.resources.isNotEmpty()) {
+                        item {
+                            Column(Modifier.padding(horizontal = 8.dp)) {
+                                settings.resources.forEach { res ->
+                                    val gap = System.currentTimeMillis() - res.lastUpdatedAt
+                                    val ageStr = if (res.lastUpdatedAt == 0L) "未更新" else "${gap / 3600_000}h 前"
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(vertical = 6.dp)
+                                            .background(
+                                                if (res.enabled) MaterialTheme.colorScheme.surfaceContainerHighest
+                                                else MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.5f),
+                                                RoundedCornerShape(8.dp),
+                                            )
+                                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                res.name,
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                color = if (res.enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                                            )
+                                            Text(
+                                                "${res.resType.displayName} · ${ageStr}" +
+                                                    (res.lastError?.let { " · 错误: $it" }.orEmpty()),
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            )
+                                        }
+                                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                            androidx.compose.material3.OutlinedButton(
+                                                onClick = { /* TODO: 编辑资源 */ },
+                                                contentPadding = androidx.compose.foundation.layout.PaddingValues(8.dp),
+                                            ) {
+                                                Text("编辑", style = MaterialTheme.typography.labelSmall)
+                                            }
+                                            androidx.compose.material3.OutlinedButton(
+                                                onClick = {
+                                                    store.updateSettings(settings.copy(resources = settings.resources.map { r ->
+                                                        if (r.id == res.id) r.copy(enabled = !r.enabled) else r
+                                                    }))
+                                                },
+                                                contentPadding = androidx.compose.foundation.layout.PaddingValues(8.dp),
+                                            ) {
+                                                Text(if (res.enabled) "禁用" else "启用", style = MaterialTheme.typography.labelSmall)
+                                            }
+                                            androidx.compose.material3.OutlinedButton(
+                                                onClick = {
+                                                    store.updateSettings(settings.copy(resources = settings.resources.filter { it.id != res.id }))
+                                                },
+                                                contentPadding = androidx.compose.foundation.layout.PaddingValues(8.dp),
+                                            ) {
+                                                Text("删除", style = MaterialTheme.typography.labelSmall)
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }

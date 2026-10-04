@@ -196,6 +196,24 @@ object SingBoxConfigGenerator {
                             }
                         })
                     }
+                    // AsteriskBOX 资源注入：China IP 列表
+                    state.settings.resources
+                        .filter { it.enabled && it.resType == com.sbai.data.ResourceType.CHINA_IP && it.content.isNotEmpty() }
+                        .forEach { res ->
+                            add(buildJsonObject {
+                                put("tag", "res-${res.id.take(8)}")
+                                put("type", "inline")
+                                // content 格式：每行一个 IP/CIDR（如 36.33.64.0/20）
+                                putJsonArray("rules") {
+                                    res.content.lines().filter { it.isNotBlank() && !it.startsWith("#") }.forEach { cidr ->
+                                        add(buildJsonObject {
+                                            putJsonArray("ip_cidr") { add(cidr.trim()) }
+                                            put("outbound", "direct")
+                                        })
+                                    }
+                                }
+                            })
+                        }
                     // Karing 风格：路由规则里直接写 URL 的远程规则集（自动创建，去重）
                     inlineUrlRuleSets(state).forEach { (tag, url) ->
                         add(buildJsonObject {
@@ -394,6 +412,11 @@ object SingBoxConfigGenerator {
                 }
                 put("outbound", "direct")
             })
+        }
+        // AsteriskBOX 资源注入：China IP 列表 → geoip 规则集（直连）
+        val chinaIpResource = state.settings.resources.firstOrNull { r -> r.enabled && r.resType == com.sbai.data.ResourceType.CHINA_IP && r.content.isNotEmpty() }
+        if (chinaIpResource != null) {
+            // 规则已在 rule_set 块中注入（inline format），此处无需重复；保留标记以便未来扩展
         }
         state.routeRules.filter { it.enabled }.forEach { rule ->
             rules.add(buildRouteRule(rule, entryTag))

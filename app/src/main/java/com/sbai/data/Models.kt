@@ -415,6 +415,40 @@ data class ConfigOverride(
     val json: String = "",
 )
 
+/**
+ * 资源条目（AsteriskBOX 基准）：可配置 URL 自动更新的资源
+ * （China IP 列表、GeoIP 规则集、Hosts 等）。
+ * 通过 VpnControlReceiver RESOURCE_UPDATE 触发批量更新。
+ */
+@Serializable
+data class Resource(
+    val id: String = UUID.randomUUID().toString(),
+    /** 资源名称，如 "China IP List" / "GeoIP CN" */
+    val name: String = "",
+    /** 资源类型：china_ip / geoip / hosts / rule_set / custom */
+    val resType: ResourceType = ResourceType.CUSTOM,
+    /** 资源内容（持久化到本地文件/内存） */
+    val content: String = "",
+    /** 用于更新的 URL（空 = 仅手动维护） */
+    val url: String = "",
+    /** 最后更新时间戳 */
+    val lastUpdatedAt: Long = 0L,
+    /** 更新间隔（小时），默认 24h */
+    val updateIntervalHours: Int = 24,
+    /** 是否启用（enabled=false 不参与更新循环） */
+    val enabled: Boolean = true,
+    /** 最近一次更新错误信息 */
+    val lastError: String? = null,
+)
+
+enum class ResourceType(val displayName: String) {
+    CHINA_IP("China IP 列表"),
+    GEOIP("GeoIP"),
+    HOSTS("Hosts"),
+    RULE_SET("规则集"),
+    CUSTOM("自定义"),
+}
+
 @Serializable
 data class AppSettings(
     val logLevel: LogLevel = LogLevel.WARN,
@@ -455,6 +489,10 @@ data class AppSettings(
     val subscriptionDeviceModel: String = "",
     /** TUN 网络栈：system / gvisor / mixed（sing-box stack） */
     val tunStack: String = "mixed",
+
+    // ---- AsteriskBOX 资源管理：自定义 URL 列表（IP 列表、规则集等） ----
+    /** 资源列表：可配置 URL 自动更新（如 China IP 列表、GeoIP 规则集等） */
+    val resources: List<Resource> = emptyList(),
 )
 
 // ---------------------------------------------------------------------------

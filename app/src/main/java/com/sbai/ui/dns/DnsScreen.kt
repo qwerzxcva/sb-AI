@@ -365,7 +365,7 @@ private fun ManualDnsRuleRow(
                         Text(
                             "→ ${rule.server.ifBlank { "（未指定）" }}${if (rule.ipStrategy.isNotBlank()) " · ${rule.ipStrategy}" else ""}",
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.secondary,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
                         )
                     }

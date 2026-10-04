@@ -33,6 +33,7 @@ class VpnControlReceiver : BroadcastReceiver() {
         const val ACTION_STOP_VPN = "com.sbai.action.STOP_VPN"
         const val ACTION_SUB_UPDATE = "com.sbai.action.SUB_UPDATE"
         const val ACTION_STATUS = "com.sbai.action.STATUS"
+        const val ACTION_RESOURCE_UPDATE = "com.sbai.action.RESOURCE_UPDATE"
         const val EXTRA_FORCE = "extra_force"
     }
 
@@ -41,8 +42,72 @@ class VpnControlReceiver : BroadcastReceiver() {
             ACTION_START_VPN -> startVpn(context, intent)
             ACTION_STOP_VPN -> stopVpn(context)
             ACTION_SUB_UPDATE -> triggerSubUpdate(context)
+            ACTION_RESOURCE_UPDATE -> triggerResourceUpdate(context)
             ACTION_STATUS -> Log.i(TAG, "status query: running=${SbAiVpnService.status.value is SbAiVpnService.ServiceStatus.Running}")
             else -> Log.w(TAG, "unknown action: ${intent.action}")
+        }
+    }
+
+    private fun triggerResourceUpdate(context: Context) {
+        Log.i(TAG, "RESOURCE_UPDATE")
+        val store = RuleStore.get(context)
+        val resources = store.state.value.settings.resources.filter { it.enabled && it.url.isNotEmpty() }
+        if (resources.isEmpty()) return
+        val now = System.currentTimeMillis()
+        val eligible = resources
+            .filter { r ->
+                val gap = now - r.lastUpdatedAt
+                r.lastUpdatedAt == 0L || gap >= (r.updateIntervalHours.coerceAtLeast(1) * 3600_000L)
+            }
+            .take(10)
+        if (eligible.isEmpty()) return
+        val settings = store.state.value.settings
+        val ua = settings.subscriptionUserAgent ?: "sb-AI/1.0 (sing-box)"
+        @Suppress("UNCHECKED_CAST")
+        val trustAll: javax.net.ssl.SSLSocketFactory = run {
+            val trustAllTm = arrayOf(
+                object : javax.net.ssl.X509TrustManager {
+                    override fun getAcceptedIssuers(): Array<java.security.cert.X509Certificate> = emptyArray()
+                    override fun checkClientTrusted(chain: Array<java.security.cert.X509Certificate>?, authType: String?) {}
+                    override fun checkServerTrusted(chain: Array<java.security.cert.X509Certificate>?, authType: String?) {}
+                }
+            ) as Array<javax.net.ssl.X509TrustManager>
+            javax.net.ssl.SSLContext.getInstance("TLS").apply { init(null, trustAllTm, java.security.SecureRandom()) }.socketFactory
+        }
+        eligible.forEach { res ->
+            try {
+                val conn = java.net.URL(res.url).openConnection() as java.net.HttpURLConnection
+                conn.instanceFollowRedirects = false
+                conn.connectTimeout = 15_000
+                conn.readTimeout = 15_000
+                conn.setRequestProperty("User-Agent", ua)
+                if (conn is javax.net.ssl.HttpsURLConnection) {
+                    conn.sslSocketFactory = trustAll
+                    conn.hostnameVerifier = javax.net.ssl.HostnameVerifier { _, _ -> true }
+                }
+                conn.requestMethod = "GET"
+                val code = conn.responseCode
+                if (code !in 200..299) throw IllegalStateException("HTTP $code")
+                val body = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+                if (body.isBlank()) throw IllegalStateException("空响应")
+                store.update { s ->
+                    s.copy(settings = s.settings.copy(
+                        resources = s.settings.resources.map { r ->
+                            if (r.id == res.id) r.copy(content = body, lastUpdatedAt = System.currentTimeMillis(), lastError = null) else r
+                        }
+                    ))
+                }
+                Log.i(TAG, "resource ${res.name}: updated (${body.length} chars)")
+            } catch (e: Exception) {
+                Log.w(TAG, "resource ${res.name} failed", e)
+                store.update { s ->
+                    s.copy(settings = s.settings.copy(
+                        resources = s.settings.resources.map { r ->
+                            if (r.id == res.id) r.copy(lastError = e.message) else r
+                        }
+                    ))
+                }
+            }
         }
     }
 

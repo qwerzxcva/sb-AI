@@ -91,6 +91,7 @@
                 <action android:name="com.sbai.action.START_VPN" />
                 <action android:name="com.sbai.action.STOP_VPN" />
                 <action android:name="com.sbai.action.SUB_UPDATE" />
+                <action android:name="com.sbai.action.RESOURCE_UPDATE" />
                 <action android:name="com.sbai.action.STATUS" />
             </intent-filter>
         </receiver>
