@@ -33,8 +33,6 @@ import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.ExpandLess
-import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.Refresh
@@ -916,72 +914,50 @@ private fun SubscriptionCard(
     val colors = MaterialTheme.colorScheme
     val used = sub.trafficUpload + sub.trafficDownload
     val hasTraffic = sub.trafficTotal > 0
-    var expanded by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+            .padding(horizontal = 16.dp, vertical = 12.dp),
     ) {
-        // 卡片主体
-        Surface(
-            onClick = onClick,
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(12.dp),
-            color = colors.surfaceContainer,
-        ) {
-            Column(modifier = Modifier.padding(12.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text(sub.name.ifBlank { sub.url }, style = MaterialTheme.typography.titleSmall, maxLines = 1)
-                        Text(
-                            sub.lastError?.let { "错误: $it" }
-                                ?: "${sub.nodeCount} 节点 · ${formatTime(sub.lastUpdatedAt)}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = colors.onSurfaceVariant,
-                        )
-                    }
-                    Row {
-                        IconButton(onClick = { expanded = !expanded }) {
-                            Icon(
-                                imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                                contentDescription = if (expanded) "收起" else "展开",
-                            )
-                        }
-                        if (refreshing) {
-                            CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
-                        } else {
-                            IconButton(onClick = onRefresh) {
-                                Icon(Icons.Filled.Refresh, contentDescription = "更新")
-                            }
-                        }
-                    }
-                }
-
-                if (hasTraffic) {
-                    Spacer(Modifier.height(8.dp))
-                    LinearProgressIndicator(
-                        progress = { (used.toFloat() / sub.trafficTotal.toFloat()).coerceIn(0f, 1f) },
-                        modifier = Modifier.fillMaxWidth().height(6.dp),
-                        color = if (used.toFloat() / sub.trafficTotal > 0.9f) colors.error else colors.primary,
-                        trackColor = colors.surfaceContainerHigh,
-                    )
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        "${com.sbai.ui.monitor.formatBytes(used)} / ${com.sbai.ui.monitor.formatBytes(sub.trafficTotal)}" +
-                            if (sub.trafficExpire > 0) {
-                                " · 到期 " + SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date(sub.trafficExpire * 1000))
-                            } else "",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = colors.onSurfaceVariant,
-                    )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(sub.name.ifBlank { sub.url }, style = MaterialTheme.typography.titleSmall, maxLines = 1)
+                Text(
+                    sub.lastError?.let { "错误: $it" }
+                        ?: "${sub.nodeCount} 节点 · ${formatTime(sub.lastUpdatedAt)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (refreshing) {
+                CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
+            } else {
+                IconButton(onClick = onRefresh) {
+                    Icon(Icons.Filled.Refresh, contentDescription = "更新")
                 }
             }
         }
-        
-        // 展开的节点列表
-        if (expanded) {
-            // 节点列表将在调用处渲染
+
+        if (hasTraffic) {
+            Spacer(Modifier.height(8.dp))
+            LinearProgressIndicator(
+                progress = { (used.toFloat() / sub.trafficTotal.toFloat()).coerceIn(0f, 1f) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(6.dp),
+                color = if (used.toFloat() / sub.trafficTotal > 0.9f) colors.error else colors.primary,
+                trackColor = colors.surfaceContainerHigh,
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "${com.sbai.ui.monitor.formatBytes(used)} / ${com.sbai.ui.monitor.formatBytes(sub.trafficTotal)}" +
+                    if (sub.trafficExpire > 0) {
+                        " · 到期 " + SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date(sub.trafficExpire * 1000))
+                    } else "",
+                style = MaterialTheme.typography.labelSmall,
+                color = colors.onSurfaceVariant,
+            )
         }
     }
 }

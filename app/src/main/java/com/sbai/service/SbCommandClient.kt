@@ -221,6 +221,18 @@ object SbCommandClient : CommandClientHandler {
     }
 
     override fun writeStatus(message: StatusMessage) {
+        // 只在值真正变化时才更新，避免不必要的 recomposition
+        val current = _status.value
+        if (current.memory == message.memory &&
+            current.connectionsIn == message.connectionsIn &&
+            current.connectionsOut == message.connectionsOut &&
+            current.uplink == message.uplink &&
+            current.downlink == message.downlink &&
+            current.uplinkTotal == message.uplinkTotal &&
+            current.downlinkTotal == message.downlinkTotal
+        ) {
+            return // 值未变化，跳过更新
+        }
         _status.value = DashboardStatus(
             memory = message.memory,
             connectionsIn = message.connectionsIn,
@@ -236,6 +248,8 @@ object SbCommandClient : CommandClientHandler {
     override fun writeGroups(iterator: OutboundGroupIterator) {
         // 构建结果 map: groupTag → (outboundTag → delay)
         val groupResults = mutableMapOf<String, MutableMap<String, Int>>()
+        val newGroups = mutableListOf<ProxyGroup>()
+        
         while (iterator.hasNext()) {
             val g: OutboundGroup = iterator.next()
             val items = buildList {
@@ -259,18 +273,26 @@ object SbCommandClient : CommandClientHandler {
                     groupResults[g.tag] = itemMap
                 }
             }
-            _groups.value = _groups.value.toMutableList().apply {
-                add(
-                    ProxyGroup(
-                        tag = g.tag,
-                        type = g.type,
-                        selectable = g.selectable,
-                        selected = g.selected,
-                        items = items,
-                    ),
-                )
-            }
+            newGroups.add(
+                ProxyGroup(
+                    tag = g.tag,
+                    type = g.type,
+                    selectable = g.selectable,
+                    selected = g.selected,
+                    items = items,
+                ),
+            )
         }
+        
+        // 只在组列表真正变化时才更新
+        val currentGroups = _groups.value
+        val groupsChanged = newGroups.size != currentGroups.size || 
+            newGroups.zip(currentGroups).any { (new, old) -> new.tag != old.tag || new.selected != old.selected }
+        
+        if (groupsChanged) {
+            _groups.value = newGroups
+        }
+        
         if (groupResults.isNotEmpty()) {
             _urlTestResults.value = groupResults
         }
@@ -351,6 +373,6 @@ object SbCommandClient : CommandClientHandler {
         _logs.value = logQueue.toList()
     }
 
-    private const val StatusIntervalNanos = 500_000_000L // 500ms
+    private const val StatusIntervalNanos = 1_000_000_000L // 1s（平衡实时性和性能）
     private const val TAG = "SbCommandClient"
 }
