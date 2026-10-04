@@ -386,6 +386,15 @@ object SingBoxConfigGenerator {
                     put("outbound", entryTag)
                 })
             }
+        // 拆分隧道：按域名强制走直连（LxBox split tunneling 基准）
+        if (state.settings.splitTunnel.enabled && state.settings.splitTunnel.domains.isNotEmpty()) {
+            rules.add(0, buildJsonObject {
+                putJsonArray("domain_keyword") {
+                    state.settings.splitTunnel.domains.filter { it.isNotEmpty() }.forEach { add(it.trim()) }
+                }
+                put("outbound", "direct")
+            })
+        }
         state.routeRules.filter { it.enabled }.forEach { rule ->
             rules.add(buildRouteRule(rule, entryTag))
         }

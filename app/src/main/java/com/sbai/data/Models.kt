@@ -364,6 +364,16 @@ data class PerAppProxy(
     val packages: List<String> = emptyList(),
 )
 
+/** 拆分隧道（Split Tunneling，LxBox split tunnel 基准）：按域名走直连，其余走代理 */
+@Serializable
+data class SplitTunnel(
+    val enabled: Boolean = false,
+    /** 规则集 tag（如 "direct-domain"），需与路由规则 tag 对应 */
+    val ruleTag: String = "split-direct",
+    /** 直连域名列表（每行一个，支持通配符 *.example.com） */
+    val domains: List<String> = emptyList(),
+)
+
 /** 主题模式（三大代理交集功能：外观设置） */
 @Serializable
 enum class ThemeMode(val displayName: String) {
@@ -405,6 +415,8 @@ data class AppSettings(
     val finalOutbound: String = "",   // 留空 = 自动（跟随入口 tag）
     val dnsStrategy: String = "prefer_ipv4",   // prefer_ipv4 / prefer_ipv6 / ipv4_only / ipv6_only
     val perAppProxy: PerAppProxy = PerAppProxy(),
+    /** 拆分隧道：按域名强制走直连（与分应用代理互补） */
+    val splitTunnel: SplitTunnel = SplitTunnel(),
     /** 配置覆盖：导入完整 JSON 与 UI 配置深度合并 */
     val configOverride: ConfigOverride = ConfigOverride(),
     /** 开机自动启动（需要 VPN 权限已授予） */
