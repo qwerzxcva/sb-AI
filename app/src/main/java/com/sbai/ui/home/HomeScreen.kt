@@ -199,7 +199,16 @@ fun HomeScreen() {
         SubscriptionEditorDialog(
             initial = sub,
             onDismiss = { editingSub = null },
-            onSave = { store.upsertSubscription(it); editingSub = null },
+            onSave = { saved ->
+                store.upsertSubscription(saved)
+                editingSub = null
+                // 保存后立即触发刷新
+                scope.launch {
+                    refreshingId = saved.id
+                    subManager.refresh(saved)
+                    refreshingId = null
+                }
+            },
             onDelete = if (sub.url.isNotBlank()) {
                 { store.deleteSubscription(sub.id); editingSub = null }
             } else null,

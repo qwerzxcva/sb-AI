@@ -152,7 +152,14 @@ class SubscriptionManager(
             Result.Success(nodes.size)
         } catch (t: Throwable) {
             Log.w(TAG, "subscription refresh failed: ${subscription.url}", t)
-            fail(subscription, t.message ?: t.javaClass.simpleName)
+            // 统一为中文错误提示，避免显示英文异常消息
+            val msg = when {
+                t.message?.contains("http") == true || t.message?.contains("HTTP") == true -> "网络请求失败（HTTP ${t.message?.let { Regex("""\d+""").find(it)?.value ?: "?"} }）"
+                t.message?.contains("timeout") == true || t.message?.contains("Timeout") == true -> "连接超时，请检查网络或订阅地址"
+                t.message?.contains("certificate") == true || t.message?.contains("Certificate") == true -> "SSL 证书校验失败，可在订阅设置中开启「跳过 TLS 证书校验」"
+                else -> t.message?.let { "错误: $it" } ?: t.javaClass.simpleName
+            }
+            fail(subscription, msg)
         }
     }
 
