@@ -74,6 +74,10 @@ object SbCommandClient : CommandClientHandler {
     private val _groups = MutableStateFlow<List<ProxyGroup>>(emptyList())
     val groups: StateFlow<List<ProxyGroup>> = _groups
 
+    /** urltest 结果缓存：groupTag → (outboundTag → delay) */
+    private val _urlTestResults = MutableStateFlow<Map<String, Map<String, Int>>>(emptyMap())
+    val urlTestResults: StateFlow<Map<String, Map<String, Int>>> = _urlTestResults
+
     private val _connectedToService = MutableStateFlow(false)
     val connectedToService: StateFlow<Boolean> = _connectedToService
 
@@ -165,6 +169,41 @@ object SbCommandClient : CommandClientHandler {
 
     fun urlTest(groupTag: String) {
         runCatching { client?.urlTest(groupTag) }
+            .onFailure { Log.w(TAG, "urlTest failed for group: $groupTag", it) }
+    }
+
+    /** 对指定节点执行单次测速 */
+    fun urlTestOutbound(
+        groupTag: String,
+        outboundTag: String,
+        timeoutMs: Int = 5000,
+    ): Int? = runCatching {
+        client?.urlTestOutbound(groupTag, outboundTag, timeoutMs)
+            ?.delay?.takeIf { it > 0 }
+    }.getOrNull()
+
+    /** 批量更新节点列表中的 urlTestDelay 字段（由 UI 触发） */
+    fun syncUrlTestResultsToNodes(store: com.sbai.data.RuleStore) {
+        val results = _urlTestResults.value
+        if (results.isEmpty()) return
+        val state = store.state.value
+        var changed = false
+        // 构建 outboundTag → delay 的 flat map
+        val delayMap = results.entries
+            .flatMap { (_, items) -> items.entries }
+            .associate { (tag, delay) -> tag to delay }
+        val updatedNodes = state.proxyNodes.map { node ->
+            val delay = delayMap[node.name]
+            if (delay != null && delay != node.urlTestDelay) {
+                changed = true
+                node.copy(urlTestDelay = delay, urlTestTime = System.currentTimeMillis())
+            } else {
+                node
+            }
+        }
+        if (changed) {
+            store.update { s -> s.copy(proxyNodes = updatedNodes) }
+        }
     }
 
     // ---- CommandClientHandler ----
@@ -192,23 +231,32 @@ object SbCommandClient : CommandClientHandler {
     }
 
     override fun writeGroups(iterator: OutboundGroupIterator) {
-        val list = buildList {
-            while (iterator.hasNext()) {
-                val g: OutboundGroup = iterator.next()
-                val items = buildList {
-                    val it2 = g.items
-                    while (it2.hasNext()) {
-                        val item: OutboundGroupItem = it2.next()
-                        add(
-                            ProxyItem(
-                                tag = item.tag,
-                                type = item.type,
-                                delay = item.urlTestDelay,
-                                testTime = item.urlTestTime,
-                            ),
-                        )
+        // 构建结果 map: groupTag → (outboundTag → delay)
+        val groupResults = mutableMapOf<String, MutableMap<String, Int>>()
+        while (iterator.hasNext()) {
+            val g: OutboundGroup = iterator.next()
+            val items = buildList {
+                val it2 = g.items
+                val itemMap = mutableMapOf<String, Int>()
+                while (it2.hasNext()) {
+                    val item: OutboundGroupItem = it2.next()
+                    add(
+                        ProxyItem(
+                            tag = item.tag,
+                            type = item.type,
+                            delay = item.urlTestDelay,
+                            testTime = item.urlTestTime,
+                        ),
+                    )
+                    if (item.urlTestDelay > 0) {
+                        itemMap[item.tag] = item.urlTestDelay
                     }
                 }
+                if (itemMap.isNotEmpty()) {
+                    groupResults[g.tag] = itemMap
+                }
+            }
+            _groups.value = _groups.value.toMutableList().apply {
                 add(
                     ProxyGroup(
                         tag = g.tag,
@@ -220,7 +268,9 @@ object SbCommandClient : CommandClientHandler {
                 )
             }
         }
-        _groups.value = list
+        if (groupResults.isNotEmpty()) {
+            _urlTestResults.value = groupResults
+        }
     }
 
     override fun writeLogs(iterator: LogIterator) {

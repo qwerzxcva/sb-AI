@@ -27,6 +27,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Balance
+import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.ContentPaste
@@ -94,6 +95,7 @@ import com.sbai.ui.components.SbItem
 import com.sbai.ui.components.SbSpacer
 import com.sbai.ui.components.SbSwitchItem
 import com.sbai.ui.theme.LocalSbStyleTokens
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
@@ -533,6 +535,7 @@ fun HomeScreen() {
                         item {
                             SbItem(
                                 title = "全部更新",
+                                subtitle = "触发所有启用订阅的拉取 + L7Filter + 测速回填",
                                 icon = Icons.Filled.Refresh,
                                 onClick = {
                                     scope.launch {
@@ -545,7 +548,26 @@ fun HomeScreen() {
                                 },
                             )
                         }
-                    }
+                        if (coreRunning && lb.enabled) {
+                            item {
+                                SbItem(
+                                    title = "立即测速",
+                                    subtitle = "对所有 URLTest 分组执行 urltest，结果回填到节点",
+                                    icon = Icons.Filled.Bolt,
+                                    onClick = {
+                                        scope.launch {
+                                            // 触发内核 urltest（CommandServer 侧自动执行）
+                                            SbCommandClient.urlTest("lb")
+                                            // 等待 3s 让测速完成
+                                            delay(3000)
+                                            // 回填结果到节点对象
+                                            SbCommandClient.syncUrlTestResultsToNodes(store)
+                                        }
+                                    },
+                                )
+                            }
+                        }
+                }
                 }
                 SbSpacer()
             }
