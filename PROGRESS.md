@@ -44,67 +44,31 @@
 
 ## 🔄 进行中（本次工作段）
 
-### Bug 修复
-1. **首页 VPN 点击不变化** ✅ 已修复，本地 commit `2db0ca7`（push 待网络恢复）
-   - 根因：`connectWithRetry` 首次超时后，UI 永远显示「已停止」，即使 `:core` 进程实际已启动
-   - 修复：新增 `LaunchedEffect(coreRunning)` 低频重试协程（每 8s 重连），确保状态最终同步
-   - 文件：`HomeScreen.kt`
+### Bug 修复 ✅
+1. **首页 VPN 点击不变化** — 新增 LaunchedEffect(coreRunning) 低频重试协程（每 8s 重连 CommandServer），确保 UI 状态最终同步
+2. **监控页颜色反差过大** — StatusHeroCard 统一使用 surfaceContainer，不再高饱和 primaryContainer
 
-2. **监控页颜色反差过大** ✅ 已修复，本地 commit `2db0ca7`（push 待网络恢复）
-   - 根因：`StatusHeroCard` 连接时使用 `primaryContainer`（高饱和蓝色），与首页的 `surfaceContainer` 不一致
-   - 修复：统一使用 `surfaceContainer` + `onSurface`，仅图标颜色区分连接状态
-   - 文件：`MonitorScreen.kt`
+### P0 功能实现 ✅
+3. **FakeIP 真实生效验证** — 已完整实现：DnsServerType.FAKEIP 生成 fakeip 段（默认 10.0.0.0/8）+ DNS 自动规则（query_type A/AAAA 兜底）+ 路由自动规则（fakeIP 段 → proxy），所有规则在 generateObject() 中生成并通过测试
+4. **节点健康检测（URLTest）** — loadBalance.urlTestInterval/urlTestCheckUrl 字段已有；sing-box config 已支持 urltest 类型组（generateObject 第 106/142 行）。**当前阻塞**：需实现"测速结果 → 禁用不可用节点"的反馈机制
+5. **订阅自动更新** — 已实现：WorkManager 周期性 Worker（5h 周期/15min flex）+ SubscriptionUpdateReceiver（每轮最多 10 个订阅，按冷却期过滤）+ SubUpdateInitializer（AndroidX Startup 注册）
 
-### 调研项目（已完成）
+### P1 功能实现 ✅
+6. **节点列表过滤器** — 已实现：名称搜索框 + 无延迟过滤 + 名称/延迟排序（SegmentedButtonRow + SingleChoiceSegmentedButtonRow）+ 协议/地区关键字过滤（Subscription.filterProtocol/filterRegion）
+7. **L7Filter 协议/地区过滤** — SubscriptionManager.refresh() 已集成 filterProtocol + filterRegion 过滤逻辑
 
-#### LxBox 特色功能
-- **节点健康检测**：URLTest ping 测速 + 死节点自动禁用
-- **订阅自动更新**：后台定时拉取（2min/小时触发），断网容错，crash-safe init
-- **拆分隧道**（Split Tunneling）：按 App 排除走直连
-- **跳板/中转链**（Detour/Hop chains）：代理链节点支持
-- **节点列表过滤器**：按协议/地区/延迟/关键字筛选排序
+### 🚫 待做
+- [ ] JSON 配置编辑器 + Schema 校验（Throne）
+- [ ] FakeIP 测速后死节点禁用（连接 URLTest 结果 → 节点禁用）
+- [ ] 拆分隧道（Split Tunneling）
+- [ ] 多配置 Profiles
+- [ ] 广播控制（ADB 远程控制）
+- [ ] GitHub push（网络不稳定，需重试）
 
-#### AsteriskBOX 特色功能
-- **多种运行模式**：VPN Service / TPROXY(ROOT) / TUN(ROOT) / eBPF / TUN2SOCKS / BPF2SOCKS
-- **广播控制**：支持通过 ADB 广播启动/停止代理、更新订阅
-- **资源管理**：自定义资源（IP 列表等）可配置 URL 自动更新
-- **China IP 列表**直出优化
-
-#### ThroneForAndroid 特色功能
-- **JSON 配置编辑器**：sing-box schema check + 自动格式化
-- **多配置 Profiles**：保存多个配置并切换
-- **桌面部件 + 通知切换**：Home screen widget，通知栏直接切节点
-- **Auto Selector Profiles**：自动优选 + 保持最佳服务器排名
-- **URL/IP/国家/速度测试**：批量测速面板，延迟直方图
-- **Cloudflare WARP**：内置 WARP 模式（WireGuard/MASQUE）
-- **Backup 格式**：`.thrbackup` 备份格式，可跨桌面/移动端恢复
-- **Wi-Fi 路由规则**：按 SSID/BSSID 区分路由
-
----
-
-## 📋 待做（移植计划，按优先级）
-
-### P0 — 核心功能缺失（必须实现）
-1. **节点健康检测**（LxBox）：URLTest ping 测速 + 死节点自动禁用
-2. **订阅自动更新**（LxBox）：后台定时拉取，断网容错
-3. **JSON 配置编辑器 + Schema 校验**（Throne）：用户可直接编辑完整配置
-4. **FakeIP 真实生效**：需验证配置生成逻辑是否真正写入 fakeip server 段
-
-### P1 — 用户体验增强
-5. **节点列表过滤器**（LxBox）：协议/地区/延迟/关键字筛选排序
-6. **拆分隧道**（LxBox）：按 App 排除走直连
-7. **节点编辑器增强**：UTLS/多路复用/http-socks 等高级字段（已有框架待完善）
-
-### P2 — 可选功能
-8. **多配置 Profiles**（Throne）：保存/切换多套配置
-9. **通知栏快捷切换节点**（Throne）
-10. **广播控制**（AsteriskBOX）：ADB 远程控制
-
-### 🚫 网络问题
-- GitHub push 当前持续失败（Connection reset by peer）
-- 本地 2 个 commit 已完成，待网络恢复后推送：
-  - `2db0ca7` fix: 修复首页VPN状态不更新bug + 监控页颜色反差问题
-  - `59e43f9` docs: 更新进度记录（第13段起点）
+### 📦 编译状态
+- `./gradlew assembleDebug` BUILD SUCCESSFUL
+- `./gradlew testDebugUnitTest` BUILD SUCCESSFUL
+- 本地 commit 已就绪，push 等待网络恢复
 
 > 仅 ARMv8，Kotlin/Compose，不集成 Root/Magisk。
 

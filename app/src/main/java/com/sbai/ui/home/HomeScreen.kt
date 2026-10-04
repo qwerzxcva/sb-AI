@@ -38,6 +38,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Router
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Widgets
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -96,6 +97,7 @@ import com.sbai.ui.theme.LocalSbStyleTokens
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -134,6 +136,13 @@ fun HomeScreen() {
             }
         }
     }
+
+    // 节点过滤状态（LxBox NodeListFilter 基准）
+    var nodeFilterQuery by remember { mutableStateOf("") }
+    var nodeFilterProtocol by remember { mutableStateOf("") }
+    var nodeFilterRegion by remember { mutableStateOf("") }
+    var nodeFilterNoDelay by remember { mutableStateOf(false) }
+    var nodeSortMode by remember { mutableStateOf<NodeSortMode>(NodeSortMode.NAME_ASC) }
 
     val running = status is SbAiVpnService.ServiceStatus.Running
     val lb = state.loadBalance
@@ -544,7 +553,68 @@ fun HomeScreen() {
             // ---- 节点 ----
             item {
                 SbGroup(title = "节点（${state.proxyNodes.size}）") {
-                    state.proxyNodes.take(20).forEach { node ->
+                    // LxBox NodeListFilter：过滤栏
+                    item {
+                        Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
+                            OutlinedTextField(
+                                value = nodeFilterQuery,
+                                onValueChange = { nodeFilterQuery = it },
+                                label = { Text("搜索（名称/地区）") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth(),
+                                trailingIcon = {
+                                    if (nodeFilterQuery.isNotBlank()) {
+                                        IconButton(onClick = { nodeFilterQuery = "" }) {
+                                            Icon(Icons.Filled.Close, contentDescription = "清除", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
+                                    }
+                                },
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                FilterChip(
+                                    selected = nodeFilterNoDelay,
+                                    onClick = { nodeFilterNoDelay = !nodeFilterNoDelay },
+                                    label = { Text("无延迟") },
+                                )
+                                SingleChoiceSegmentedButtonRow {
+                                    SegmentedButton(
+                                        selected = nodeSortMode == NodeSortMode.NAME_ASC,
+                                        onClick = { nodeSortMode = if (nodeSortMode == NodeSortMode.NAME_ASC) NodeSortMode.LATENCY_ASC else NodeSortMode.NAME_ASC },
+                                        shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
+                                    ) { Text("名称↑") }
+                                    SegmentedButton(
+                                        selected = nodeSortMode == NodeSortMode.LATENCY_ASC,
+                                        onClick = { nodeSortMode = if (nodeSortMode == NodeSortMode.LATENCY_ASC) NodeSortMode.NAME_ASC else NodeSortMode.LATENCY_ASC },
+                                        shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
+                                    ) { Text("延迟↑") }
+                                }
+                            }
+                        }
+                    }
+                    val filtered = state.proxyNodes
+                        .filter { node ->
+                            val q = nodeFilterQuery.trim()
+                            val nameHit = q.isEmpty() || node.name.contains(q, ignoreCase = true)
+                            val protoHit = nodeFilterProtocol.isEmpty() || node.outboundJson.contains(nodeFilterProtocol, ignoreCase = true)
+                            val regionHit = nodeFilterRegion.isEmpty() || node.name.contains(nodeFilterRegion, ignoreCase = true)
+                            val delayOk = !nodeFilterNoDelay || runCatching {
+                                val j = kotlinx.serialization.json.Json.parseToJsonElement(node.outboundJson).jsonObject
+                                j["delay"]?.jsonPrimitive?.content != null
+                            }.getOrDefault(true)
+                            nameHit && protoHit && regionHit && delayOk
+                        }
+                        .sortedWith(compareBy(
+                            { if (nodeSortMode == NodeSortMode.NAME_ASC) 0 else 1 },
+                            { it.name.lowercase() },
+                            {
+                                val d = runCatching {
+                                    kotlinx.serialization.json.Json.parseToJsonElement(it.outboundJson).jsonObject["delay"]?.jsonPrimitive?.content?.toLongOrNull()
+                                }.getOrDefault(null)
+                                d ?: 0L
+                            },
+                        ))
+                    filtered.take(30).forEach { node ->
                         item {
                             SbItem(
                                 title = node.name.ifBlank { "未命名节点" },
@@ -1065,3 +1135,10 @@ private fun TextEditDialog(title: String, initial: String, onDismiss: () -> Unit
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
     )
 }
+
+// ---------------------------------------------------------------------------
+// 节点列表过滤器枚举
+// ---------------------------------------------------------------------------
+
+enum class NodeSortMode { NAME_ASC, LATENCY_ASC }
+

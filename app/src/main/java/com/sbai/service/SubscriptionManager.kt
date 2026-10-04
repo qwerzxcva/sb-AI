@@ -79,6 +79,28 @@ class SubscriptionManager(
                 }
             }
 
+            // LxBox L7Filter：协议 / 地区关键字过滤（空 = 不过滤）
+            val filterProto = subscription.filterProtocol.trim()
+            val filterRegion = subscription.filterRegion.trim()
+            if (filterProto.isNotEmpty()) {
+                parsed = parsed.filter { n ->
+                    val protoHit = filterProto.split(Regex("\\s+"))
+                        .filter { it.isNotBlank() }.any { pattern ->
+                            n.outboundJson.contains(pattern, ignoreCase = true)
+                        }
+                    protoHit
+                }
+            }
+            if (filterRegion.isNotEmpty()) {
+                parsed = parsed.filter { n ->
+                    val regionHit = filterRegion.split(Regex("\\s+"))
+                        .filter { it.isNotBlank() }.any { pattern ->
+                            n.name.contains(pattern, ignoreCase = true)
+                        }
+                    regionHit
+                }
+            }
+
             // Throne SubscriptionOptions 基准：后处理
             if (subscription.removeInsecure) {
                 parsed = parsed.filter { !isInsecureNode(it.outboundJson) }

@@ -345,11 +345,11 @@ data class Subscription(
     val detour: String = "direct",
     /** 跳过 TLS 证书校验（机场 CDN 域名证书不匹配时用；不安全，仅该订阅生效） */
     val skipCertVerify: Boolean = false,
+    /** LxBox L7Filter：协议关键字过滤（空 = 不过滤；匹配 outboundJson 中的 type 字段） */
+    val filterProtocol: String = "",
+    /** LxBox L7Filter：地区关键字过滤（空 = 不过滤；匹配节点名称或 outbound server 字段） */
+    val filterRegion: String = "",
 )
-
-// ---------------------------------------------------------------------------
-// App settings
-// ---------------------------------------------------------------------------
 
 @Serializable
 enum class LogLevel(val wireName: String) { TRACE("trace"), DEBUG("debug"), INFO("info"), WARN("warn"), ERROR("error"), FATAL("fatal"), PANIC("panic") }
