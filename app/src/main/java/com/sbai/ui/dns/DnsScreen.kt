@@ -60,6 +60,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.sbai.ui.components.BottomBarController
 import com.sbai.data.DnsGroup
 import com.sbai.data.DnsRule
 import com.sbai.data.DnsServer
@@ -71,6 +72,7 @@ import com.sbai.ui.components.BottomBarClearance
 import com.sbai.ui.components.DragDropLazyColumn
 import com.sbai.ui.components.FabBottomBarClearance
 import com.sbai.ui.components.SbBadge
+import com.sbai.ui.components.RestoreBottomBarOnDispose
 import com.sbai.ui.components.SbGroup
 import com.sbai.ui.components.SbItem
 import com.sbai.ui.theme.LocalSbStyleTokens
@@ -98,6 +100,8 @@ fun DnsScreen() {
         DnsServerEditorDialog(
             initial = server,
             existingServers = state.dnsServers.map { it.tag },
+            existingFakeipTag = state.dnsServers
+                .firstOrNull { it.type == DnsServerType.FAKEIP && it.id != server.id }?.tag,
             onDismiss = { editingServer = null },
             onSave = { store.upsertDnsServer(it); editingServer = null },
             onDelete = if (server.tag.isNotBlank()) {
@@ -479,6 +483,7 @@ private fun DnsGroupsTab(
 private fun DnsServerEditorDialog(
     initial: DnsServer,
     existingServers: List<String>,
+    existingFakeipTag: String?,
     onDismiss: () -> Unit,
     onSave: (DnsServer) -> Unit,
     onDelete: (() -> Unit)?,
@@ -499,11 +504,17 @@ private fun DnsServerEditorDialog(
     val needsAddress = type !in setOf(DnsServerType.LOCAL, DnsServerType.HOSTS, DnsServerType.FAKEIP)
     val supportsEch = type in setOf(DnsServerType.TLS, DnsServerType.HTTPS, DnsServerType.QUIC, DnsServerType.H3)
 
+    // fakeIP 唯一性：sing-box 只允许一个 fakeip server；已存在其它 fakeip 时禁止再建
+    val hasOtherFakeip = existingFakeipTag != null && existingFakeipTag != initial.tag
+
     // 整页编辑器（不再是弹窗）；拦截系统返回/侧滑回到 DNS 列表
-    BackHandler(enabled = true) { onDismiss() }
+    BackHandler(enabled = true) { BottomBarController.show(); onDismiss() }
+    RestoreBottomBarOnDispose()
 
     fun doSave() {
         if (tag.isBlank()) return
+        // fakeIP 唯一性：已存在其它 fakeIP 时禁止保存
+        if (type == DnsServerType.FAKEIP && hasOtherFakeip) return
         onSave(
             initial.copy(
                 tag = tag.trim(), type = type, address = address.trim(),
@@ -523,7 +534,7 @@ private fun DnsServerEditorDialog(
             TopAppBar(
                 title = { Text(if (initial.tag.isBlank()) "添加 DNS" else "编辑 DNS") },
                 navigationIcon = {
-                    IconButton(onClick = onDismiss) {
+                    IconButton(onClick = { BottomBarController.show(); onDismiss() }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
                     }
                 },
@@ -533,7 +544,10 @@ private fun DnsServerEditorDialog(
                             Icon(Icons.Filled.Delete, contentDescription = "删除", tint = MaterialTheme.colorScheme.error)
                         }
                     }
-                    TextButton(onClick = { doSave() }) { Text("保存") }
+                    TextButton(
+                        onClick = { doSave() },
+                        enabled = tag.isNotBlank() && !(type == DnsServerType.FAKEIP && hasOtherFakeip),
+                    ) { Text("保存") }
                 },
             )
         },
@@ -617,6 +631,14 @@ private fun DnsServerEditorDialog(
 
                 // fakeIP 自定义段（仅 fakeip 类型）
                 if (type == DnsServerType.FAKEIP) {
+                    // fakeIP 唯一性：sing-box 只允许一个 fakeip server
+                    if (hasOtherFakeip) {
+                        Text(
+                            "已存在 fakeIP「$existingFakeipTag」，sing-box 只允许一个 fakeIP。请先删除或改为编辑它。",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
                     OutlinedTextField(
                         value = inet4Range, onValueChange = { inet4Range = it },
                         label = { Text("IPv4 段（可选，默认 10.0.0.0/8）") },
@@ -628,7 +650,7 @@ private fun DnsServerEditorDialog(
                         singleLine = true, modifier = Modifier.fillMaxWidth(),
                     )
                     Text(
-                        "创建 fakeIP 后，路由规则页会自动生成 fakeIP 段路由规则。",
+                        "创建 fakeIP 后，路由规则页和 DNS 规则页会自动生成对应的 fakeIP 规则。",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -694,7 +716,8 @@ private fun DnsRuleEditorDialog(
     }
 
     // #7：整页编辑器（不再是弹窗）；拦截系统返回/侧滑回到 DNS 列表
-    BackHandler(enabled = true) { onDismiss() }
+    BackHandler(enabled = true) { BottomBarController.show(); onDismiss() }
+    RestoreBottomBarOnDispose()
 
     fun doSave() {
         if (ruleAction == "route" && server.isBlank()) { error = "route 动作必须选择目标 DNS / group"; return }
@@ -727,7 +750,7 @@ private fun DnsRuleEditorDialog(
             TopAppBar(
                 title = { Text(if (initial.autoFromRouteRuleId != null) "DNS 规则（自动）" else if (initial.name.isBlank()) "添加 DNS 规则" else "编辑 DNS 规则") },
                 navigationIcon = {
-                    IconButton(onClick = onDismiss) {
+                    IconButton(onClick = { BottomBarController.show(); onDismiss() }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
                     }
                 },
@@ -955,14 +978,15 @@ private fun DnsGroupEditorDialog(
     var name by remember { mutableStateOf(initial.name) }
     var selected by remember { mutableStateOf(initial.serverTags.toSet()) }
 
-    BackHandler(enabled = true) { onDismiss() }
+    BackHandler(enabled = true) { BottomBarController.show(); onDismiss() }
+    RestoreBottomBarOnDispose()
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text(if (initial.name.isBlank()) "添加 DNS group" else "编辑 DNS group") },
                 navigationIcon = {
-                    IconButton(onClick = onDismiss) {
+                    IconButton(onClick = { BottomBarController.show(); onDismiss() }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
                     }
                 },

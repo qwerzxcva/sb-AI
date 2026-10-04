@@ -118,6 +118,19 @@ object SbCommandClient : CommandClientHandler {
         _connections.value = emptyList()
     }
 
+    /**
+     * 带重试的连接：服务可能尚未启动（:core 进程 CommandServer 未就绪），
+     * 轮询若干次直到连上或超时。用于点击启动后 / 进入首页时。
+     */
+    suspend fun connectWithRetry(attempts: Int = 10, delayMs: Long = 800) {
+        repeat(attempts) {
+            if (_connectedToService.value) return
+            connect()
+            if (_connectedToService.value) return
+            kotlinx.coroutines.delay(delayMs)
+        }
+    }
+
     @Synchronized
     fun disconnect() {
         _status.value = DashboardStatus()

@@ -55,6 +55,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.sbai.ui.components.BottomBarController
 import com.sbai.data.RouteRule
 import com.sbai.data.RouteRuleSet
 import com.sbai.data.RuleAction
@@ -62,11 +63,13 @@ import com.sbai.data.RuleLogic
 import com.sbai.data.RuleSetType
 import com.sbai.data.RuleStore
 import com.sbai.service.RouteRuleJsonCodec
+import com.sbai.service.SingBoxConfigGenerator
 import com.sbai.ui.components.AppPickerDialog
 import com.sbai.ui.components.BottomBarClearance
 import com.sbai.ui.components.DragDropLazyColumn
 import com.sbai.ui.components.FabBottomBarClearance
 import com.sbai.ui.components.SbBadge
+import com.sbai.ui.components.RestoreBottomBarOnDispose
 import com.sbai.ui.components.SbGroup
 import com.sbai.ui.components.SbItem
 import com.sbai.ui.theme.LocalSbStyleTokens
@@ -178,6 +181,29 @@ fun RouteRulesScreen() {
                                 subtitle = "点右下角「添加规则」；域名/IP 一行一条，也可直接粘贴规则 JSON",
                             )
                         }
+                    }
+                }
+                // fakeIP 联动：DNS 服务器创建 fakeIP 时，路由页显示自动生成的 fakeIP 段规则
+                val autoRules = SingBoxConfigGenerator.autoRouteRules(state)
+                if (autoRules.isNotEmpty()) {
+                    Spacer(Modifier.height(16.dp))
+                    Text(
+                        "自动生成的规则（fakeIP 联动，只读）",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.tertiary,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                    )
+                    autoRules.forEach { rule ->
+                        SbGroup(title = "") {
+                            item {
+                                SbItem(
+                                    title = rule.name,
+                                    subtitle = "IP×${rule.ipCidrs.size} · ${rule.ipCidrs.joinToString()}",
+                                    trailing = { SbBadge("自动", MaterialTheme.colorScheme.tertiary) },
+                                )
+                            }
+                        }
+                        Spacer(Modifier.height(8.dp))
                     }
                 }
                 Spacer(Modifier.height(24.dp))
@@ -428,14 +454,15 @@ private fun RouteRuleEditorDialog(
 
     // 整页编辑器（不再是弹窗）：TopAppBar 返回 + 顶部保存
     // #6：拦截系统返回/侧滑退出，回到路由列表而不是首页
-    BackHandler(enabled = true) { onDismiss() }
+    BackHandler(enabled = true) { BottomBarController.show(); onDismiss() }
+    RestoreBottomBarOnDispose()
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text(if (initial.name.isBlank() && initial.domains.isEmpty()) "添加路由规则" else "编辑路由规则") },
                 navigationIcon = {
-                    IconButton(onClick = onDismiss) {
+                    IconButton(onClick = { BottomBarController.show(); onDismiss() }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
                     }
                 },
@@ -850,7 +877,8 @@ private fun RuleSetEditorDialog(
     var error by remember { mutableStateOf<String?>(null) }
 
     // 整页编辑器（不再是弹窗）
-    BackHandler(enabled = true) { onDismiss() }
+    BackHandler(enabled = true) { BottomBarController.show(); onDismiss() }
+    RestoreBottomBarOnDispose()
 
     fun doSave() {
         if (tag.isBlank()) { error = "tag 不能为空"; return }
@@ -873,7 +901,7 @@ private fun RuleSetEditorDialog(
             TopAppBar(
                 title = { Text(if (initial.tag.isBlank()) "添加规则集" else "编辑规则集") },
                 navigationIcon = {
-                    IconButton(onClick = onDismiss) {
+                    IconButton(onClick = { BottomBarController.show(); onDismiss() }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
                     }
                 },

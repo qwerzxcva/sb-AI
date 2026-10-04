@@ -343,6 +343,8 @@ data class Subscription(
     val sortByLatency: Boolean = false,
     /** 订阅更新走哪个出口：direct（直连）/ proxy（代理）；空 = 跟随系统 */
     val detour: String = "direct",
+    /** 跳过 TLS 证书校验（机场 CDN 域名证书不匹配时用；不安全，仅该订阅生效） */
+    val skipCertVerify: Boolean = false,
 )
 
 // ---------------------------------------------------------------------------

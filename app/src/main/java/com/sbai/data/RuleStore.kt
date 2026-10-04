@@ -145,6 +145,14 @@ class RuleStore private constructor(context: Context) {
             server.copy(tag = nextTag(s.dnsServers.map { it.tag }, "dns"))
         } else server
         val list = s.dnsServers.toMutableList()
+        // fakeIP 唯一性：sing-box 只允许一个 fakeip server；新建/启用 fakeip 时禁用其它 fakeip
+        if (target.type == DnsServerType.FAKEIP && target.enabled) {
+            for (i in list.indices) {
+                if (list[i].type == DnsServerType.FAKEIP && list[i].id != target.id && list[i].enabled) {
+                    list[i] = list[i].copy(enabled = false)
+                }
+            }
+        }
         val idx = list.indexOfFirst { it.id == target.id }
         if (idx >= 0) list[idx] = target else list.add(target)
         s.copy(dnsServers = list)

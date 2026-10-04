@@ -87,13 +87,24 @@ class SbAiVpnService : VpnService() {
                 platformInterface = platform
                 runtime = rt
                 _status.value = ServiceStatus.Running
+                persistError(null)   // 启动成功，清除旧错误
                 updateNotification(getString(R.string.vpn_notification_title))
             } catch (t: Throwable) {
                 Log.e(TAG, "failed to start vpn", t)
                 _status.value = ServiceStatus.Error(t.message ?: "unknown")
+                persistError(t.message ?: t.javaClass.simpleName)   // 跨进程传给 UI 显示
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
             }
+        }
+    }
+
+    /** 把启动错误写入 SharedPreferences（commit 同步），供 UI 进程读取展示 */
+    private fun persistError(msg: String?) {
+        runCatching {
+            getSharedPreferences("sbai_vpn", MODE_PRIVATE).edit()
+                .putString("last_error", msg)
+                .commit()
         }
     }
 

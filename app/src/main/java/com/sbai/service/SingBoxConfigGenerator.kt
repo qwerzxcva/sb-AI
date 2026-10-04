@@ -504,25 +504,65 @@ object SingBoxConfigGenerator {
         val defaultDnsTag = state.dnsServers.firstOrNull { it.enabled && it.tag.isNotBlank() }?.tag
             ?: "dns-default"
         val groupOfTag = state.dnsGroups.associate { it.name to it.serverTags }
-        return state.routeRules.filter { it.enabled }.mapNotNull { rule ->
-            if (rule.action == RuleAction.REJECT) return@mapNotNull null
-            if (!rule.hasDomainContent) return@mapNotNull null
+
+        val result = mutableListOf<DnsRule>()
+
+        // fakeIP 联动：fakeip DNS server 存在时，DNS 规则页显示自动 fakeIP 规则
+        state.dnsServers.firstOrNull { it.enabled && it.type == DnsServerType.FAKEIP && it.tag.isNotBlank() }
+            ?.let { fake ->
+                result.add(
+                    DnsRule(
+                        id = "auto-fakeip",
+                        enabled = true,
+                        autoFromRouteRuleId = "fakeip",
+                        name = "自动 · fakeIP",
+                        queryTypes = listOf("A", "AAAA"),
+                        server = fake.tag,
+                    ),
+                )
+            }
+
+        state.routeRules.filter { it.enabled }.forEach { rule ->
+            if (rule.action == RuleAction.REJECT) return@forEach
+            if (!rule.hasDomainContent) return@forEach
             val dnsServer = resolveDnsTag(rule.dnsTag, groupOfTag, state)
             val strategy = ipStrategy(rule.ipv4, rule.ipv6)
-            if (dnsServer == null && strategy == null) return@mapNotNull null
-            DnsRule(
-                id = "auto-${rule.id}",
-                enabled = true,
-                autoFromRouteRuleId = rule.id,
-                name = "自动 · ${rule.name.ifBlank { "路由规则" }}",
-                domains = rule.domains,
-                domainSuffixes = rule.domainSuffixes,
-                domainKeywords = rule.domainKeywords,
-                domainRegexes = rule.domainRegexes,
-                server = dnsServer ?: defaultDnsTag,
-                ipStrategy = strategy ?: "",
+            if (dnsServer == null && strategy == null) return@forEach
+            result.add(
+                DnsRule(
+                    id = "auto-${rule.id}",
+                    enabled = true,
+                    autoFromRouteRuleId = rule.id,
+                    name = "自动 · ${rule.name.ifBlank { "路由规则" }}",
+                    domains = rule.domains,
+                    domainSuffixes = rule.domainSuffixes,
+                    domainKeywords = rule.domainKeywords,
+                    domainRegexes = rule.domainRegexes,
+                    server = dnsServer ?: defaultDnsTag,
+                    ipStrategy = strategy ?: "",
+                ),
             )
         }
+        return result
+    }
+
+    /** 供 UI 展示：fakeIP 联动自动生成的路由规则（只读） */
+    fun autoRouteRules(state: AppState): List<RouteRule> {
+        val fake = state.dnsServers.firstOrNull {
+            it.enabled && it.type == DnsServerType.FAKEIP && it.tag.isNotBlank()
+        } ?: return emptyList()
+        return listOf(
+            RouteRule(
+                id = "auto-fakeip",
+                name = "自动 · fakeIP 段",
+                enabled = true,
+                action = RuleAction.ROUTE_PROXY,
+                ipCidrs = listOf(
+                    fake.inet4Range.ifBlank { "10.0.0.0/8" },
+                    fake.inet6Range.ifBlank { "fc00::/18" },
+                ),
+            ),
+        )
     }
 
     private fun resolveDnsTag(
@@ -637,10 +677,26 @@ object SingBoxConfigGenerator {
             json.parseToJsonElement(node.outboundJson).jsonObject["tag"]?.jsonPrimitive?.content
         }.getOrNull() ?: node.name.ifBlank { node.id }
 
-    /** 交给 Libbox.checkConfig 校验；返回 null 表示通过 */
-    fun validate(configJson: String): String? =
-        runCatching {
-            io.nekohasekai.libbox.Libbox.checkConfig(configJson)
-            null
-        }.getOrElse { it.message ?: "unknown error" }
+    /** 配置校验：调用 libbox.checkConfig；失败时返回可读错误（5 秒超时） */
+    fun validate(configJson: String): String? {
+        return runCatching {
+            // checkConfig 是 JNI 同步调用，必须在 IO 线程执行，加超时保护
+            var result: String? = null
+            val lock = Any()
+            java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+                Thread(r, "config-validator").apply { isDaemon = true }
+            }.submit {
+                try {
+                    io.nekohasekai.libbox.Libbox.checkConfig(configJson)
+                    synchronized(lock) { result = null }
+                } catch (e: Exception) {
+                    synchronized(lock) { result = e.message ?: "unknown error" }
+                }
+            }.get(5, java.util.concurrent.TimeUnit.SECONDS)
+            result
+        }.getOrElse { e ->
+            android.util.Log.e("SingBoxConfig", "checkConfig timeout/failed", e)
+            if (e is java.util.concurrent.TimeoutException) "配置校验超时（可能是内核不兼容）" else e.message ?: "未知错误"
+        }
+    }
 }

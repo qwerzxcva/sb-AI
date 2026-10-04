@@ -73,6 +73,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import com.sbai.ui.components.BottomBarController
 import com.sbai.data.LoadBalanceConfig
 import com.sbai.data.LoadBalanceMode
 import com.sbai.data.ProxyNode
@@ -86,6 +87,7 @@ import com.sbai.service.SingBoxConfigGenerator
 import com.sbai.service.SubscriptionManager
 import com.sbai.ui.components.SbBadge
 import com.sbai.ui.components.SbCollapsibleGroup
+import com.sbai.ui.components.RestoreBottomBarOnDispose
 import com.sbai.ui.components.SbGroup
 import com.sbai.ui.components.SbItem
 import com.sbai.ui.components.SbSpacer
@@ -125,18 +127,33 @@ fun HomeScreen() {
     val vpnPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult(),
     ) { result ->
-        if (result.resultCode == Activity.RESULT_OK) startVpn(context)
+        if (result.resultCode == Activity.RESULT_OK) {
+            startVpn(context)
+            scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                SbCommandClient.connectWithRetry()
+            }
+        }
     }
 
     val running = status is SbAiVpnService.ServiceStatus.Running
     val lb = state.loadBalance
+    // :core 进程启动错误（跨进程持久化），未连接时展示给用户
+    val persistedError = remember {
+        runCatching {
+            context.getSharedPreferences("sbai_vpn", Context.MODE_PRIVATE)
+                .getString("last_error", null)
+        }.getOrNull()
+    }
 
     // 进程隔离后：UI 进程自建 CommandClient 连接 :core 进程的 CommandServer（unix socket 跨进程），
     // 以 connectedToService 作为「内核是否在跑」的真源（StateFlow 不跨进程共享）。
+    // 关键：CommandClient 的 socket 路径由 Go 侧 basePath（Libbox.setup 设置）决定，
+    // UI 进程必须先调 setup（幂等）才能连到 :core 的 socket，否则 connect 失败、状态恒为停止。
     // connect() 是阻塞 socket 连接，必须在 IO 线程，否则进首页卡 UI
     LaunchedEffect(Unit) {
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            SbCommandClient.connect()
+            runCatching { com.sbai.service.LibboxRuntime.setup(context.applicationContext) }
+            SbCommandClient.connectWithRetry()
         }
     }
     val coreRunning = running || coreConnected
@@ -182,11 +199,13 @@ fun HomeScreen() {
                     Column(Modifier.weight(1f)) {
                         Text("sb-AI", style = MaterialTheme.typography.headlineLarge)
                         Text(
-                            statusText(status),
+                            // 跨进程真源：:core 进程的服务状态 UI 进程读不到，
+                            // 以 CommandClient 是否连上 CommandServer 为准
+                            displayStatus(coreConnected, status),
                             style = MaterialTheme.typography.bodyMedium,
-                            color = when (status) {
-                                is SbAiVpnService.ServiceStatus.Running -> MaterialTheme.colorScheme.primary
-                                is SbAiVpnService.ServiceStatus.Error -> MaterialTheme.colorScheme.error
+                            color = when {
+                                status is SbAiVpnService.ServiceStatus.Error -> MaterialTheme.colorScheme.error
+                                coreConnected -> MaterialTheme.colorScheme.primary
                                 else -> MaterialTheme.colorScheme.onSurfaceVariant
                             },
                         )
@@ -208,7 +227,13 @@ fun HomeScreen() {
                                     status is SbAiVpnService.ServiceStatus.Stopping -> Unit
                                 else -> {
                                     val intent = VpnService.prepare(context)
-                                    if (intent != null) vpnPermissionLauncher.launch(intent) else startVpn(context)
+                                    if (intent != null) vpnPermissionLauncher.launch(intent) else {
+                                        startVpn(context)
+                                        // 启动后轮询重连 CommandClient，让 UI 状态跟上 :core 进程
+                                        scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                                            SbCommandClient.connectWithRetry()
+                                        }
+                                    }
                                 }
                             }
                         },
@@ -675,6 +700,21 @@ private fun statusText(status: SbAiVpnService.ServiceStatus): String = when (sta
     else -> "已停止"
 }
 
+/**
+ * 跨进程显示状态：服务跑在 :core 进程，UI 进程的 SbAiVpnService.status 不更新。
+ * 以 CommandClient 是否连上 CommandServer（unix socket）为运行真源；
+ * 仅在 UI 进程捕获到 Starting/Stopping/Error 瞬时态时优先显示它们。
+ */
+private fun displayStatus(
+    coreConnected: Boolean,
+    status: SbAiVpnService.ServiceStatus,
+): String = when (status) {
+    is SbAiVpnService.ServiceStatus.Starting -> "启动中…"
+    is SbAiVpnService.ServiceStatus.Stopping -> "停止中…"
+    is SbAiVpnService.ServiceStatus.Error -> "错误: ${status.message}"
+    else -> if (coreConnected) "运行中" else "已停止"
+}
+
 private fun formatTime(epoch: Long): String =
     if (epoch <= 0) "未更新"
     else SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()).format(Date(epoch))
@@ -836,10 +876,12 @@ private fun SubscriptionEditorDialog(
     var removeUnavailable by remember { mutableStateOf(initial.removeUnavailable) }
     var sortByLatency by remember { mutableStateOf(initial.sortByLatency) }
     var detour by remember { mutableStateOf(initial.detour) }
+    var skipCertVerify by remember { mutableStateOf(initial.skipCertVerify) }
     var error by remember { mutableStateOf<String?>(null) }
 
     // 整页编辑器（不再是弹窗）；拦截系统返回/侧滑回到首页
-    BackHandler(enabled = true) { onDismiss() }
+    BackHandler(enabled = true) { BottomBarController.show(); onDismiss() }
+    RestoreBottomBarOnDispose()
 
     fun doSave() {
         val u = url.trim()
@@ -859,6 +901,7 @@ private fun SubscriptionEditorDialog(
                 removeUnavailable = removeUnavailable && urlTestAfterUpdate,
                 sortByLatency = sortByLatency && urlTestAfterUpdate,
                 detour = detour,
+                skipCertVerify = skipCertVerify,
             ),
         )
     }
@@ -868,7 +911,7 @@ private fun SubscriptionEditorDialog(
             TopAppBar(
                 title = { Text(if (initial.url.isBlank()) "添加订阅源" else "订阅源") },
                 navigationIcon = {
-                    IconButton(onClick = onDismiss) {
+                    IconButton(onClick = { BottomBarController.show(); onDismiss() }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
                     }
                 },
@@ -918,6 +961,19 @@ private fun SubscriptionEditorDialog(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+
+                // 跳过证书校验（机场 CDN 证书不匹配时用）
+                SubOptionSwitch(
+                    "跳过 TLS 证书校验",
+                    skipCertVerify,
+                ) { skipCertVerify = it }
+                if (skipCertVerify) {
+                    Text(
+                        "⚠ 不安全：仅当机场域名证书不匹配（如提示 Hostname not verified）时开启。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
 
                 OutlinedTextField(
                     value = userAgent, onValueChange = { userAgent = it },

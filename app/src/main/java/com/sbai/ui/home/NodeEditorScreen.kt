@@ -42,7 +42,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.sbai.ui.components.BottomBarController
 import com.sbai.data.ProxyNode
+import com.sbai.ui.components.RestoreBottomBarOnDispose
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.add
@@ -85,6 +87,8 @@ fun NodeEditorScreen(
     onBack: () -> Unit,
     onSave: (ProxyNode) -> Unit,
 ) {
+    RestoreBottomBarOnDispose()
+
     // 解析已有 JSON 到表单字段
     val parsed = remember(initial.outboundJson) { parseOutbound(initial.outboundJson) }
 
@@ -131,7 +135,7 @@ fun NodeEditorScreen(
     var showJsonPaste by remember { mutableStateOf(false) }
 
     // 拦截系统返回/侧滑，回到首页而不是退出应用
-    BackHandler(enabled = true) { onBack() }
+    BackHandler(enabled = true) { BottomBarController.show(); onBack() }
 
     fun buildOutbound(): String {
         val effectiveTag = tag.trim().ifBlank { server.trim().ifBlank { "node" } }
@@ -240,7 +244,7 @@ fun NodeEditorScreen(
             TopAppBar(
                 title = { Text(if (initial.outboundJson.isBlank()) "添加节点" else "编辑节点") },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
+                    IconButton(onClick = { BottomBarController.show(); onBack() }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
                     }
                 },

@@ -123,6 +123,9 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 
+    // Clash YAML 订阅解析（部分机场只提供 Clash 格式）
+    implementation("org.yaml:snakeyaml:2.2")
+
     // Kototoro 同款液态玻璃内核（vendored io.github.kyant0:backdrop:2.0.0，见 backdrop/UPSTREAM.md）
     implementation(project(":backdrop"))
 

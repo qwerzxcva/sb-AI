@@ -42,6 +42,7 @@ import androidx.navigation.compose.rememberNavController
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import com.sbai.data.RuleStore
+import com.sbai.ui.components.BottomBarController
 import com.sbai.ui.components.SbGlassBottomBar
 import com.sbai.ui.components.SbNavItem
 import com.sbai.ui.dns.DnsScreen
@@ -86,8 +87,9 @@ private fun MainScaffold() {
     // Kototoro 同款液态玻璃底栏：页面内容捕获为 LayerBackdrop，底栏采样折射
     val pageBackdrop = rememberLayerBackdrop()
 
-    // 下滑隐藏 / 上滑显示底栏（nested scroll 监听滚动方向）
-    var barVisible by remember { mutableStateOf(true) }
+    // 下滑隐藏 / 上滑显示底栏；BottomBarController 为跨组件真源，
+    // 编辑器关闭时显式恢复（修复「二级页上滑隐藏后返回列表唤不出底栏」bug）
+    val barVisible by BottomBarController.visible.collectAsState()
     val barOffset by androidx.compose.animation.core.animateDpAsState(
         targetValue = if (barVisible) 0.dp else 120.dp,
         animationSpec = androidx.compose.animation.core.tween(250),
@@ -99,8 +101,8 @@ private fun MainScaffold() {
                 available: androidx.compose.ui.geometry.Offset,
                 source: androidx.compose.ui.input.nestedscroll.NestedScrollSource,
             ): androidx.compose.ui.geometry.Offset {
-                if (available.y < -1f) barVisible = false      // 内容向下滚 → 隐藏
-                else if (available.y > 1f) barVisible = true   // 内容向上滚 → 显示
+                if (available.y < -1f) BottomBarController.hide()
+                else if (available.y > 1f) BottomBarController.show()
                 return androidx.compose.ui.geometry.Offset.Zero
             }
         }

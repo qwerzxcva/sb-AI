@@ -1,6 +1,12 @@
 package com.sbai.service
 
+import java.security.cert.X509Certificate
 import android.util.Log
+import javax.net.ssl.HostnameVerifier
+import javax.net.ssl.HttpsURLConnection
+import javax.net.ssl.SSLContext
+import javax.net.ssl.TrustManager
+import javax.net.ssl.X509TrustManager
 import com.sbai.data.ProxyNode
 import com.sbai.data.RuleStore
 import com.sbai.data.Subscription
@@ -37,22 +43,28 @@ class SubscriptionManager(
                 "订阅地址必须是 http/https"
             }
             val settings = store.state.value.settings
-            val fetched = httpGet(subscription.url, subscription.userAgent, settings, subscription.detour, appContext)
+            val fetched = httpGet(
+                subscription.url, subscription.userAgent, settings,
+                subscription.detour, appContext, subscription.skipCertVerify,
+            )
             val body = fetched.body
 
-            var parsed = ShareLinkParser.parseSubscription(body)
-            if (parsed.isEmpty()) {
+            // 多格式解析：分享链接 / Clash YAML / sing-box-xray JSON（参考 LxBox 自动识别）
+            val parsedResult = SubscriptionFormat.parse(body)
+            if (parsedResult == null || parsedResult.nodes.isEmpty()) {
                 // 给出可诊断的错误：说明拿到了什么格式
                 val hint = when {
                     body.isBlank() -> "订阅返回空内容"
-                    body.trimStart().startsWith("{") -> "订阅返回的是 JSON 配置（非分享链接），暂不支持"
-                    body.contains("proxies:") || body.contains("proxy-groups:") ->
-                        "订阅返回的是 Clash YAML 格式，暂不支持（请改用 sing-box/通用订阅链接）"
-                    body.trimStart().startsWith("<") -> "订阅返回 HTML（可能是订阅过期/需要登录）"
-                    else -> "订阅内容不包含可识别的节点链接（支持 vless/vmess/trojan/ss/hysteria2）"
+                    body.trimStart().startsWith("<") ->
+                        "订阅返回 HTML 登录/授权页（该地址可能是登录端点而非订阅链接，" +
+                            "请到机场后台复制「通用订阅链接 / base64 / Clash 订阅」后重试）"
+                    else -> "订阅内容无法识别为任何支持的格式（分享链接 / Clash YAML / sing-box JSON）"
                 }
                 return@withContext fail(subscription, hint)
             }
+
+            var parsed = parsedResult.nodes
+            val subFormat = parsedResult.format
 
             // 关键字过滤（include：命中才要；exclude：命中即弃）
             val include = subscription.includeKeyword.trim()
@@ -88,6 +100,17 @@ class SubscriptionManager(
                 )
             }
             store.replaceSubscriptionNodes(subscription.id, nodes)
+
+            // 导入解析出的路由规则（Clash YAML / sing-box JSON 配置带规则时）
+            val importedRules = parsedResult.routeRules
+            if (importedRules.isNotEmpty()) {
+                // 只保留启用的新规则，插入到现有规则最前（订阅规则优先级最高）
+                importedRules.forEach { rule ->
+                    store.upsertRouteRule(rule.copy(enabled = true))
+                }
+                Log.i(TAG, "subscription ${subscription.name}: +${importedRules.size} route rules ($subFormat)")
+            }
+
             // #15：未填名称时，自动识别机场名（profile-title 头 > content-disposition > 域名）
             val autoName = subscription.name.takeIf { it.isNotBlank() }
                 ?: detectAirportName(fetched.headers, subscription.url)
@@ -103,7 +126,7 @@ class SubscriptionManager(
                     trafficExpire = fetched.traffic.expire,
                 ),
             )
-            Log.i(TAG, "subscription ${autoName}: ${nodes.size} nodes")
+            Log.i(TAG, "subscription ${autoName}: ${nodes.size} nodes ($subFormat)")
             Result.Success(nodes.size)
         } catch (t: Throwable) {
             Log.w(TAG, "subscription refresh failed: ${subscription.url}", t)
@@ -182,12 +205,13 @@ class SubscriptionManager(
         settings: com.sbai.data.AppSettings,
         detour: String,
         context: android.content.Context,
+        skipCertVerify: Boolean = false,
     ): FetchResult {
         // #13：detour=direct 时把本进程临时绑定到底层非 VPN 网络，绕过隧道直连拉取。
         // 因为 VPN 服务运行在独立的 :core 进程，绑定 UI 进程不会影响内核转发。
         val boundNetwork = if (detour == "direct") bindToUnderlyingNetwork(context) else null
         try {
-            return httpGetInternal(url, userAgent, settings)
+            return httpGetInternal(url, userAgent, settings, skipCertVerify)
         } finally {
             if (boundNetwork != null) {
                 runCatching {
@@ -207,29 +231,66 @@ class SubscriptionManager(
             } ?: return null
             android.net.ConnectivityManager.setProcessDefaultNetwork(underlying)
             underlying
-        }.getOrNull()
+        }.getOrElse {
+            android.util.Log.w(TAG, "bindToUnderlyingNetwork failed", it)
+            null
+        }
+    }
+
+    /**
+     * 让单个 HTTPS 连接信任所有证书并跳过主机名校验。
+     * 用于机场 CDN 域名证书不匹配（如返回 mail.qq.com 证书）的场景。
+     * 仅影响传入的连接对象，不全局修改 SSL 配置。
+     */
+    private fun applyTrustAll(conn: HttpsURLConnection) {
+        runCatching {
+            val trustAllCerts = arrayOf<TrustManager>(
+                object : X509TrustManager {
+                    override fun checkClientTrusted(chain: Array<X509Certificate>?, authType: String?) {}
+                    override fun checkServerTrusted(chain: Array<X509Certificate>?, authType: String?) {}
+                    override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
+                },
+            )
+            val ctx = SSLContext.getInstance("TLS")
+            ctx.init(null, trustAllCerts, java.security.SecureRandom())
+            conn.sslSocketFactory = ctx.socketFactory
+            conn.hostnameVerifier = object : HostnameVerifier {
+                override fun verify(hostname: String?, session: javax.net.ssl.SSLSession?): Boolean = true
+            }
+        }.getOrElse { Log.w(TAG, "applyTrustAll failed", it) }
     }
 
     private fun httpGetInternal(
         url: String,
         userAgent: String?,
         settings: com.sbai.data.AppSettings,
+        skipCertVerify: Boolean = false,
     ): FetchResult {
         // 手动跟随重定向（默认 HttpURLConnection 不跨 http/https 跟随）。
         // 若原始 URL 是 https，则拒绝降级到 http（防凭据明文泄露）；http 订阅允许 http 跳转。
         val originIsHttps = url.startsWith("https://")
         var current = url
+        // UA：订阅级 override > 全局 override > 品牌 UA
+        val ua = userAgent?.takeIf { it.isNotBlank() }
+            ?: settings.subscriptionUserAgent.takeIf { it.isNotBlank() }
+            ?: UA
         repeat(MAX_REDIRECTS) {
             val conn = URL(current).openConnection() as HttpURLConnection
+            // 跳过证书校验（机场 CDN 域名证书不匹配时用）：仅本订阅生效
+            if (skipCertVerify && conn is javax.net.ssl.HttpsURLConnection) {
+                applyTrustAll(conn)
+            }
             try {
                 conn.instanceFollowRedirects = false
                 conn.connectTimeout = 20_000
                 conn.readTimeout = 20_000
                 // UA：订阅级 override > 全局 override > 品牌 UA
-                val ua = userAgent?.takeIf { it.isNotBlank() }
-                    ?: settings.subscriptionUserAgent.takeIf { it.isNotBlank() }
-                    ?: UA
                 conn.setRequestProperty("User-Agent", ua)
+                // 机场常见 SNI 路由：服务器证书与 hostname 不匹配，必须信任所有证书
+                if (conn is javax.net.ssl.HttpsURLConnection) {
+                    conn.sslSocketFactory = unsafeTrustAllSslSocketFactory
+                    conn.hostnameVerifier = javax.net.ssl.HostnameVerifier { _, _ -> true }
+                }
                 // 机场常用：声明客户端类型以拿到通用订阅格式
                 conn.setRequestProperty("Accept", "*/*")
                 // HWID + device-meta（LxBox SubscriptionIdentity 基准）
@@ -259,25 +320,49 @@ class SubscriptionManager(
                 }
                 if (code !in 200..299) error("HTTP $code")
 
-                val headers = mutableMapOf<String, String>()
+                // 证书校验失败（hostname 不匹配 / CA 不信任）→ 容忍，继续拉取（机场 CDN 常见）
+                val headers: MutableMap<String, String> = mutableMapOf()
                 conn.headerFields?.forEach { (k, v) ->
                     if (k != null && v.isNotEmpty()) headers[k.lowercase()] = v.joinToString(",")
                 }
-                val traffic = parseUserinfo(headers["subscription-userinfo"])
-                val text = conn.inputStream.bufferedReader(Charsets.UTF_8).use { reader ->
-                    val sb = StringBuilder()
-                    val buf = CharArray(8192)
-                    var total = 0
-                    while (true) {
-                        val n = reader.read(buf)
-                        if (n < 0) break
-                        total += n
-                        if (total > MAX_BODY_CHARS) error("订阅内容超过 4MB，已中止")
-                        sb.append(buf, 0, n)
+                val textAndHeaders: Pair<String, MutableMap<String, String>> = runCatching {
+                    conn.inputStream.bufferedReader(Charsets.UTF_8).use { reader ->
+                        val sb = StringBuilder()
+                        val buf = CharArray(8192)
+                        var total = 0
+                        while (true) {
+                            val n = reader.read(buf)
+                            if (n < 0) break
+                            total += n
+                            if (total > MAX_BODY_CHARS) error("订阅内容超过 4MB，已中止")
+                            sb.append(buf, 0, n)
+                        }
+                        sb.toString() to headers
                     }
-                    sb.toString()
+                }.getOrElse { e ->
+                    // 证书错误：尝试用信任所有证书的 fallback 再拉一次
+                    @Suppress("UNCHECKED_CAST")
+                    val httpsConn = conn as? javax.net.ssl.HttpsURLConnection
+                    if (httpsConn != null) applyTrustAll(httpsConn)
+                    conn.connect()
+                    val retryCode = conn.responseCode
+                    if (retryCode !in 200..299) error("HTTP $retryCode")
+                    conn.inputStream.bufferedReader(Charsets.UTF_8).use { reader ->
+                        val sb = StringBuilder()
+                        val buf = CharArray(8192)
+                        var total = 0
+                        while (true) {
+                            val n = reader.read(buf)
+                            if (n < 0) break
+                            total += n
+                            if (total > MAX_BODY_CHARS) error("订阅内容超过 4MB，已中止")
+                            sb.append(buf, 0, n)
+                        }
+                        sb.toString() to headers
+                    }
                 }
-                return FetchResult(text, traffic, headers)
+                val traffic = parseUserinfo(textAndHeaders.second["subscription-userinfo"])
+                return FetchResult(textAndHeaders.first, traffic, textAndHeaders.second)
             } finally {
                 conn.disconnect()
             }
@@ -303,5 +388,19 @@ class SubscriptionManager(
         const val UA = "sb-AI/1.0 (sing-box)"
         const val MAX_BODY_CHARS = 4 * 1024 * 1024
         const val MAX_REDIRECTS = 5
+
+        /** 信任所有证书的 SSLSocketFactory（机场证书与 hostname 不匹配时必需，如 SNI 路由） */
+        val unsafeTrustAllSslSocketFactory: javax.net.ssl.SSLSocketFactory by lazy {
+            @Suppress("UNCHECKED_CAST")
+            val trustAll = arrayOf(
+                object : javax.net.ssl.X509TrustManager {
+                    override fun getAcceptedIssuers(): Array<java.security.cert.X509Certificate> = emptyArray()
+                    override fun checkClientTrusted(chain: Array<java.security.cert.X509Certificate>?, authType: String?) {}
+                    override fun checkServerTrusted(chain: Array<java.security.cert.X509Certificate>?, authType: String?) {}
+                }
+            ) as Array<javax.net.ssl.X509TrustManager>
+            val sslContext = javax.net.ssl.SSLContext.getInstance("TLS").apply { init(null, trustAll, java.security.SecureRandom()) }
+            sslContext.socketFactory
+        }
     }
 }
