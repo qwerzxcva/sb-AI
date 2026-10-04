@@ -332,44 +332,7 @@ fun SettingsScreen() {
                 SbSpacer()
             }
 
-            // ---- 拆分隧道（sb-AI Split Tunneling 基准） ----
-            item {
-                SbGroup(title = "拆分隧道") {
-                    item {
-                        SbSwitchItem(
-                            title = "启用拆分隧道",
-                            subtitle = "按域名强制走直连，其余流量走代理",
-                            icon = Icons.Filled.Route,
-                            checked = settings.splitTunnel.enabled,
-                        ) { enabled ->
-                            store.updateSettings(settings.copy(splitTunnel = settings.splitTunnel.copy(enabled = enabled)))
-                        }
-                    }
-                    if (settings.splitTunnel.enabled) {
-                        item {
-                            Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
-                                Text("直连域名（每行一个，支持 * 通配符）", style = MaterialTheme.typography.labelLarge)
-                                Spacer(Modifier.height(4.dp))
-                                OutlinedTextField(
-                                    value = settings.splitTunnel.domains.joinToString("\n"),
-                                    onValueChange = { raw ->
-                                        val domains = raw.split("\n").map { it.trim() }.filter { it.isNotEmpty() }
-                                        store.updateSettings(settings.copy(splitTunnel = settings.splitTunnel.copy(domains = domains)))
-                                    },
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .heightIn(max = 200.dp),
-                                    minLines = 5,
-                                    maxLines = 10,
-                                )
-                            }
-                        }
-                    }
-                }
-                SbSpacer()
-            }
-
-            // ---- sb-AI 资源管理 ----
+            // ---- 资源管理 ----
             item {
                 SbGroup(title = "资源管理（${settings.resources.size}）") {
                     item {

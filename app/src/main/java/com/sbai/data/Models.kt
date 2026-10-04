@@ -464,8 +464,8 @@ data class AppSettings(
     val finalOutbound: String = "",   // 留空 = 自动（跟随入口 tag）
     val dnsStrategy: String = "prefer_ipv4",   // prefer_ipv4 / prefer_ipv6 / ipv4_only / ipv6_only
     val perAppProxy: PerAppProxy = PerAppProxy(),
-    /** 拆分隧道：按域名强制走直连（与分应用代理互补） */
-    val splitTunnel: SplitTunnel = SplitTunnel(),
+    // ---- 拆分隧道（已移除，用户反馈：写规则不好么？）----
+    // val splitTunnel: SplitTunnel = SplitTunnel(),
     /** 配置覆盖：导入完整 JSON 与 UI 配置深度合并 */
     val configOverride: ConfigOverride = ConfigOverride(),
     /** 开机自动启动（需要 VPN 权限已授予） */

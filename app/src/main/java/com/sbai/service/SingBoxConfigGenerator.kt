@@ -404,15 +404,15 @@ object SingBoxConfigGenerator {
                     put("outbound", entryTag)
                 })
             }
-        // 拆分隧道：按域名强制走直连
-        if (state.settings.splitTunnel.enabled && state.settings.splitTunnel.domains.isNotEmpty()) {
-            rules.add(0, buildJsonObject {
-                putJsonArray("domain_keyword") {
-                    state.settings.splitTunnel.domains.filter { it.isNotEmpty() }.forEach { add(it.trim()) }
-                }
-                put("outbound", "direct")
-            })
-        }
+        // 拆分隧道：已移除（用户反馈：写规则不好么？）
+        // if (state.settings.splitTunnel.enabled && state.settings.splitTunnel.domains.isNotEmpty()) {
+        //     rules.add(0, buildJsonObject {
+        //         putJsonArray("domain_keyword") {
+        //             state.settings.splitTunnel.domains.filter { it.isNotEmpty() }.forEach { add(it.trim()) }
+        //         }
+        //         put("outbound", "direct")
+        //     })
+        // }
         // 资源注入：China IP 列表 → geoip 规则集（直连）
         val chinaIpResource = state.settings.resources.firstOrNull { r -> r.enabled && r.resType == com.sbai.data.ResourceType.CHINA_IP && r.content.isNotEmpty() }
         if (chinaIpResource != null) {

@@ -64,8 +64,9 @@
 ## 📦 编译/推送状态
 - `./gradlew assembleDebug` BUILD SUCCESSFUL ✅
 - `./gradlew testDebugUnitTest` BUILD SUCCESSFUL ✅
-- 最新 commit：`c529022 fix: 修复runBlocking死锁隐患 + 监控页颜色统一` ✅
-- 代码总行数：~11,000 行 Kotlin
+- 最新 commit：`0266dda feat: 添加 VPN 启动调试日志 + 监控页白色背景`（本地）
+- ⚠️ GitHub 推送失败：需要用户手动推送或网络恢复后重试
+- 代码总行数：~11,100 行 Kotlin
 
 ## Git log（最近 10 条）
 ```
