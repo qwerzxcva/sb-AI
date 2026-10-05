@@ -133,6 +133,8 @@ fun HomeScreen() {
     var importResult by remember { mutableStateOf<String?>(null) }
     // 批量测速进度：-1 = 未在测；0..100 = 已完成百分比
     var batchTestProgress by remember { mutableStateOf(-1) }
+    // WARP 注册对话框
+    var showWarpDialog by remember { mutableStateOf(false) }
 
     val vpnPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult(),
@@ -768,6 +770,14 @@ fun HomeScreen() {
                     }
                     item {
                         SbItem(
+                            title = "获取 WARP（免费隧道）",
+                            subtitle = "一键注册 Cloudflare WARP，生成 WireGuard 节点",
+                            icon = Icons.Filled.CloudDownload,
+                            onClick = { showWarpDialog = true },
+                        )
+                    }
+                    item {
+                        SbItem(
                             title = "手动添加节点",
                             subtitle = "粘贴 sing-box outbound JSON",
                             icon = Icons.Filled.Add,
@@ -777,7 +787,7 @@ fun HomeScreen() {
                     item {
                         SbItem(
                             title = "从剪贴板导入",
-                            subtitle = "解析分享链接（vless/vmess/trojan/ss/hysteria2）",
+                            subtitle = "解析分享链接（vless/vmess/trojan/ss/hysteria2/wireguard）",
                             icon = Icons.Filled.ContentPaste,
                             onClick = {
                                 val clip = clipboardText(context)
@@ -849,6 +859,63 @@ fun HomeScreen() {
                 }
             },
             confirmButton = { TextButton(onClick = { showModeDialog = false }) { Text("关闭") } },
+        )
+    }
+
+    if (showWarpDialog) {
+        var warpBusy by remember { mutableStateOf(false) }
+        var warpError by remember { mutableStateOf<String?>(null) }
+        AlertDialog(
+            onDismissRequest = { if (!warpBusy) showWarpDialog = false },
+            title = { Text("获取 WARP 免费隧道") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "在设备上生成 WireGuard 密钥并注册 Cloudflare WARP，" +
+                            "注册成功后自动添加一个免费 WireGuard 节点。私钥不会离开设备。",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    if (warpBusy) {
+                        Text("注册中…（需联网，约数秒）", color = MaterialTheme.colorScheme.primary)
+                    }
+                    warpError?.let {
+                        Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !warpBusy,
+                    onClick = {
+                        warpBusy = true
+                        warpError = null
+                        scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                            try {
+                                val account = com.sbai.service.WarpClient().register()
+                                val uri = account.toWireguardUri()
+                                val parsed = com.sbai.service.ShareLinkParser.parse(uri)
+                                if (parsed == null) {
+                                    warpError = "生成节点失败：wireguard 解析失败"
+                                } else {
+                                    store.upsertProxyNode(
+                                        ProxyNode(name = "WARP", outboundJson = parsed.outboundJson),
+                                    )
+                                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                        showWarpDialog = false
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                warpError = "注册失败：${e.message}"
+                            } finally {
+                                warpBusy = false
+                            }
+                        }
+                    },
+                ) { Text("注册") }
+            },
+            dismissButton = {
+                TextButton(enabled = !warpBusy, onClick = { showWarpDialog = false }) { Text("取消") }
+            },
         )
     }
 
