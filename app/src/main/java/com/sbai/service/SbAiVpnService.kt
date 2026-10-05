@@ -51,7 +51,13 @@ class SbAiVpnService : VpnService() {
     }
 
     private fun startVpn() {
-        // 仅允许从 Stopped / Error 进入启动流程，防止重入创建第二个 CommandServer
+        // 仅允许从 Stopped / Error 进入启动流程，防止重入创建第二个 CommandServer。
+        // 注意：_status 是本进程（:core）内的 StateFlow，不跨进程共享；
+        // 但同一个 :core 进程内多次 startService 仍会走到这里，因此这个守卫是必要的。
+        if (runtime != null) {
+            Log.i(TAG, "startVpn: runtime already exists, reloading config instead")
+            return
+        }
         when (_status.value) {
             ServiceStatus.Running, ServiceStatus.Starting, ServiceStatus.Stopping -> return
             else -> Unit

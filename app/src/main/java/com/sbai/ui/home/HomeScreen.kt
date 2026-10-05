@@ -65,6 +65,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -137,11 +138,39 @@ fun HomeScreen() {
         if (result.resultCode == Activity.RESULT_OK) {
             android.util.Log.i("SbAI_VPN", "VPN permission granted, starting service")
             startVpn(context)
+            // 无论 :core 是否已有实例，都重连一次，让 UI 状态跟上
             scope.launch(kotlinx.coroutines.Dispatchers.IO) {
                 SbCommandClient.connectWithRetry()
             }
         } else {
             android.util.Log.w("SbAI_VPN", "VPN permission denied or cancelled")
+        }
+    }
+
+    // 点击启动/停止的统一入口。
+    // 关键：:core 进程的 SbAiVpnService._status 是进程内 StateFlow，不跨进程共享，
+    // UI 进程读到的恒为 Stopped。因此这里不能依赖 status 判断，
+    // 必须以 CommandClient 是否连上 CommandServer（coreConnected）为真源。
+    fun toggleVpn() {
+        android.util.Log.i("SbAI_VPN", "toggleVpn: coreConnected=$coreConnected, status=$status")
+        if (coreConnected) {
+            // 已连上内核 → 停止
+            android.util.Log.i("SbAI_VPN", "stopping VPN")
+            stopVpn(context)
+            SbCommandClient.disconnect()
+            return
+        }
+        // 未连上 → 启动
+        val intent = VpnService.prepare(context)
+        android.util.Log.i("SbAI_VPN", "VpnService.prepare: ${if (intent == null) "null (authorized)" else "need permission"}")
+        if (intent != null) {
+            vpnPermissionLauncher.launch(intent)
+        } else {
+            startVpn(context)
+            // 启动后重连，让 UI 状态跟上 :core 进程
+            scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                SbCommandClient.connectWithRetry()
+            }
         }
     }
 
@@ -154,6 +183,51 @@ fun HomeScreen() {
 
     val running = status is SbAiVpnService.ServiceStatus.Running
     val lb = state.loadBalance
+
+    // 节点过滤结果缓存：避免在 LazyListScope 里每次重组都重新解析全部节点 JSON（卡顿主因）
+    // 同时缓存「订阅→节点」分组，避免每次重组都 O(订阅数 × 节点数) 全量 filter
+    val nodesBySubscription by remember(state.proxyNodes) {
+        derivedStateOf {
+            state.proxyNodes.groupBy { it.subscriptionId }
+        }
+    }
+    val filteredNodes by remember(
+        state.proxyNodes, nodeFilterQuery, nodeFilterProtocol, nodeFilterRegion, nodeFilterNoDelay, nodeSortMode,
+    ) {
+        derivedStateOf {
+            val q = nodeFilterQuery.trim()
+            val proto = nodeFilterProtocol.trim()
+            val region = nodeFilterRegion.trim()
+            val noDelay = nodeFilterNoDelay
+            val sortMode = nodeSortMode
+            state.proxyNodes
+                .asSequence()
+                .filter { node ->
+                    val nameHit = q.isEmpty() || node.name.contains(q, ignoreCase = true)
+                    val protoHit = proto.isEmpty() || node.outboundJson.contains(proto, ignoreCase = true)
+                    val regionHit = region.isEmpty() || node.name.contains(region, ignoreCase = true)
+                    val delayOk = !noDelay || runCatching {
+                        kotlinx.serialization.json.Json.parseToJsonElement(node.outboundJson)
+                            .jsonObject["delay"]?.jsonPrimitive?.content != null
+                    }.getOrDefault(true)
+                    nameHit && protoHit && regionHit && delayOk
+                }
+                .sortedWith(
+                    compareBy(
+                        { if (sortMode == NodeSortMode.NAME_ASC) 0 else 1 },
+                        { it.name.lowercase() },
+                        {
+                            runCatching {
+                                kotlinx.serialization.json.Json.parseToJsonElement(it.outboundJson)
+                                    .jsonObject["delay"]?.jsonPrimitive?.content?.toLongOrNull()
+                            }.getOrDefault(null) ?: 0L
+                        },
+                    )
+                )
+                .take(30)
+                .toList()
+        }
+    }
     // :core 进程启动错误（跨进程持久化），未连接时展示给用户
     val persistedError = remember {
         runCatching {
@@ -240,7 +314,7 @@ fun HomeScreen() {
                         Text("sb-AI", style = MaterialTheme.typography.headlineLarge)
                         Text(
                             // 跨进程真源：:core 进程的服务状态 UI 进程读不到，
-                            // 以 CommandClient 是否连上 CommandServer 为准
+                            // 以 CommandClient 是否连上 CommandServer（coreConnected）为准
                             displayStatus(coreConnected, status),
                             style = MaterialTheme.typography.bodyMedium,
                             color = when {
@@ -258,46 +332,21 @@ fun HomeScreen() {
                             )
                         }
                     }
-                    // 大号启动按钮
+                    // 大号启动按钮（真源 = coreConnected，不用 :core 进程内 status）
                     Surface(
-                        onClick = {
-                            android.util.Log.i("SbAI_VPN", "VPN button clicked, coreRunning=$coreRunning, status=$status")
-                            when {
-                                coreRunning -> {
-                                    android.util.Log.i("SbAI_VPN", "Stopping VPN")
-                                    stopVpn(context)
-                                }
-                                status is SbAiVpnService.ServiceStatus.Starting ||
-                                    status is SbAiVpnService.ServiceStatus.Stopping -> Unit
-                                else -> {
-                                    val intent = VpnService.prepare(context)
-                                    android.util.Log.i("SbAI_VPN", "VpnService.prepare returned: ${if (intent == null) "null (already authorized)" else "non-null (need permission)"}")
-                                    if (intent != null) {
-                                        android.util.Log.i("SbAI_VPN", "Launching permission dialog")
-                                        vpnPermissionLauncher.launch(intent)
-                                    } else {
-                                        android.util.Log.i("SbAI_VPN", "Starting VPN directly (already authorized)")
-                                        startVpn(context)
-                                        // 启动后轮询重连 CommandClient，让 UI 状态跟上 :core 进程
-                                        scope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                                            SbCommandClient.connectWithRetry()
-                                        }
-                                    }
-                                }
-                            }
-                        },
+                        onClick = { toggleVpn() },
                         shape = RoundedCornerShape(tokens.groupCornerRadius),
-                        color = if (coreRunning) MaterialTheme.colorScheme.errorContainer
+                        color = if (coreConnected) MaterialTheme.colorScheme.errorContainer
                         else MaterialTheme.colorScheme.primaryContainer,
                         modifier = Modifier.size(72.dp),
                     ) {
                         Box(contentAlignment = Alignment.Center) {
                             Icon(
-                                Icons.Filled.PowerSettingsNew,
-                                contentDescription = if (coreRunning) "停止" else "启动",
-                                tint = if (coreRunning) MaterialTheme.colorScheme.onErrorContainer
+                                imageVector = Icons.Filled.PowerSettingsNew,
+                                contentDescription = if (coreConnected) "停止" else "启动",
+                                tint = if (coreConnected) MaterialTheme.colorScheme.onErrorContainer
                                 else MaterialTheme.colorScheme.onPrimaryContainer,
-                                modifier = Modifier.size(32.dp),
+                                modifier = Modifier.size(36.dp),
                             )
                         }
                     }
@@ -644,29 +693,7 @@ fun HomeScreen() {
                             }
                         }
                     }
-                    val filtered = state.proxyNodes
-                        .filter { node ->
-                            val q = nodeFilterQuery.trim()
-                            val nameHit = q.isEmpty() || node.name.contains(q, ignoreCase = true)
-                            val protoHit = nodeFilterProtocol.isEmpty() || node.outboundJson.contains(nodeFilterProtocol, ignoreCase = true)
-                            val regionHit = nodeFilterRegion.isEmpty() || node.name.contains(nodeFilterRegion, ignoreCase = true)
-                            val delayOk = !nodeFilterNoDelay || runCatching {
-                                val j = kotlinx.serialization.json.Json.parseToJsonElement(node.outboundJson).jsonObject
-                                j["delay"]?.jsonPrimitive?.content != null
-                            }.getOrDefault(true)
-                            nameHit && protoHit && regionHit && delayOk
-                        }
-                        .sortedWith(compareBy(
-                            { if (nodeSortMode == NodeSortMode.NAME_ASC) 0 else 1 },
-                            { it.name.lowercase() },
-                            {
-                                val d = runCatching {
-                                    kotlinx.serialization.json.Json.parseToJsonElement(it.outboundJson).jsonObject["delay"]?.jsonPrimitive?.content?.toLongOrNull()
-                                }.getOrDefault(null)
-                                d ?: 0L
-                            },
-                        ))
-                    filtered.take(30).forEach { node ->
+                    filteredNodes.forEach { node ->
                         item {
                             val displayDelay = if (node.urlTestDelay > 0) "${node.urlTestDelay}ms" else null
                             SbItem(
