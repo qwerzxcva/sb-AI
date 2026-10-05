@@ -282,6 +282,58 @@ class SingBoxConfigGeneratorTest {
     }
 
     @Test
+    fun `wireguard endpoint nodes go to endpoints not outbounds`() {
+        val wg = ProxyNode(
+            name = "warp",
+            outboundJson = """{"type":"wireguard","tag":"warp","mtu":1408,"address":["172.16.0.2/32"],"private_key":"AAAA","peers":[{"address":"engage.cloudflareclient.com","port":2408,"public_key":"BBBB","allowed_ips":["0.0.0.0/0","::/0"]}]}""",
+        )
+        val vless = ProxyNode(
+            name = "n1",
+            outboundJson = """{"type":"vless","tag":"n1","server":"1.2.3.4","server_port":443,"uuid":"x"}""",
+        )
+        val cfg = parse(AppState(proxyNodes = listOf(wg, vless)))
+
+        // wireguard 进 endpoints
+        val endpoints = cfg["endpoints"]!!.jsonArray
+        assertEquals(1, endpoints.size)
+        assertEquals("wireguard", endpoints[0].jsonObject["type"]!!.jsonPrimitive.content)
+        assertEquals("warp", endpoints[0].jsonObject["tag"]!!.jsonPrimitive.content)
+
+        // vless 进 outbounds，且 outbounds 不含 wireguard
+        val obs = outbounds(cfg)
+        assertTrue(obs.none { it.jsonObject["type"]!!.jsonPrimitive.content == "wireguard" })
+        assertTrue(obs.any { it.jsonObject["tag"]!!.jsonPrimitive.content == "n1" })
+    }
+
+    @Test
+    fun `no endpoints array when no endpoint nodes`() {
+        val vless = ProxyNode(
+            name = "n1",
+            outboundJson = """{"type":"vless","tag":"n1","server":"1.2.3.4","server_port":443,"uuid":"x"}""",
+        )
+        val cfg = parse(AppState(proxyNodes = listOf(vless)))
+        assertNull(cfg["endpoints"])
+    }
+
+    @Test
+    fun `wireguard tag participates in proxy group`() {
+        val wg = ProxyNode(
+            name = "warp",
+            outboundJson = """{"type":"wireguard","tag":"warp","mtu":1408,"address":["172.16.0.2/32"],"private_key":"AAAA","peers":[{"address":"e.com","port":2408,"public_key":"BBBB","allowed_ips":["0.0.0.0/0"]}]}""",
+        )
+        val vless = ProxyNode(
+            name = "n1",
+            outboundJson = """{"type":"vless","tag":"n1","server":"1.2.3.4","server_port":443,"uuid":"x"}""",
+        )
+        // 多节点 → selector 组 proxy，应引用 endpoint tag 和 outbound tag
+        val cfg = parse(AppState(proxyNodes = listOf(wg, vless)))
+        val proxyGroup = outbounds(cfg).first { it.jsonObject["tag"]!!.jsonPrimitive.content == "proxy" }.jsonObject
+        val members = proxyGroup["outbounds"]!!.jsonArray.map { it.jsonPrimitive.content }
+        assertTrue("warp" in members)
+        assertTrue("n1" in members)
+    }
+
+    @Test
     fun `doh path is preserved`() {
         val state = AppState(
             dnsServers = listOf(

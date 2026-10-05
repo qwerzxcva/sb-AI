@@ -68,6 +68,11 @@ object SingBoxConfigGenerator {
         val enabledNodes = state.proxyNodes
             .filter { it.enabled && it.outboundJson.isNotBlank() }
             .distinctBy { nodeTag(it) }   // 同 tag 去重，避免 outbound tag 冲突
+        // sing-box 1.12+：wireguard 等是 endpoint（config.endpoints[]），不是 outbound。
+        // 分离二者：endpoint 节点单独进 endpoints 数组，其余进 outbounds 数组。
+        // 但 nodeTags 保留全部（proxy group 引用 endpoint tag 与 outbound tag 同等）。
+        val endpointNodes = enabledNodes.filter { isEndpointNode(it) }
+        val outboundNodes = enabledNodes.filter { !isEndpointNode(it) }
         val nodeTags = enabledNodes.map { nodeTag(it) }
         val lb = state.loadBalance
 
@@ -147,13 +152,22 @@ object SingBoxConfigGenerator {
                 })
             }
 
-            enabledNodes.forEach { node ->
+            outboundNodes.forEach { node ->
                 runCatching { json.parseToJsonElement(node.outboundJson).jsonObject }
                     .getOrNull()?.let(::add)
             }
 
             add(buildJsonObject { put("type", "direct"); put("tag", "direct") })
             add(buildJsonObject { put("type", "block"); put("tag", "block") })
+        }
+
+        // sing-box 1.12+：wireguard 等 endpoint 节点单独进 endpoints 数组。
+        // 仅当存在 endpoint 节点时才生成，避免给内核喂空数组。
+        val endpoints = if (endpointNodes.isEmpty()) null else buildJsonArray {
+            endpointNodes.forEach { node ->
+                runCatching { json.parseToJsonElement(node.outboundJson).jsonObject }
+                    .getOrNull()?.let(::add)
+            }
         }
 
         return buildJsonObject {
@@ -227,6 +241,10 @@ object SingBoxConfigGenerator {
                 put("final", state.settings.finalOutbound.ifBlank { entryTag })
                 put("auto_detect_interface", state.settings.autoDetectInterface)
             }
+
+            // sing-box 1.12+：endpoint 节点（wireguard）在 endpoints 数组，outbound 在 outbounds 数组。
+            // 顺序：endpoints 先于 outbounds（内核要求 endpoints 先声明）。
+            if (endpoints != null) put("endpoints", endpoints)
 
             put("outbounds", outbounds)
 
@@ -708,6 +726,18 @@ object SingBoxConfigGenerator {
         runCatching {
             json.parseToJsonElement(node.outboundJson).jsonObject["tag"]?.jsonPrimitive?.content
         }.getOrNull() ?: node.name.ifBlank { node.id }
+
+    /**
+     * 判断节点是否为 sing-box endpoint 类型（1.12+：wireguard 等是 endpoint 非 outbound）。
+     * endpoint 节点进 config.endpoints[]，其余进 outbounds[]。
+     */
+    private fun isEndpointNode(node: com.sbai.data.ProxyNode): Boolean =
+        runCatching {
+            json.parseToJsonElement(node.outboundJson).jsonObject["type"]?.jsonPrimitive?.content
+        }.getOrNull() in ENDPOINT_TYPES
+
+    /** sing-box 1.12+ 中作为 endpoint（config.endpoints[]）的协议类型 */
+    private val ENDPOINT_TYPES = setOf("wireguard", "wg")
 
     /** 配置校验：调用 libbox.checkConfig；失败时返回可读错误（5 秒超时） */
     fun validate(configJson: String): String? {

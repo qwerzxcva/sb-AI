@@ -34,6 +34,7 @@ object ShareLinkParser {
                 trimmed.startsWith("trojan://") -> parseTrojan(trimmed)
                 trimmed.startsWith("ss://") -> parseShadowsocks(trimmed)
                 trimmed.startsWith("hysteria2://") || trimmed.startsWith("hy2://") -> parseHysteria2(trimmed)
+                trimmed.startsWith("wireguard://") || trimmed.startsWith("wg://") -> parseWireguard(trimmed)
                 else -> null
             }
         }.getOrNull()
@@ -303,9 +304,69 @@ object ShareLinkParser {
         return ParsedNode(p.name, outbound.toString())
     }
 
-    // ------------------------------------------------------------------
-    // 传输层
-    // ------------------------------------------------------------------
+    /**
+     * 解析 wireguard:// 分享链接 → sing-box endpoint JSON（1.12+ endpoint 格式）。
+     *
+     * 格式：wireguard://PRIVATE_KEY@HOST:PORT?publickey=KEY&address=IP1,IP2&
+     *       allowedips=NET1,NET2&keepalive=N&mtu=N&reserved=b0,b1,b2#NAME
+     *
+     * - private_key = userInfo（@ 之前）
+     * - peer = host:port + publickey + allowed_ips + reserved
+     * - address 归一化为 CIDR（bare IP → /32 或 /128）
+     * - 缺 allowed_ips → 默认 0.0.0.0/0,::/0
+     */
+    private fun parseWireguard(url: String): ParsedNode {
+        val scheme = if (url.startsWith("wg://")) "wg" else "wireguard"
+        val p = splitUrl(url, scheme)
+        val privKey = p.userInfo.ifBlank { error("wireguard: missing private key") }
+        val peerPub = p.query["publickey"] ?: p.query["public_key"] ?: error("wireguard: missing publickey")
+
+        // address 归一化：裸 IP → CIDR
+        val addresses = (p.query["address"] ?: "").split(',')
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .map { normalizeCidr(it) }
+            .ifEmpty { error("wireguard: missing address") }
+
+        val allowedIps = (p.query["allowedips"] ?: p.query["allowed_ips"] ?: "0.0.0.0/0,::/0")
+            .split(',')
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .map { normalizeCidr(it) }
+
+        val keepalive = p.query["keepalive"]?.toIntOrNull()?.takeIf { it > 0 }
+        val mtu = p.query["mtu"]?.toIntOrNull()?.takeIf { it in 576..1500 } ?: 1408
+
+        // reserved：client_id 三个字节（0-255），逗号分隔
+        val reserved = (p.query["reserved"] ?: p.query["client_id"] ?: "")
+            .split(',')
+            .map { it.trim().toIntOrNull() }
+            .takeIf { list -> list.size == 3 && list.all { it != null && it in 0..255 } }
+            ?.mapNotNull { it }
+
+        val outbound = buildJsonObject {
+            put("type", "wireguard")
+            put("tag", p.name)
+            put("mtu", mtu)
+            putJsonArray("address") { addresses.forEach(::add) }
+            put("private_key", privKey)
+            putJsonArray("peers") {
+                add(buildJsonObject {
+                    put("address", p.host)
+                    put("port", p.port)
+                    put("public_key", peerPub)
+                    putJsonArray("allowed_ips") { allowedIps.forEach(::add) }
+                    if (keepalive != null) put("persistent_keepalive_interval", keepalive)
+                    if (reserved != null) putJsonArray("reserved") { reserved.forEach(::add) }
+                })
+            }
+        }
+        return ParsedNode(p.name, outbound.toString())
+    }
+
+    /** 裸 IP → CIDR（v4 补 /32，v6 补 /128）；已带前缀则原样返回 */
+    private fun normalizeCidr(s: String): String =
+        if (s.contains('/')) s else if (s.contains(':')) "$s/128" else "$s/32"
 
     private fun putTransport(builder: kotlinx.serialization.json.JsonObjectBuilder, network: String, query: Map<String, String>) {
         when (network) {

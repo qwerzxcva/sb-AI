@@ -2,6 +2,7 @@ package com.sbai
 
 import com.sbai.service.ShareLinkParser
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
@@ -154,5 +155,50 @@ class ShareLinkParserTest {
     fun `unsupported protocol returns null`() {
         assertNull(ShareLinkParser.parse("ssr://something"))
         assertNull(ShareLinkParser.parse("http://example.com"))
+    }
+
+    @Test
+    fun `wireguard uri parses to endpoint format`() {
+        val o = outboundOf("wireguard://cHJpdmF0ZQ==@engage.cloudflareclient.com:2408?publickey=cGVlcg==&address=172.16.0.2/32&allowedips=0.0.0.0/0,::/0&keepalive=25&mtu=1280&reserved=1,2,3#WARP")
+        assertEquals("wireguard", o["type"]!!.jsonPrimitive.content)
+        assertEquals("WARP", o["tag"]!!.jsonPrimitive.content)
+        assertEquals("cHJpdmF0ZQ==", o["private_key"]!!.jsonPrimitive.content)
+        assertEquals("172.16.0.2/32", o["address"]!!.jsonArray[0].jsonPrimitive.content)
+
+        val peer = o["peers"]!!.jsonArray[0].jsonObject
+        assertEquals("engage.cloudflareclient.com", peer["address"]!!.jsonPrimitive.content)
+        assertEquals("2408", peer["port"]!!.jsonPrimitive.content)
+        assertEquals("cGVlcg==", peer["public_key"]!!.jsonPrimitive.content)
+        assertEquals("0.0.0.0/0", peer["allowed_ips"]!!.jsonArray[0].jsonPrimitive.content)
+        assertEquals("25", peer["persistent_keepalive_interval"]!!.jsonPrimitive.content)
+        assertEquals("1", peer["reserved"]!!.jsonArray[0].jsonPrimitive.content)
+    }
+
+    @Test
+    fun `wireguard bare address normalized to cidr`() {
+        val o = outboundOf("wireguard://k@host:51820?publickey=p&address=10.0.0.2,fd00::2#n")
+        assertEquals("10.0.0.2/32", o["address"]!!.jsonArray[0].jsonPrimitive.content)
+        assertEquals("fd00::2/128", o["address"]!!.jsonArray[1].jsonPrimitive.content)
+    }
+
+    @Test
+    fun `wireguard default allowed ips and mtu`() {
+        val o = outboundOf("wireguard://k@host:51820?publickey=p&address=10.0.0.2/32#n")
+        val peer = o["peers"]!!.jsonArray[0].jsonObject
+        assertEquals("0.0.0.0/0", peer["allowed_ips"]!!.jsonArray[0].jsonPrimitive.content)
+        assertEquals("1408", o["mtu"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `wireguard missing key rejected`() {
+        assertNull(ShareLinkParser.parse("wireguard://host:51820?publickey=p&address=10.0.0.2/32#n"))
+        assertNull(ShareLinkParser.parse("wireguard://k@host:51820?address=10.0.0.2/32#n"))
+    }
+
+    @Test
+    fun `wireguard invalid reserved ignored`() {
+        val o = outboundOf("wireguard://k@host:51820?publickey=p&address=10.0.0.2/32&reserved=999,1,2#n")
+        val peer = o["peers"]!!.jsonArray[0].jsonObject
+        assertNull(peer["reserved"])
     }
 }
