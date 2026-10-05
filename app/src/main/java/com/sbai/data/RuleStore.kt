@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 
 /**
@@ -24,6 +25,12 @@ class RuleStore private constructor(context: Context) {
 
     private val _state = MutableStateFlow(load())
     val state: StateFlow<AppState> = _state.asStateFlow()
+
+    // 异步落盘用的后台作用域（单线程，保证写入顺序）
+    private val storeScope = kotlinx.coroutines.CoroutineScope(
+        kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO.limitedParallelism(1),
+    )
+    private var persistJob: kotlinx.coroutines.Job? = null
 
     private fun load(): AppState {
         val raw = prefs.getString(KEY_STATE, null) ?: return AppState()
@@ -55,19 +62,47 @@ class RuleStore private constructor(context: Context) {
 
     private fun persist(next: AppState) {
         _state.value = next
-        // 必须用 commit() 而非 apply()：VPN 服务运行在独立的 :core 进程，
-        // apply() 是异步落盘，UI 写完立刻启动服务时 :core 可能读到旧配置。
-        // commit() 同步写盘，保证跨进程可见（配置写入频率低，主线程开销可接受）。
-        val ok = prefs.edit()
-            .putString(KEY_STATE, json.encodeToString(AppState.serializer(), next))
-            .commit()
-        if (!ok) {
-            android.util.Log.w("RuleStore", "配置写入磁盘失败")
+        // 关键优化：写盘改为后台异步 apply()，避免主线程被大 JSON 序列化阻塞（卡顿元凶）。
+        // 跨进程可见性由两点保证：
+        //   1) VPN 服务(:core)启动前会调用 reload() 重新读盘；
+        //   2) 下面对「订阅/节点/设置」等关键变更，额外用 commit() 同步一次（见 commitNow）。
+        // 这样既消除了每次切开关都同步写整份配置的主线程开销，又不丢跨进程一致性。
+        persistJob?.cancel()
+        persistJob = storeScope.launch {
+            runCatching {
+                prefs.edit()
+                    .putString(KEY_STATE, json.encodeToString(AppState.serializer(), next))
+                    .apply()
+            }.onFailure {
+                android.util.Log.w("RuleStore", "配置异步写入失败", it)
+            }
+        }
+    }
+
+    /** 对跨进程立即生效的关键变更，同步落盘一次（低频调用，开销可接受） */
+    private fun commitNow(next: AppState) {
+        runCatching {
+            prefs.edit()
+                .putString(KEY_STATE, json.encodeToString(AppState.serializer(), next))
+                .commit()
+        }.onFailure {
+            android.util.Log.w("RuleStore", "配置同步写入失败", it)
         }
     }
 
     fun update(transform: (AppState) -> AppState) = synchronized(this) {
-        persist(transform(_state.value))
+        val next = transform(_state.value)
+        persist(next)
+        next
+    }
+
+    /** 订阅/节点/负载均衡等变更后调用：在异步写之外再同步落盘一次，保证 :core 立即可见 */
+    fun updateCommitted(transform: (AppState) -> AppState) = synchronized(this) {
+        val next = transform(_state.value)
+        _state.value = next
+        persistJob?.cancel()
+        commitNow(next)
+        next
     }
 
     // ---- Route rules ----
@@ -204,34 +239,34 @@ class RuleStore private constructor(context: Context) {
     }
 
     // ---- Load balance ----
-    fun updateLoadBalance(lb: LoadBalanceConfig) = update { s -> s.copy(loadBalance = lb) }
+    fun updateLoadBalance(lb: LoadBalanceConfig) = updateCommitted { s -> s.copy(loadBalance = lb) }
 
     // ---- Proxy nodes ----
-    fun upsertProxyNode(node: ProxyNode) = update { s ->
+    fun upsertProxyNode(node: ProxyNode) = updateCommitted { s ->
         val list = s.proxyNodes.toMutableList()
         val idx = list.indexOfFirst { it.id == node.id }
         if (idx >= 0) list[idx] = node else list.add(node)
         s.copy(proxyNodes = list)
     }
 
-    fun deleteProxyNode(id: String) = update { s ->
+    fun deleteProxyNode(id: String) = updateCommitted { s ->
         s.copy(proxyNodes = s.proxyNodes.filterNot { it.id == id })
     }
 
     /** 用订阅解析结果整体替换该订阅下的节点 */
-    fun replaceSubscriptionNodes(subscriptionId: String, nodes: List<ProxyNode>) = update { s ->
+    fun replaceSubscriptionNodes(subscriptionId: String, nodes: List<ProxyNode>) = updateCommitted { s ->
         s.copy(proxyNodes = s.proxyNodes.filterNot { it.subscriptionId == subscriptionId } + nodes)
     }
 
     // ---- Subscriptions ----
-    fun upsertSubscription(sub: Subscription) = update { s ->
+    fun upsertSubscription(sub: Subscription) = updateCommitted { s ->
         val list = s.subscriptions.toMutableList()
         val idx = list.indexOfFirst { it.id == sub.id }
         if (idx >= 0) list[idx] = sub else list.add(sub)
         s.copy(subscriptions = list)
     }
 
-    fun deleteSubscription(id: String) = update { s ->
+    fun deleteSubscription(id: String) = updateCommitted { s ->
         s.copy(
             subscriptions = s.subscriptions.filterNot { it.id == id },
             proxyNodes = s.proxyNodes.filterNot { it.subscriptionId == id },

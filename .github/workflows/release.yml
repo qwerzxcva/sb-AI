@@ -64,23 +64,10 @@ jobs:
           path: app/build/outputs/apk/release/*.apk
           retention-days: 7
 
-  release:
-    name: Create GitHub Release
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Download artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: release-apk
-
-      - name: Create Release
-        id: create_release
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
-          files: '*.apk'
+          files: app/build/outputs/apk/release/*.apk
           tag_name: ${{ github.event.inputs.version || github.ref_name }}
           name: Release ${{ github.event.inputs.version || github.ref_name }}
           draft: ${{ github.event.inputs.draft }}
@@ -88,16 +75,15 @@ jobs:
           body: |
             ## sb-AI ${{ github.event.inputs.version || github.ref_name }}
 
-            ### Features
-            - URLTest 节点测速
-            - 订阅自动更新
-            - 多配置 Profiles
-            - 广播控制 (ADB)
-            - 资源管理
-            - lxbox 内核支持
+            ### 本次修复
+            - **VPN 启动无效根因修复**：:core 进程 StateFlow 不跨进程共享导致状态恒为「已停止」，现以 CommandClient 连接状态为真源
+            - **UI 卡顿优化**：节点过滤缓存、配置异步落盘、减少不必要重组
+            - **订阅导入**：保存后自动刷新 + 错误信息中文化
+            - **设置页精简**：资源管理默认折叠
+            - **节点管理**：合并到订阅源内展开显示
 
             ### Downloads
-            - **Release APK**: Production build
+            - **Release APK**：生产构建
 
             ### Technical Details
             - Core: sing-box-lx ${{ env.LIBBOX_VERSION }}
