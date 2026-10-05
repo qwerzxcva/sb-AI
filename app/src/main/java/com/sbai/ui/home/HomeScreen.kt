@@ -701,7 +701,10 @@ fun HomeScreen() {
                                 subtitle = buildString {
                                     append(node.outboundJson.nodeSummary())
                                     displayDelay?.let { append(" · ${it}") }
-                                    if (!node.enabled) append(" · 已禁用")
+                                    when {
+                                        node.disabledReason != null -> append(" · 已自动禁用（${node.disabledReason}）")
+                                        !node.enabled -> append(" · 已禁用")
+                                    }
                                 },
                                 icon = Icons.Filled.Widgets,
                                 iconTint = if (node.enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -710,7 +713,12 @@ fun HomeScreen() {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         Switch(
                                             checked = node.enabled,
-                                            onCheckedChange = { store.upsertProxyNode(node.copy(enabled = !node.enabled)) },
+                                            onCheckedChange = {
+                                                // 用户手动恢复：清除自动禁用原因
+                                                store.upsertProxyNode(
+                                                    node.copy(enabled = !node.enabled, disabledReason = null),
+                                                )
+                                            },
                                         )
                                         IconButton(onClick = { store.deleteProxyNode(node.id) }) {
                                             Icon(Icons.Filled.Delete, contentDescription = "删除")

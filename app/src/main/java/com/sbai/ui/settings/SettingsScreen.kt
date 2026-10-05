@@ -80,6 +80,7 @@ import com.sbai.data.OverridePriority
 import com.sbai.data.PerAppProxyMode
 import com.sbai.data.RuleStore
 import com.sbai.data.SplitTunnel
+import com.sbai.service.BackupManager
 import com.sbai.service.SingBoxConfigGenerator
 import com.sbai.data.ThemeMode
 import com.sbai.ui.components.AppPickerDialog
@@ -110,6 +111,8 @@ fun SettingsScreen() {
     var editingProfile by remember { mutableStateOf<ConfigProfile?>(null) }
     // ---- 资源管理编辑状态 ----
     var editingResource by remember { mutableStateOf<com.sbai.data.Resource?>(null) }
+    // ---- 备份导入模式选择（merge / replace） ----
+    var pendingImport by remember { mutableStateOf<AppState?>(null) }
 
     val backupJson = Json { prettyPrint = true; encodeDefaults = true; ignoreUnknownKeys = true }
 
@@ -145,8 +148,8 @@ fun SettingsScreen() {
                 sb.toString()
             } ?: error("空文件")
             val imported = backupJson.decodeFromString(AppState.serializer(), text)
-            store.replaceAll(imported)
-            backupMessage = "已导入配置"
+            // 不立即应用，先弹窗让用户选「合并导入」还是「覆盖导入」
+            pendingImport = imported
         }.onFailure { backupMessage = "导入失败: ${it.message}" }
     }
 
@@ -686,7 +689,7 @@ fun SettingsScreen() {
                     item {
                         SbItem(
                             title = "导入配置",
-                            subtitle = "从 JSON 文件恢复（覆盖当前全部配置）",
+                            subtitle = "从 JSON 文件恢复（可选合并或覆盖）",
                             icon = Icons.Filled.Restore,
                             onClick = { importLauncher.launch(arrayOf("application/json", "text/*")) },
                         )
@@ -815,6 +818,41 @@ fun SettingsScreen() {
                 }) { Text("确定") }
             },
             dismissButton = { TextButton(onClick = { showProfileDialog = false }) { Text("取消") } },
+        )
+    }
+
+    // 备份导入模式选择（merge / replace）
+    if (pendingImport != null) {
+        val imported = pendingImport!!
+        AlertDialog(
+            onDismissRequest = { pendingImport = null },
+            title = { Text("导入配置") },
+            text = {
+                Column {
+                    Text("选择导入方式：")
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "• 合并：把文件中的规则/节点/订阅追加到现有配置（不删除现有项，同名 id 保留现有）\n" +
+                            "• 覆盖：用文件内容整体替换当前全部配置",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    store.replaceAll(imported)
+                    backupMessage = "已覆盖导入配置"
+                    pendingImport = null
+                }) { Text("覆盖导入") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    store.replaceAll(BackupManager.merge(state, imported))
+                    backupMessage = "已合并导入配置"
+                    pendingImport = null
+                }) { Text("合并导入") }
+            },
         )
     }
 

@@ -34,6 +34,8 @@ class VpnControlReceiver : BroadcastReceiver() {
         const val ACTION_SUB_UPDATE = "com.sbai.action.SUB_UPDATE"
         const val ACTION_STATUS = "com.sbai.action.STATUS"
         const val ACTION_RESOURCE_UPDATE = "com.sbai.action.RESOURCE_UPDATE"
+        const val ACTION_NEXT_NODE = "com.sbai.action.NEXT_NODE"
+        const val ACTION_PREV_NODE = "com.sbai.action.PREV_NODE"
         const val EXTRA_FORCE = "extra_force"
     }
 
@@ -43,9 +45,45 @@ class VpnControlReceiver : BroadcastReceiver() {
             ACTION_STOP_VPN -> stopVpn(context)
             ACTION_SUB_UPDATE -> triggerSubUpdate(context)
             ACTION_RESOURCE_UPDATE -> triggerResourceUpdate(context)
+            ACTION_NEXT_NODE -> switchNode(forward = true)
+            ACTION_PREV_NODE -> switchNode(forward = false)
             ACTION_STATUS -> Log.i(TAG, "status query: running=${SbAiVpnService.status.value is SbAiVpnService.ServiceStatus.Running}")
             else -> Log.w(TAG, "unknown action: ${intent.action}")
         }
+    }
+
+    /**
+     * 通知栏切换节点：找到可切换的代理组（selector/urltest），切换到下一个/上一个节点。
+     * 走 SbCommandClient（命令客户端已连接内核时），不影响服务生命周期。
+     */
+    private fun switchNode(forward: Boolean) {
+        val groups = SbCommandClient.groups.value
+        if (groups.isEmpty()) {
+            Log.w(TAG, "switchNode: no groups available (core not connected?)")
+            return
+        }
+        // 优先切 lb-selector / lb / proxy 组（选择器/测速组），找到第一个 selectable 的组
+        val candidates = groups.filter { it.selectable && it.items.size > 1 }
+            .sortedBy { g ->
+                when (g.tag) {
+                    "lb-selector" -> 0
+                    "proxy" -> 1
+                    "lb" -> 2
+                    else -> 3
+                }
+            }
+        val group = candidates.firstOrNull() ?: run {
+            Log.w(TAG, "switchNode: no selectable group with >1 item")
+            return
+        }
+        val items = group.items.map { NodeSwitcher.Item(it.tag, it.type != "urltest" && it.type != "selector") }
+        val target = NodeSwitcher.nextTag(items, group.selected, forward)
+        if (target == null) {
+            Log.w(TAG, "switchNode: no target to switch to")
+            return
+        }
+        Log.i(TAG, "switchNode: ${group.tag} ${group.selected} → $target (${if (forward) "next" else "prev"})")
+        SbCommandClient.selectOutbound(group.tag, target)
     }
 
     private fun triggerResourceUpdate(context: Context) {

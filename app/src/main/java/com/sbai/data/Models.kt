@@ -317,6 +317,8 @@ data class ProxyNode(
     val urlTestDelay: Int = 0,
     /** 最近一次测速时间戳（ms） */
     val urlTestTime: Long = 0L,
+    /** 内核拒绝自动禁用的原因（null=未被内核拒绝禁用；禁用时记录内核原文） */
+    val disabledReason: String? = null,
 )
 
 /** 订阅源：拉取分享链接并解析为节点 */

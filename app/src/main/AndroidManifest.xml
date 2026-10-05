@@ -93,6 +93,8 @@
                 <action android:name="com.sbai.action.SUB_UPDATE" />
                 <action android:name="com.sbai.action.RESOURCE_UPDATE" />
                 <action android:name="com.sbai.action.STATUS" />
+                <action android:name="com.sbai.action.NEXT_NODE" />
+                <action android:name="com.sbai.action.PREV_NODE" />
             </intent-filter>
         </receiver>
 

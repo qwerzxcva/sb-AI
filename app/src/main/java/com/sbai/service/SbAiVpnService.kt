@@ -73,18 +73,40 @@ class SbAiVpnService : VpnService() {
                 Log.i(TAG, "startVpn: LibboxRuntime.setup completed")
 
                 // :core 进程的 RuleStore 是首次构造时的磁盘快照，必须 reload 才能拿到 UI 刚改的配置
-                val state = RuleStore.get(this@SbAiVpnService).reload()
+                val store = RuleStore.get(this@SbAiVpnService)
+                var state = store.reload()
                 Log.i(TAG, "startVpn: state reloaded, subscriptions=${state.subscriptions.size}")
-                
-                // generate() 内部已处理 configOverride（导入 JSON 覆盖合并），直接调用
-                val config = SingBoxConfigGenerator.generate(state)
-                Log.i(TAG, "startVpn: config generated, length=${config.length}")
 
-                // 配置出口闸门：启动前先过 checkConfig，失败直接给出可读错误
+                // 配置生成 + 校验 + 自动禁用坏节点重试（有限轮次）。
+                // 参考 LxBox 009：内核拒绝的节点自动禁用，用剩余好节点让 VPN 起来。
+                var config = SingBoxConfigGenerator.generate(state)
+                var disabledAny = false
+                repeat(NodeAutoDisabler.MAX_ROUNDS) { round ->
+                    val err = SingBoxConfigGenerator.validate(config)
+                    if (err == null) return@repeat  // 校验通过，跳出循环
+                    Log.w(TAG, "startVpn: round $round config invalid: $err")
+                    // 尝试从错误中定位坏节点并禁用
+                    val next = NodeAutoDisabler.disableRejectedNode(state, err)
+                    if (next == null) {
+                        // 错误无法归因到具体节点（可能是路由/DNS 配置错误），保留原始错误
+                        error("配置校验失败: $err")
+                    }
+                    // 禁用成功后落盘并重新生成配置再校验
+                    store.updateCommitted { next }
+                    state = next
+                    disabledAny = true
+                    config = SingBoxConfigGenerator.generate(state)
+                }
+                // 循环结束后必须最终校验一次（repeat 里 return@repeat 跳过时已通过；
+                // 若跑满轮次仍有坏节点，最后一次生成的 config 可能是坏的，这里兜底拦截）
                 SingBoxConfigGenerator.validate(config)?.let { msg ->
-                    Log.e(TAG, "startVpn: config validation failed: $msg")
+                    Log.e(TAG, "startVpn: config still invalid after auto-disable: $msg")
                     error("配置校验失败: $msg")
                 }
+                if (disabledAny) {
+                    Log.i(TAG, "startVpn: auto-disabled bad nodes, proceeding with remaining")
+                }
+                Log.i(TAG, "startVpn: config generated, length=${config.length}")
 
                 val configFile = LibboxRuntime.configFile(this@SbAiVpnService)
                 configFile.parentFile?.mkdirs()
@@ -170,6 +192,19 @@ class SbAiVpnService : VpnService() {
             Intent(this, SbAiVpnService::class.java).setAction(ACTION_STOP),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
+        // 通知栏切换节点（prev / next），走广播：接收方在 UI 进程读写命令客户端
+        val prevIntent = PendingIntent.getBroadcast(
+            this,
+            2,
+            Intent(VpnControlReceiver.ACTION_PREV_NODE).setPackage(packageName),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        val nextIntent = PendingIntent.getBroadcast(
+            this,
+            3,
+            Intent(VpnControlReceiver.ACTION_NEXT_NODE).setPackage(packageName),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
         val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             Notification.Builder(this, CHANNEL_ID)
         } else {
@@ -181,6 +216,8 @@ class SbAiVpnService : VpnService() {
             .setContentText(text)
             .setSmallIcon(R.drawable.ic_qs_proxy)
             .setContentIntent(openIntent)
+            .addAction(Notification.Action.Builder(null, "上一个", prevIntent).build())
+            .addAction(Notification.Action.Builder(null, "下一个", nextIntent).build())
             .addAction(
                 Notification.Action.Builder(null, getString(R.string.action_stop), stopIntent).build(),
             )
