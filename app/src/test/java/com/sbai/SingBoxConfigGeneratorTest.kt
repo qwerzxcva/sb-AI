@@ -869,4 +869,106 @@ class SingBoxConfigGeneratorTest {
         assertEquals(RuleAction.REJECT, rule.action)
         assertEquals(listOf("unknown"), rule.ruleSetTags)
     }
+
+    // ------------------------------------------------------------------
+    // DPI 硬化：TLS 分片（参考 LxBox 016）
+    // ------------------------------------------------------------------
+
+    @Test
+    fun `tls fragment off leaves outbound tls untouched`() {
+        val node = ProxyNode(
+            name = "n1",
+            outboundJson = """{"type":"vless","tag":"n1","server":"1.2.3.4","server_port":443,"uuid":"x","tls":{"enabled":true,"server_name":"a.com"}}""",
+        )
+        val state = AppState(proxyNodes = listOf(node))
+        val cfg = parse(state)
+        val ob = outbounds(cfg).first { it.jsonObject["tag"]?.jsonPrimitive?.content == "n1" }.jsonObject
+        val tls = ob["tls"]!!.jsonObject
+        assertNull(tls["fragment"])
+        assertNull(tls["record_fragment"])
+    }
+
+    @Test
+    fun `tls record fragment on injects record_fragment only`() {
+        val node = ProxyNode(
+            name = "n1",
+            outboundJson = """{"type":"vless","tag":"n1","server":"1.2.3.4","server_port":443,"uuid":"x","tls":{"enabled":true,"server_name":"a.com"}}""",
+        )
+        val state = AppState(
+            proxyNodes = listOf(node),
+            settings = com.sbai.data.AppSettings(tlsRecordFragment = true),
+        )
+        val cfg = parse(state)
+        val ob = outbounds(cfg).first { it.jsonObject["tag"]?.jsonPrimitive?.content == "n1" }.jsonObject
+        val tls = ob["tls"]!!.jsonObject
+        assertEquals("true", tls["record_fragment"]!!.jsonPrimitive.content)
+        assertNull(tls["fragment"])
+    }
+
+    @Test
+    fun `tls fragment on injects fragment and fallback delay`() {
+        val node = ProxyNode(
+            name = "n1",
+            outboundJson = """{"type":"vless","tag":"n1","server":"1.2.3.4","server_port":443,"uuid":"x","tls":{"enabled":true,"server_name":"a.com"}}""",
+        )
+        val state = AppState(
+            proxyNodes = listOf(node),
+            settings = com.sbai.data.AppSettings(tlsFragment = true, tlsFragmentFallbackDelay = "700ms"),
+        )
+        val cfg = parse(state)
+        val ob = outbounds(cfg).first { it.jsonObject["tag"]?.jsonPrimitive?.content == "n1" }.jsonObject
+        val tls = ob["tls"]!!.jsonObject
+        assertEquals("true", tls["fragment"]!!.jsonPrimitive.content)
+        assertEquals("700ms", tls["fragment_fallback_delay"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `tls fragment skipped when utls present`() {
+        // uTLS 已改造 ClientHello，fragment 会被内核拒绝，应跳过 fragment（record_fragment 仍注入）
+        val node = ProxyNode(
+            name = "n1",
+            outboundJson = """{"type":"vless","tag":"n1","server":"1.2.3.4","server_port":443,"uuid":"x","tls":{"enabled":true,"server_name":"a.com","utls":{"enabled":true,"fingerprint":"chrome"}}}""",
+        )
+        val state = AppState(
+            proxyNodes = listOf(node),
+            settings = com.sbai.data.AppSettings(tlsFragment = true, tlsRecordFragment = true),
+        )
+        val cfg = parse(state)
+        val ob = outbounds(cfg).first { it.jsonObject["tag"]?.jsonPrimitive?.content == "n1" }.jsonObject
+        val tls = ob["tls"]!!.jsonObject
+        assertNull(tls["fragment"])
+        assertEquals("true", tls["record_fragment"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `tls fragment not injected on non-tls protocol`() {
+        // shadowsocks 无 tls 块，不注入任何分片字段
+        val node = ProxyNode(
+            name = "ss1",
+            outboundJson = """{"type":"shadowsocks","tag":"ss1","server":"1.2.3.4","server_port":8388,"method":"aes-128-gcm","password":"p"}""",
+        )
+        val state = AppState(
+            proxyNodes = listOf(node),
+            settings = com.sbai.data.AppSettings(tlsFragment = true, tlsRecordFragment = true),
+        )
+        val cfg = parse(state)
+        val ob = outbounds(cfg).first { it.jsonObject["tag"]?.jsonPrimitive?.content == "ss1" }.jsonObject
+        assertNull(ob["tls"])
+    }
+
+    @Test
+    fun `tls fragment not injected on detour node`() {
+        // detour 节点：分片交由内核决定，不注入
+        val node = ProxyNode(
+            name = "n1",
+            outboundJson = """{"type":"vless","tag":"n1","server":"1.2.3.4","server_port":443,"uuid":"x","detour":"relay","tls":{"enabled":true,"server_name":"a.com"}}""",
+        )
+        val state = AppState(
+            proxyNodes = listOf(node),
+            settings = com.sbai.data.AppSettings(tlsFragment = true),
+        )
+        val cfg = parse(state)
+        val ob = outbounds(cfg).first { it.jsonObject["tag"]?.jsonPrimitive?.content == "n1" }.jsonObject
+        assertNull(ob["tls"]!!.jsonObject["fragment"])
+    }
 }

@@ -154,7 +154,7 @@ object SingBoxConfigGenerator {
 
             outboundNodes.forEach { node ->
                 runCatching { json.parseToJsonElement(node.outboundJson).jsonObject }
-                    .getOrNull()?.let(::add)
+                    .getOrNull()?.let { applyTlsFragment(it, state) }?.let(::add)
             }
 
             add(buildJsonObject { put("type", "direct"); put("tag", "direct") })
@@ -738,6 +738,45 @@ object SingBoxConfigGenerator {
 
     /** sing-box 1.12+ 中作为 endpoint（config.endpoints[]）的协议类型 */
     private val ENDPOINT_TYPES = setOf("wireguard", "wg")
+
+    /**
+     * 注入 DPI 硬化 TLS 分片（参考 LxBox 016）：对带 tls 块的 outbound 写入
+     * tls.fragment / tls.record_fragment / tls.fragment_fallback_delay。
+     *
+     * 仅第一跳（无 detour 的 outbound）注入；有 detour 的节点分片由内核决定，不注入。
+     * 无 tls 块的协议（shadowsocks、hysteria2 等）不注入，避免污染配置。
+     *
+     * @return 注入后的 JsonObject（无变化时返回原对象）
+     */
+    private fun applyTlsFragment(obj: JsonObject, state: AppState): JsonObject {
+        val s = state.settings
+        if (!s.tlsFragment && !s.tlsRecordFragment) return obj
+        val tls = obj["tls"]?.jsonObject ?: return obj
+        // detour 节点：分片交由内核决定（detour 下内核自行开启 record_fragment）
+        if (obj["detour"] != null) return obj
+        // system TLS 引擎下 fragment 与 uTLS/REALITY 冲突，内核会拒绝；这里仅在有 utls/reality 时跳过 fragment
+        val hasUtls = tls["utls"] != null
+        val hasReality = tls["reality"] != null
+        val hasEch = tls["ech"] != null
+
+        // fragment 与 uTLS/REALITY/ECH 互斥：这些技术本身已改造 ClientHello，再分片会被内核拒绝或无效
+        val wantFragment = s.tlsFragment && !hasUtls && !hasReality && !hasEch
+        if (!s.tlsRecordFragment && !wantFragment) return obj
+
+        val delay = s.tlsFragmentFallbackDelay.ifBlank { "500ms" }
+        val newTls = buildJsonObject {
+            tls.forEach { (k, v) -> put(k, v) }
+            if (s.tlsRecordFragment) put("record_fragment", true)
+            if (wantFragment) {
+                put("fragment", true)
+                put("fragment_fallback_delay", delay)
+            }
+        }
+        return buildJsonObject {
+            obj.forEach { (k, v) -> put(k, v) }
+            put("tls", newTls)
+        }
+    }
 
     /** 配置校验：调用 libbox.checkConfig；失败时返回可读错误（5 秒超时） */
     fun validate(configJson: String): String? {

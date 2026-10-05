@@ -497,6 +497,14 @@ data class AppSettings(
     /** TUN 网络栈：system / gvisor / mixed（sing-box stack） */
     val tunStack: String = "mixed",
 
+    // ---- DPI 硬化：TLS 分片（参考 LxBox 016）----
+    /** TLS 分片：把 ClientHello 拆成小 TCP 段（tls.fragment） */
+    val tlsFragment: Boolean = false,
+    /** TLS 记录分片：把握手拆成多个 TLS record（tls.record_fragment，推荐先试） */
+    val tlsRecordFragment: Boolean = false,
+    /** 分片回退延迟（tls.fragment_fallback_delay，duration 字符串） */
+    val tlsFragmentFallbackDelay: String = "500ms",
+
     // ---- 资源管理：自定义 URL 列表（IP 列表、规则集等） ----
     /** 资源列表：可配置 URL 自动更新（如 China IP 列表、GeoIP 规则集等） */
     val resources: List<Resource> = emptyList(),

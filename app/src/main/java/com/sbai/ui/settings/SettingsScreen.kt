@@ -29,6 +29,7 @@ import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.Article
 import androidx.compose.material.icons.filled.Badge
 import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.ContentCut
 import androidx.compose.material.icons.filled.EditNote
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
@@ -266,6 +267,41 @@ fun SettingsScreen() {
                                 label = { Text("IPv6 段（如 fdfe:dcba:9876::1/126）") },
                                 singleLine = true,
                                 enabled = settings.ipv6Route,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+                    }
+                }
+                SbSpacer()
+            }
+
+            // ---- DPI 硬化：TLS 分片（参考 LxBox 016）----
+            item {
+                SbGroup(title = "DPI 硬化") {
+                    item {
+                        SbSwitchItem(
+                            title = "TLS 记录分片",
+                            subtitle = "把握手拆成多个 TLS record（推荐先试这个）",
+                            icon = Icons.Filled.Security,
+                            checked = settings.tlsRecordFragment,
+                        ) { store.updateSettings(settings.copy(tlsRecordFragment = it)) }
+                    }
+                    item {
+                        SbSwitchItem(
+                            title = "TLS 分片",
+                            subtitle = "把 ClientHello 拆成小 TCP 段，绕过 DPI",
+                            icon = Icons.Filled.ContentCut,
+                            checked = settings.tlsFragment,
+                        ) { store.updateSettings(settings.copy(tlsFragment = it)) }
+                    }
+                    item {
+                        Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                            OutlinedTextField(
+                                value = settings.tlsFragmentFallbackDelay,
+                                onValueChange = { store.updateSettings(settings.copy(tlsFragmentFallbackDelay = it.trim())) },
+                                label = { Text("回退延迟（如 500ms）") },
+                                singleLine = true,
+                                enabled = settings.tlsFragment,
                                 modifier = Modifier.fillMaxWidth(),
                             )
                         }
