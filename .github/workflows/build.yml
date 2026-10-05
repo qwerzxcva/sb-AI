@@ -15,6 +15,10 @@ env:
   ANDROID_HOME: /usr/local/lib/android/sdk
   LIBBOX_VERSION: v1.14.2-lx.11
 
+# 手动触发 release 时需要写权限
+permissions:
+  contents: write
+
 jobs:
   build:
     name: Build APK

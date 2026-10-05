@@ -19,6 +19,15 @@ on:
 env:
   LIBBOX_VERSION: v1.14.2-lx.11
 
+# 创建 Release 需要 contents: write 权限（默认是 read，会导致 softprops 步骤 403 失败）
+permissions:
+  contents: write
+
+# 防止同一 ref 的多次触发并发运行导致 release 创建冲突
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build:
     name: Build Release APK
