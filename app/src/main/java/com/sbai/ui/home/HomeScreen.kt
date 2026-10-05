@@ -88,6 +88,7 @@ import com.sbai.data.Subscription
 import com.sbai.data.UrltestMode
 import com.sbai.service.SbAiVpnService
 import com.sbai.service.SbCommandClient
+import com.sbai.service.NodeBatchTester
 import com.sbai.service.SingBoxConfigGenerator
 import com.sbai.service.SubscriptionManager
 import com.sbai.ui.components.SbBadge
@@ -130,6 +131,8 @@ fun HomeScreen() {
     var showNodesPicker by remember { mutableStateOf(false) }
     var editingText by remember { mutableStateOf<Triple<String, String, (String) -> Unit>?>(null) }
     var importResult by remember { mutableStateOf<String?>(null) }
+    // 批量测速进度：-1 = 未在测；0..100 = 已完成百分比
+    var batchTestProgress by remember { mutableStateOf(-1) }
 
     val vpnPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult(),
@@ -652,6 +655,38 @@ fun HomeScreen() {
             }
 
             // ---- 节点 ----
+            // 批量测速面板：对所有启用节点逐个 URLTest，结果回填（参考 LxBox 009 列表测速）
+            if (coreConnected && state.proxyNodes.any { it.enabled }) {
+                item {
+                    SbItem(
+                        title = if (batchTestProgress in 0..99) "批量测速中… ${batchTestProgress}%" else "批量测速（所有节点）",
+                        subtitle = "逐个节点 URLTest，并发 6，结果回填到节点延迟",
+                        icon = Icons.Filled.Bolt,
+                        onClick = {
+                            if (batchTestProgress == -1) {
+                                scope.launch {
+                                    batchTestProgress = 0
+                                    // 确定测速组：优先 urltest 组，否则 selector 组
+                                    val groupTag = proxyGroups
+                                        .firstOrNull { it.type == "urltest" }?.tag
+                                        ?: proxyGroups.firstOrNull { it.type == "selector" }?.tag
+                                        ?: "lb"
+                                    val results = NodeBatchTester.testNodes(
+                                        nodes = state.proxyNodes,
+                                        groupTag = groupTag,
+                                        onProgress = { done, total ->
+                                            batchTestProgress = if (total == 0) 100 else done * 100 / total
+                                        },
+                                    )
+                                    NodeBatchTester.applyResults(store, results)
+                                    batchTestProgress = -1
+                                }
+                            }
+                        },
+                    )
+                    Spacer(Modifier.height(8.dp))
+                }
+            }
             item {
                 SbGroup(title = "节点（${state.proxyNodes.size}）") {
                     // sb-AI NodeListFilter：过滤栏
