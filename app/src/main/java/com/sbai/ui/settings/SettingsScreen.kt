@@ -30,6 +30,8 @@ import androidx.compose.material.icons.filled.Article
 import androidx.compose.material.icons.filled.Badge
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.EditNote
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.Height
 import androidx.compose.material.icons.filled.Info
@@ -64,6 +66,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -334,9 +337,19 @@ fun SettingsScreen() {
                 SbSpacer()
             }
 
-            // ---- 资源管理 ----
+            // ---- 资源管理（与路由规则/DNS 规则功能重叠，默认收起以精简设置页）----
             item {
+                var showResources by rememberSaveable { mutableStateOf(false) }
                 SbGroup(title = "资源管理（${settings.resources.size}）") {
+                    item {
+                        SbItem(
+                            title = if (showResources) "收起资源管理" else "展开资源管理",
+                            subtitle = "IP 列表 / GeoIP / 规则集；路由与 DNS 规则已覆盖大多数场景",
+                            icon = if (showResources) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                            onClick = { showResources = !showResources },
+                        )
+                    }
+                    if (!showResources) return@SbGroup
                     item {
                         SbItem(
                             title = "添加资源",
