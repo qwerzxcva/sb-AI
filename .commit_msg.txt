@@ -1,22 +1,16 @@
-perf: 清除全部页面的全量 AppState 订阅（卡顿根本放大器）
+perf: 节点条目 composable 内零 JSON 解析 + 修复延迟排序
 
-问题（在另一个 AI 的第12批之后继续发现）:
-MainActivity + HomeScreen + DnsScreen + RouteRulesScreen + SettingsScreen
-共 5 处仍用 `val state by store.state.collectAsState()` 全量订阅 AppState。
+在另一个 AI 第12批之后继续发现并修复:
 
-MainActivity 在最顶层全量订阅 → 任何节点/设置的任何字段变化
-都会重组整个 MainScaffold（含 NavHost 与全部页面），
-这是全局卡顿的最大放大器。
+1. composable 内仍解析 JSON:
+   分组视图与非分组视图都在 item{} 内调用 node.outboundJson.nodeSummary()
+   → 每帧重组对全部可见节点重复解析 JSON。
+   修复: filteredNodes 缓存阶段预计算 NodeRow(node, subtitle)，
+   composable 内零 JSON 解析。
 
-修复（全部改为字段级订阅 + distinctUntilChanged）:
-- MainActivity: themeMode / dynamicColor（仅主题两字段）
-- HomeScreen: loadBalance / subscriptions / proxyNodes
-- DnsScreen: dnsServers / dnsGroups / dnsRules / routeRuleSets / routeRules
-- RouteRulesScreen: routeRules / routeRuleSets / dnsServers / dnsGroups
-- SettingsScreen: settings / profiles / activeProfileId + fullState(低频操作一次性快照)
+2. 延迟排序失效:
+   sortedWith(compareBy(模式, name, urlTestDelay)) 中 name 在 delay 之前，
+   延迟键永不生效。修复: 延迟模式用 compareBy{delay}.thenBy{name}，
+   未测速(0)视为 MAX 排最后。
 
-配套:
-- 新增 SingBoxConfigGenerator.autoDnsRulesFromRouteRules 重载（字段级缓存）
-- 配置预览/备份/生成配置改用 store.state.value 一次性快照，不订阅
-
-验证: 编译通过 + 全部测试通过（全量订阅残留 = 0 处）
+验证: 编译 + 全部测试通过

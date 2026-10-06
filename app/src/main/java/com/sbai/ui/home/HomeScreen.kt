@@ -235,18 +235,35 @@ fun HomeScreen() {
                     val nameHit = q.isEmpty() || node.name.contains(q, ignoreCase = true)
                     val protoHit = proto.isEmpty() || node.outboundJson.contains(proto, ignoreCase = true)
                     val regionHit = region.isEmpty() || node.name.contains(region, ignoreCase = true)
-                    // 直接用 urlTestDelay 字段，避免对每个节点反复 parseToJsonElement(outboundJson)（回首页卡顿主因）
+                    // 直接用 urlTestDelay 字段，避免对每个节点反复 parseToJsonElement(outboundJson)
                     val delayOk = !noDelay || node.urlTestDelay > 0
                     nameHit && protoHit && regionHit && delayOk
                 }
                 .sortedWith(
-                    compareBy(
-                        { if (sortMode == NodeSortMode.NAME_ASC) 0 else 1 },
-                        { it.name.lowercase() },
-                        { it.urlTestDelay },  // 直接用字段，不再解析 JSON
-                    )
+                    // 修复：延迟排序时延迟必须是第一优先级，否则被 name 覆盖。
+                    // 未测速(0)视为 MAX 排最后。
+                    if (sortMode == NodeSortMode.LATENCY_ASC) {
+                        compareBy<ProxyNode> { it.urlTestDelay.takeIf { d -> d > 0 } ?: Int.MAX_VALUE }
+                            .thenBy { it.name.lowercase() }
+                    } else {
+                        compareBy<ProxyNode> { it.name.lowercase() }
+                    }
                 )
                 .take(30)
+                .map { node ->
+                    // 预计算显示摘要：composable 内不再解析 JSON（回首页卡顿主因）
+                    val summary = node.outboundJson.nodeSummary()
+                    val delayText = if (node.urlTestDelay > 0) "${node.urlTestDelay}ms" else null
+                    val subtitle = buildString {
+                        append(summary)
+                        delayText?.let { append(" · $it") }
+                        when {
+                            node.disabledReason != null -> append(" · 已自动禁用（${node.disabledReason}）")
+                            !node.enabled -> append(" · 已禁用")
+                        }
+                    }
+                    NodeRow(node = node, subtitle = subtitle)
+                }
                 .toList()
         }
     }
@@ -746,7 +763,7 @@ fun HomeScreen() {
                     }
                     if (groupBySubscription) {
                         // 订阅分组视图：按订阅折叠展开
-                        val grouped = filteredNodes.groupBy { it.subscriptionId }
+                        val grouped = filteredNodes.groupBy { it.node.subscriptionId }
                         // 独立节点（subscriptionId == null）放在最后，订阅按名称排序
                         val orderedKeys = grouped.keys
                             .filterNotNull()
@@ -771,33 +788,25 @@ fun HomeScreen() {
                                 )
                             }
                             if (!isCollapsed) {
-                                for (node in nodes) {
-                                    item(key = "node-${node.id}") {
-                                        val displayDelay = if (node.urlTestDelay > 0) "${node.urlTestDelay}ms" else null
+                                for (row in nodes) {
+                                    item(key = "node-${row.node.id}") {
                                         SbItem(
-                                            title = node.name.ifBlank { "未命名节点" },
-                                            subtitle = buildString {
-                                                append(node.outboundJson.nodeSummary())
-                                                displayDelay?.let { append(" · ${it}") }
-                                                when {
-                                                    node.disabledReason != null -> append(" · 已自动禁用（${node.disabledReason}）")
-                                                    !node.enabled -> append(" · 已禁用")
-                                                }
-                                            },
+                                            title = row.node.name.ifBlank { "未命名节点" },
+                                            subtitle = row.subtitle,
                                             icon = Icons.Filled.Widgets,
-                                            iconTint = if (node.enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                            onClick = { editingNode = node },
+                                            iconTint = if (row.node.enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                            onClick = { editingNode = row.node },
                                             trailing = {
                                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                                     Switch(
-                                                        checked = node.enabled,
+                                                        checked = row.node.enabled,
                                                         onCheckedChange = {
                                                             store.upsertProxyNode(
-                                                                node.copy(enabled = !node.enabled, disabledReason = null),
+                                                                row.node.copy(enabled = !row.node.enabled, disabledReason = null),
                                                             )
                                                         },
                                                     )
-                                                    IconButton(onClick = { store.deleteProxyNode(node.id) }) {
+                                                    IconButton(onClick = { store.deleteProxyNode(row.node.id) }) {
                                                         Icon(Icons.Filled.Delete, contentDescription = "删除")
                                                     }
                                                 }
@@ -808,33 +817,25 @@ fun HomeScreen() {
                             }
                         }
                     } else {
-                        for (node in filteredNodes) {
-                            item(key = "node-${node.id}") {
-                                val displayDelay = if (node.urlTestDelay > 0) "${node.urlTestDelay}ms" else null
+                        for (row in filteredNodes) {
+                            item(key = "node-${row.node.id}") {
                                 SbItem(
-                                    title = node.name.ifBlank { "未命名节点" },
-                                    subtitle = buildString {
-                                        append(node.outboundJson.nodeSummary())
-                                        displayDelay?.let { append(" · ${it}") }
-                                        when {
-                                            node.disabledReason != null -> append(" · 已自动禁用（${node.disabledReason}）")
-                                            !node.enabled -> append(" · 已禁用")
-                                        }
-                                    },
+                                    title = row.node.name.ifBlank { "未命名节点" },
+                                    subtitle = row.subtitle,
                                     icon = Icons.Filled.Widgets,
-                                    iconTint = if (node.enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                    onClick = { editingNode = node },
+                                    iconTint = if (row.node.enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    onClick = { editingNode = row.node },
                                     trailing = {
                                         Row(verticalAlignment = Alignment.CenterVertically) {
                                             Switch(
-                                                checked = node.enabled,
+                                                checked = row.node.enabled,
                                                 onCheckedChange = {
                                                     store.upsertProxyNode(
-                                                        node.copy(enabled = !node.enabled, disabledReason = null),
+                                                        row.node.copy(enabled = !row.node.enabled, disabledReason = null),
                                                     )
                                                 },
                                             )
-                                            IconButton(onClick = { store.deleteProxyNode(node.id) }) {
+                                            IconButton(onClick = { store.deleteProxyNode(row.node.id) }) {
                                                 Icon(Icons.Filled.Delete, contentDescription = "删除")
                                             }
                                         }
@@ -1466,6 +1467,9 @@ private fun TextEditDialog(title: String, initial: String, onDismiss: () -> Unit
 // ---------------------------------------------------------------------------
 // 节点列表过滤器枚举
 // ---------------------------------------------------------------------------
+
+/** 预计算好的节点行：subtitle 在缓存阶段算好，composable 内不再解析 JSON */
+private data class NodeRow(val node: ProxyNode, val subtitle: String)
 
 enum class NodeSortMode { NAME_ASC, LATENCY_ASC }
 
