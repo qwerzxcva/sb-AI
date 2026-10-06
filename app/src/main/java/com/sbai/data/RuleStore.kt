@@ -6,6 +6,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import com.sbai.service.NodeDedup
 import kotlinx.serialization.json.Json
 
 /**
@@ -253,18 +254,18 @@ class RuleStore private constructor(context: Context) {
         s.copy(proxyNodes = s.proxyNodes.filterNot { it.id == id })
     }
 
-    /** 用订阅解析结果整体替换该订阅下的节点（替换后做跨订阅去重：配置完全相同只保留首次出现） */
+    /** 用订阅解析结果整体替换该订阅下的节点。
+     *  去重策略由 NodeDedup.mergeWithSubscription 决定：尊重每个订阅的 removeDuplicates 开关。 */
     fun replaceSubscriptionNodes(subscriptionId: String, nodes: List<ProxyNode>) = updateCommitted { s ->
-        val merged = s.proxyNodes.filterNot { it.subscriptionId == subscriptionId } + nodes
-        s.copy(proxyNodes = dedupeNodes(merged))
-    }
-
-    /** 跨订阅/跨来源去重：按规范化配置去重，保留首次出现的节点（手动节点与先导入的订阅优先） */
-    private fun dedupeNodes(nodes: List<ProxyNode>): List<ProxyNode> {
-        val seen = HashSet<String>()
-        return nodes.filter { node ->
-            seen.add(com.sbai.service.NodeDedup.normalize(node.outboundJson))
+        val others = s.proxyNodes.filterNot { it.subscriptionId == subscriptionId }
+        val allowDedupeFor = { sid: String? ->
+            if (sid == null || sid == subscriptionId) {
+                s.subscriptions.firstOrNull { it.id == subscriptionId }?.removeDuplicates ?: true
+            } else {
+                s.subscriptions.firstOrNull { it.id == sid }?.removeDuplicates ?: true
+            }
         }
+        s.copy(proxyNodes = NodeDedup.mergeWithSubscription(others, nodes, subscriptionId, allowDedupeFor))
     }
 
     // ---- Subscriptions ----
