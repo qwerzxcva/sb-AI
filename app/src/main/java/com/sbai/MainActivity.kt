@@ -120,9 +120,12 @@ private fun MainScaffold() {
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
 
-    // 全屏 backdrop 会捕获 NavHost 的整页内容；首页长列表下会放大切页和重组成本。
-    // 当前默认关闭，保留参数便于以后在实测设备上按需开启。
-    val useGlassBackdrop = false
+    // 磨砂开关拆成两层，避免为恢复质感重新引入首页卡顿：
+    //  - barGlass：底栏自身低半径采样，成本低、提供实时透光磨砂质感。
+    //  - pageGlass：把整个 NavHost 页面捕获为纹理，成本高；首页长列表下会明显放大开销，
+    //    因此保持关闭。底栏磨砂仍可用，因为底栏采样不需要全页纹理。
+    val barGlass = true
+    val pageGlass = false
     val pageBackdrop = rememberLayerBackdrop()
 
     // 下滑隐藏 / 上滑显示底栏；BottomBarController 为跨组件真源，
@@ -156,7 +159,7 @@ private fun MainScaffold() {
             startDestination = Screen.Home.route,
             modifier = Modifier
                 .fillMaxSize()
-                .then(if (useGlassBackdrop) Modifier.layerBackdrop(pageBackdrop) else Modifier),
+                .then(if (pageGlass) Modifier.layerBackdrop(pageBackdrop) else Modifier),
         ) {
             composable(Screen.Home.route) { HomeScreen() }
             composable(Screen.Routes.route) { RouteRulesScreen() }
@@ -197,7 +200,7 @@ private fun MainScaffold() {
                     },
                     modifier = Modifier.weight(1f),
                     barHeight = controlHeight,
-                    useGlassBackdrop = useGlassBackdrop,
+                    useGlassBackdrop = barGlass,
                 )
                 Spacer(modifier = Modifier.size(gap))
                 // 保留原权限请求、连接状态与启停行为；窄屏仍有 56dp 独立触摸区。

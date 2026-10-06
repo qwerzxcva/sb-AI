@@ -84,6 +84,7 @@ class SbAiVpnService : VpnService() {
             if (startRequested || stopRequested || destroyed) return
             startRequested = true
             _status.value = ServiceStatus.Starting
+            VpnRuntimeState.publish(this, VpnRuntimeState.Phase.Starting)
             try {
                 startForegroundWithNotification()
             } catch (t: Throwable) {
@@ -91,6 +92,7 @@ class SbAiVpnService : VpnService() {
                 stopRequested = true
                 _status.value = ServiceStatus.Error(t.message ?: "unknown")
                 persistError(t.message ?: t.javaClass.simpleName)
+                VpnRuntimeState.publish(this, VpnRuntimeState.Phase.Error, t.message ?: t.javaClass.simpleName)
                 stopSelf()
                 return
             }
@@ -169,6 +171,7 @@ class SbAiVpnService : VpnService() {
                             persistError(null)
                             updateNotification(getString(R.string.vpn_notification_title))
                             _status.value = ServiceStatus.Running
+                            VpnRuntimeState.publish(this@SbAiVpnService, VpnRuntimeState.Phase.Running)
                             running = true
                             Log.i(TAG, "startVpn: VPN running")
                         }
@@ -181,6 +184,7 @@ class SbAiVpnService : VpnService() {
                             stopRequested = true
                             _status.value = ServiceStatus.Error(t.message ?: "unknown")
                             persistError(t.message ?: t.javaClass.simpleName)
+                            VpnRuntimeState.publish(this@SbAiVpnService, VpnRuntimeState.Phase.Error, t.message ?: t.javaClass.simpleName)
                             failed = true
                         }
                     }
@@ -214,6 +218,7 @@ class SbAiVpnService : VpnService() {
             startRequested = false
             if (_status.value !is ServiceStatus.Error) {
                 _status.value = ServiceStatus.Stopping
+                VpnRuntimeState.publish(this, VpnRuntimeState.Phase.Stopping)
             }
         }
         scope.launch {
@@ -224,6 +229,7 @@ class SbAiVpnService : VpnService() {
                         if (_status.value !is ServiceStatus.Error) {
                             _status.value = ServiceStatus.Stopped
                         }
+                        VpnRuntimeState.publish(this@SbAiVpnService, VpnRuntimeState.Phase.Stopped)
                     }
                     stopForeground(STOP_FOREGROUND_REMOVE)
                     if (!destroying) stopSelf()

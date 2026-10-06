@@ -35,10 +35,6 @@ import androidx.compose.ui.unit.dp
 import com.kyant.backdrop.backdrops.LayerBackdrop
 import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.effects.blur
-import com.kyant.backdrop.effects.colorControls
-import com.kyant.backdrop.effects.opacity
-import com.kyant.backdrop.highlight.Highlight
-import com.kyant.backdrop.shadow.Shadow
 
 /**
  * 液态玻璃底栏。紧凑宽度/大字体使用带完整无障碍语义的纯图标布局，
@@ -48,7 +44,7 @@ import com.kyant.backdrop.shadow.Shadow
 fun SbGlassBottomBar(
     pageBackdrop: LayerBackdrop,
     items: List<SbNavItem>,
-    useGlassBackdrop: Boolean = false,
+    useGlassBackdrop: Boolean = true,
     currentRoute: String?,
     onSelect: (String) -> Unit,
     modifier: Modifier = Modifier,
@@ -67,12 +63,10 @@ fun SbGlassBottomBar(
                         shape = { CircleShape },
                         effects = {
                             blur(radius = 4f)
-                            colorControls(brightness = 0.1f, saturation = 1.15f, contrast = 1.0f)
-                            opacity(0.5f)
                         },
-                        highlight = { Highlight(width = 0.5.dp, alpha = 0.25f) },
-                        shadow = { Shadow(radius = 12.dp, color = Color.Black.copy(alpha = 0.18f)) },
-                    )
+                        highlight = null,
+                        shadow = null,
+                    ).background(colors.surfaceContainer.copy(alpha = 0.55f))
                 } else {
                     Modifier.background(colors.surfaceContainer.copy(alpha = 0.96f))
                 }

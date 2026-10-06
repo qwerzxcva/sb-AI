@@ -23,7 +23,7 @@ import java.net.URL
  *
  * 增强：
  *  - 自定义 User-Agent（机场常按 UA 返回不同格式）
- *  - 仅允许 https
+ *  - 支持 HTTP / HTTPS（默认严格校验证书）
  *  - 响应体 4MB 上限（防止 gzip 炸弹/超大订阅撑爆内存）
  *  - 解析 subscription-userinfo 响应头（upload/download/total/expire）
  */
@@ -56,10 +56,11 @@ class SubscriptionManager(
                 // 给出可诊断的错误：说明拿到了什么格式
                 val hint = when {
                     body.isBlank() -> "订阅返回空内容"
-                    body.trimStart().startsWith("<") ->
+                    SubscriptionFormat.cleanText(body).startsWith("<") ->
                         "订阅返回 HTML 登录/授权页（该地址可能是登录端点而非订阅链接，" +
                             "请到机场后台复制「通用订阅链接 / base64 / Clash 订阅」后重试）"
-                    else -> "订阅内容无法识别为任何支持的格式（分享链接 / Clash YAML / sing-box JSON）"
+                    parsedResult != null -> "已识别 ${parsedResult.format}，但没有有效节点（无效节点 ${parsedResult.rejectedNodeCount}）；已有节点已保留"
+                    else -> "订阅内容无法识别为任何支持的格式（分享链接 / Clash YAML / sing-box JSON），或全部节点不受支持；已有节点已保留"
                 }
                 return@withContext fail(subscription, hint)
             }
@@ -85,11 +86,7 @@ class SubscriptionManager(
             val filterRegion = subscription.filterRegion.trim()
             if (filterProto.isNotEmpty()) {
                 parsed = parsed.filter { n ->
-                    val protoHit = filterProto.split(Regex("\\s+"))
-                        .filter { it.isNotBlank() }.any { pattern ->
-                            n.outboundJson.contains(pattern, ignoreCase = true)
-                        }
-                    protoHit
+                    SubscriptionFormat.matchesProtocol(n.outboundJson, filterProto)
                 }
             }
             if (filterRegion.isNotEmpty()) {
@@ -110,7 +107,7 @@ class SubscriptionManager(
                 parsed = parsed.filter { !ShareLinkParser.isInfoNode(it.name) }
             }
             if (parsed.isEmpty()) {
-                return@withContext fail(subscription, "过滤后无剩余节点")
+                return@withContext fail(subscription, "解析得到 ${parsedResult.nodes.size} 个有效节点，但被订阅筛选条件全部排除；请检查协议、地区、信息节点及安全过滤，已有节点已保留")
             }
             val nodes = (if (subscription.removeDuplicates) {
                 // 去重按「配置内容」而非名称：同名但不同服务器/端口/参数的节点都保留，
@@ -207,7 +204,7 @@ class SubscriptionManager(
         when (obj["type"]?.jsonPrimitive?.content) {
             "trojan" -> obj["tls"]?.jsonObject?.get("enabled")?.jsonPrimitive?.content != "true"
             "shadowsocks" -> obj["password"]?.jsonPrimitive?.content.isNullOrBlank()
-            "http" -> true   // 明文 http 代理视为不安全
+            "http" -> obj["tls"]?.jsonObject?.get("enabled")?.jsonPrimitive?.content != "true"
             else -> false
         }
     }.getOrDefault(false)
@@ -293,7 +290,7 @@ class SubscriptionManager(
     ): FetchResult {
         // 手动跟随重定向（默认 HttpURLConnection 不跨 http/https 跟随）。
         // 若原始 URL 是 https，则拒绝降级到 http（防凭据明文泄露）；http 订阅允许 http 跳转。
-        val originIsHttps = url.startsWith("https://")
+        var requireHttps = URL(url).protocol.equals("https", ignoreCase = true)
         var current = url
         // UA：订阅级 override > 全局 override > 品牌 UA
         val ua = userAgent?.takeIf { it.isNotBlank() }
@@ -333,20 +330,27 @@ class SubscriptionManager(
                     val location = conn.getHeaderField("Location")
                         ?: error("重定向缺少 Location 头（HTTP $code）")
                     val next = URL(URL(current), location).toExternalForm()
-                    if (originIsHttps && next.startsWith("http://")) {
+                    val nextProtocol = URL(next).protocol.lowercase()
+                    require(nextProtocol == "http" || nextProtocol == "https") { "不支持的重定向协议" }
+                    if (requireHttps && nextProtocol == "http") {
                         error("拒绝 https → http 降级重定向")
                     }
+                    requireHttps = requireHttps || nextProtocol == "https"
                     current = next
                     return@repeat
                 }
                 if (code !in 200..299) error("HTTP $code")
 
-                // 证书校验失败（hostname 不匹配 / CA 不信任）→ 容忍，继续拉取（机场 CDN 常见）
+                // HTTPS 使用系统校验；除非用户显式设置 skipCertVerify，否则校验失败即终止。
                 val headers: MutableMap<String, String> = mutableMapOf()
                 conn.headerFields?.forEach { (k, v) ->
                     if (k != null && v.isNotEmpty()) headers[k.lowercase()] = v.joinToString(",")
                 }
-                val textAndHeaders = conn.inputStream.bufferedReader(Charsets.UTF_8).use {
+                val input = conn.inputStream
+                val decodedInput = if (conn.contentEncoding.equals("gzip", ignoreCase = true)) {
+                    java.util.zip.GZIPInputStream(input)
+                } else input
+                val textAndHeaders = decodedInput.bufferedReader(Charsets.UTF_8).use {
                     it.readBoundedText(MAX_BODY_CHARS) to headers
                 }
                 val traffic = parseUserinfo(textAndHeaders.second["subscription-userinfo"])

@@ -28,28 +28,44 @@ object ShareLinkParser {
      * 塞进 proxies 列表。这些节点名称含明确信息关键词，且通常复用真实节点的 server/uuid。
      *
      * 判据（保守，避免误伤真实节点）：
-     *  1. 强关键词：名称含「剩余流量」「已用流量」「总流量」「流量重置」「套餐」「到期」
-     *     「重置剩余」「官网」「公告」「建议」「续费」「距离下次」→ 必是信息节点
-     *  2. 弱关键词「流量」「到期」+ 名称含数字（如「流量：50.62GB」「到期：2026-11-02」）
-     *     → 信息节点（真实节点名几乎不会同时含这些词和量化的数字格式）
+     *  1. 强关键词：名称含「剩余流量」「已用流量」「总流量」「流量重置」「套餐」
+     *     「重置剩余」「官网」「公告」「建议」「续费」「距离下次」等 → 必是信息节点。
+     *     其中「套餐」「官网」「续费」要求带量词或链接才成立，避免误伤「套餐专线」这类真实节点。
+     *  2. 弱关键词「流量」「到期」+ 名称含量化信息（50GB / 27 天 / 2026-11-02 / 50%）→ 信息节点。
      */
     fun isInfoNode(name: String): Boolean {
         val n = name.trim()
         if (n.isEmpty()) return false
+        // 1) 直接强关键词
         val strong = listOf(
-            "剩余流量", "已用流量", "总流量", "流量重置", "套餐", "到期",
-            "重置剩余", "官网", "公告", "建议", "续费", "距离下次",
-            "流量剩余", "过期时间", "有效期",
+            "剩余流量", "已用流量", "总流量", "流量重置", "重置剩余",
+            "距离下次", "流量剩余", "过期时间", "有效期", "公告",
         )
         if (strong.any { n.contains(it) }) return true
+        // 2) 需要「量词/链接」佐证的强关键词：仅含「套餐」「官网」「续费」时不能误伤
+        val qualifiedStrong = mapOf(
+            "套餐" to Regex("""\d"""),
+            "官网" to Regex("""https?://|www\.|\d"""),
+            "续费" to Regex("""https?://|www\.|\d"""),
+            "建议" to Regex("""请|切换|卡|专线|推荐"""),
+        )
+        if (qualifiedStrong.any { (keyword, proof) ->
+                n.contains(keyword) && proof.containsMatchIn(n)
+            }
+        ) return true
+        // 3) 弱关键词「流量」「到期」必须带量化数据，避免「香港流量优化」被误杀
         val weak = listOf("流量", "到期")
-        if (weak.any { n.contains(it) } && Regex("\\d").containsMatchIn(n)) return true
+        if (weak.any { n.contains(it) } && Regex(
+                """(?:\d+(?:\.\d+)?\s*(?:[KMGT]i?B|%)|\d+\s*(?:天|日|小时|GB|MB|TB)|\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{4}\s*年|(?<![\w/-])\d{4}(?![\w/-]))""",
+                RegexOption.IGNORE_CASE,
+            ).containsMatchIn(n)
+        ) return true
         return false
     }
 
     /** 解析单行分享链接；不支持的协议返回 null */
     fun parse(line: String): ParsedNode? {
-        val trimmed = line.trim()
+        val trimmed = SubscriptionFormat.cleanText(line)
         if (trimmed.isEmpty()) return null
         return runCatching {
             when {
@@ -75,7 +91,7 @@ object ShareLinkParser {
     }
 
     internal fun decodeMaybeBase64(content: String): String {
-        val trimmed = content.trim()
+        val trimmed = SubscriptionFormat.cleanText(content)
         // 已是明文链接则直接返回
         if (trimmed.lines().any { it.contains("://") }) return trimmed
         return decodeB64(trimmed)?.let { String(it, Charsets.UTF_8) } ?: trimmed
@@ -83,12 +99,12 @@ object ShareLinkParser {
 
     /** 宽松 base64 解码：容忍 MIME 换行 / URL-safe / 缺 padding */
     internal fun decodeB64(s: String): ByteArray? {
-        val clean = s.replace(Regex("\\s+"), "")
-        val candidates = listOf(
-            { Base64.getMimeDecoder().decode(clean) },
-            { Base64.getUrlDecoder().decode(pad(clean)) },
-            { Base64.getDecoder().decode(pad(clean)) },
-        )
+        // MIME decoder silently discards '-'/'_' and even arbitrary punctuation.
+        // Strip whitespace only, normalize URL-safe alphabet, then decode strictly.
+        val clean = s.trim { it.isWhitespace() || it == '\uFEFF' }
+            .replace(Regex("\\s+"), "").replace('-', '+').replace('_', '/')
+        if (clean.isEmpty() || !Regex("[A-Za-z0-9+/]*={0,2}").matches(clean)) return null
+        val candidates = listOf({ Base64.getDecoder().decode(pad(clean)) })
         for (c in candidates) {
             val r = runCatching { c() }
             if (r.isSuccess) return r.getOrNull()
@@ -162,7 +178,7 @@ object ShareLinkParser {
             }
 
     internal fun urlDecode(s: String): String =
-        runCatching { URLDecoder.decode(s, Charsets.UTF_8.name()) }.getOrDefault(s)
+        runCatching { URLDecoder.decode(s.replace("+", "%2B"), Charsets.UTF_8.name()) }.getOrDefault(s)
 
     // ------------------------------------------------------------------
     // 协议解析
