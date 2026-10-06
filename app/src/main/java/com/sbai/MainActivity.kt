@@ -142,34 +142,43 @@ private fun MainScaffold() {
             composable(Screen.Settings.route) { SettingsScreen() }
         }
 
-        // FlClash 风格：底栏胶囊 + 右侧独立圆形 VPN 开关按钮
-        Row(
+        // 按可用宽度而非设备型号适配；VPN 保持独立，底栏与按钮共用高度。
+        androidx.compose.foundation.layout.BoxWithConstraints(
             modifier = Modifier
                 .fillMaxWidth()
                 .align(Alignment.BottomCenter)
                 .navigationBarsPadding()
-                .padding(horizontal = 20.dp)
                 .padding(bottom = 12.dp)
-                // 下滑隐藏：整体下移出屏幕
                 .offset(y = barOffset),
-            verticalAlignment = Alignment.CenterVertically,
         ) {
-            SbGlassBottomBar(
-                pageBackdrop = pageBackdrop,
-                items = items.map { SbNavItem(it.route, it.title, it.icon) },
-                currentRoute = currentRoute,
-                onSelect = { route ->
-                    navController.navigate(route) {
-                        popUpTo(navController.graph.findStartDestination().id) { saveState = true }
-                        launchSingleTop = true
-                        restoreState = true
-                    }
-                },
-                modifier = Modifier.weight(1f),
-            )
-            Spacer(modifier = Modifier.size(12.dp))
-            // 与 NavigationBar 等高（80dp），上下平齐；圆形按钮直径 = 底栏高度
-            VpnToggleButton(size = 80.dp)
+            val compact = maxWidth < 420.dp
+            val controlHeight = if (compact) 56.dp else 80.dp
+            val sidePadding = if (compact) 8.dp else 20.dp
+            val gap = if (compact) 8.dp else 12.dp
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = sidePadding),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                SbGlassBottomBar(
+                    pageBackdrop = pageBackdrop,
+                    items = items.map { SbNavItem(it.route, it.title, it.icon) },
+                    currentRoute = currentRoute,
+                    onSelect = { route ->
+                        navController.navigate(route) {
+                            popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
+                    },
+                    modifier = Modifier.weight(1f),
+                    barHeight = controlHeight,
+                )
+                Spacer(modifier = Modifier.size(gap))
+                // 保留原权限请求、连接状态与启停行为；窄屏仍有 56dp 独立触摸区。
+                VpnToggleButton(size = controlHeight)
+            }
         }
     }
 }
