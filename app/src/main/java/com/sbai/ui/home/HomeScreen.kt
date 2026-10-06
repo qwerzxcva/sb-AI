@@ -144,6 +144,8 @@ fun HomeScreen() {
 
     var editingNode by remember { mutableStateOf<ProxyNode?>(null) }
     var editingSub by remember { mutableStateOf<Subscription?>(null) }
+    // 订阅删除确认（含无 URL 的本地订阅，如 WARP）
+    var subToDelete by remember { mutableStateOf<Subscription?>(null) }
     var showConfigPreview by remember { mutableStateOf(false) }
     var showModeDialog by remember { mutableStateOf(false) }
     var showNodesPicker by remember { mutableStateOf(false) }
@@ -262,20 +264,19 @@ fun HomeScreen() {
                 .toList()
         }
     }
-    // :core 进程启动错误（跨进程持久化），未连接时展示给用户
-    val persistedError = remember {
-        runCatching {
-            context.getSharedPreferences("sbai_vpn", Context.MODE_PRIVATE)
-                .getString("last_error", null)
-        }.getOrNull()
-    }
-
     // 连接在 MainScaffold 级别只启动一次；首页只消费状态，避免返回首页重复建连。
     // 状态真源：:core 进程发布的真实运行阶段（不用遥测连接冒充 VPN 状态）
+    // persistedError 已从历史遗留中移除：VpnRuntimeState.message 是统一的错误展示真源，
+    // 该变量读取后从未被消费（仅占一行内存），留着只会让新看代码的人误以为它是真源。
     val vpnPhase by VpnRuntimeState.phase.collectAsState()
     LaunchedEffect(Unit) {
         while (true) {
-            withContext(Dispatchers.IO) { VpnRuntimeState.refreshFromDisk(context) }
+            withContext(Dispatchers.IO) {
+                VpnRuntimeState.refreshFromDisk(context)
+                // :core 会异步自动禁用坏节点；UI 轮询时把最新磁盘态刷入内存，
+                // 否则首页的代理列表/节点数量会滞后（P0 相关体验问题）。
+                RuleStore.get(context).refreshFromDisk()
+            }
             delay(2000L)
         }
     }
@@ -304,8 +305,9 @@ fun HomeScreen() {
             onSave = { saved ->
                 store.upsertSubscription(saved)
                 editingSub = null
-                // 保存后立即触发刷新，并把结果反馈给用户（否则失败只在卡片内不可见）
-                if (refreshingId == null) {
+                // 保存后立即触发刷新，并把结果反馈给用户（否则失败只在卡片内不可见）。
+                // 无 URL 的本地订阅（WARP 等）没有拉取源，跳过刷新避免必然报错。
+                if (saved.url.isNotBlank() && refreshingId == null) {
                     scope.launch {
                         refreshingId = saved.id
                         try {
@@ -321,9 +323,38 @@ fun HomeScreen() {
                     }
                 }
             },
-            onDelete = if (sub.url.isNotBlank()) {
-                { store.deleteSubscription(sub.id); editingSub = null }
-            } else null,
+            onDelete = {
+                subToDelete = sub
+                editingSub = null
+            },
+        )
+        return
+    }
+
+    // 订阅删除确认（含无 URL 的本地订阅，如 WARP）
+    subToDelete?.let { sub ->
+        AlertDialog(
+            onDismissRequest = { subToDelete = null },
+            title = { Text("删除订阅源") },
+            text = {
+                val nodeCount = proxyNodes.count { it.subscriptionId == sub.id }
+                Text(
+                    "确定要删除「${sub.name.ifBlank { sub.id }}」吗？\n" +
+                        "将同时删除其中的 ${nodeCount} 个节点。",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        store.deleteSubscription(sub.id)
+                        subToDelete = null
+                    },
+                ) { Text("删除", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { subToDelete = null }) { Text("取消") }
+            },
         )
         return
     }
@@ -1297,7 +1328,8 @@ private fun SubscriptionEditorDialog(
 
     fun doSave() {
         val u = url.trim()
-        if (!u.startsWith("https://") && !u.startsWith("http://")) {
+        // 只在新 URL 非空时校验格式：WARP 等无 URL 的本地订阅允许保存字段变更
+        if (u.isNotBlank() && !u.startsWith("https://") && !u.startsWith("http://")) {
             error = "请输入 http/https 订阅地址"; return
         }
         onSave(
