@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -94,12 +95,34 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 private fun MainScaffold() {
+    val context = androidx.compose.ui.platform.LocalContext.current
     val navController = rememberNavController()
+    val commandConnected by com.sbai.service.SbCommandClient.connectedToService.collectAsState()
+
+    // 连接是应用级资源，不应绑在 HomeScreen 的进入/退出生命周期上。
+    // 进入首页时只需显示已有 StateFlow，避免每次返回首页重复 setup + 重试连接。
+    LaunchedEffect(commandConnected) {
+        if (commandConnected) return@LaunchedEffect
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching { com.sbai.service.LibboxRuntime.setup(context.applicationContext) }
+            com.sbai.service.SbCommandClient.connectWithRetry(attempts = 3, delayMs = 500L)
+        }
+        // 服务可能在页面加载后才完成启动；重试仍在 IO，且随 MainScaffold 生命周期取消。
+        repeat(3) {
+            if (com.sbai.service.SbCommandClient.connectedToService.value) return@LaunchedEffect
+            kotlinx.coroutines.delay(10_000L)
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                com.sbai.service.SbCommandClient.connectWithRetry(attempts = 2, delayMs = 500L)
+            }
+        }
+    }
     val items = listOf(Screen.Home, Screen.Routes, Screen.Dns, Screen.Monitor, Screen.Settings)
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
 
-    // Kototoro 同款液态玻璃底栏：页面内容捕获为 LayerBackdrop，底栏采样折射
+    // 全屏 backdrop 会捕获 NavHost 的整页内容；首页长列表下会放大切页和重组成本。
+    // 当前默认关闭，保留参数便于以后在实测设备上按需开启。
+    val useGlassBackdrop = false
     val pageBackdrop = rememberLayerBackdrop()
 
     // 下滑隐藏 / 上滑显示底栏；BottomBarController 为跨组件真源，
@@ -133,7 +156,7 @@ private fun MainScaffold() {
             startDestination = Screen.Home.route,
             modifier = Modifier
                 .fillMaxSize()
-                .layerBackdrop(pageBackdrop),
+                .then(if (useGlassBackdrop) Modifier.layerBackdrop(pageBackdrop) else Modifier),
         ) {
             composable(Screen.Home.route) { HomeScreen() }
             composable(Screen.Routes.route) { RouteRulesScreen() }
@@ -174,6 +197,7 @@ private fun MainScaffold() {
                     },
                     modifier = Modifier.weight(1f),
                     barHeight = controlHeight,
+                    useGlassBackdrop = useGlassBackdrop,
                 )
                 Spacer(modifier = Modifier.size(gap))
                 // 保留原权限请求、连接状态与启停行为；窄屏仍有 56dp 独立触摸区。

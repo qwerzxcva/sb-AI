@@ -65,9 +65,9 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -100,6 +100,7 @@ import com.sbai.ui.components.SbSpacer
 import com.sbai.ui.components.SbSwitchItem
 import com.sbai.ui.theme.LocalSbStyleTokens
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -207,62 +208,53 @@ fun HomeScreen() {
     val running = status is SbAiVpnService.ServiceStatus.Running
     val lb = loadBalance
 
-    // 节点过滤结果缓存：避免在 LazyListScope 里每次重组都重新解析全部节点 JSON（卡顿主因）
-    // 同时缓存「订阅→节点」分组，避免每次重组都 O(订阅数 × 节点数) 全量 filter
-    val nodesBySubscription by remember(proxyNodes) {
-        derivedStateOf {
-            proxyNodes.groupBy { it.subscriptionId }
-        }
+    // 节点过滤结果缓存：避免在 LazyListScope 里每次重组都重新解析节点 JSON。
+    // 订阅 id → 订阅名（纯内存映射，不订阅完整 AppState）
+    val subscriptionNames = remember(subscriptions) {
+        subscriptions.associate { it.id to it.name.ifBlank { "未命名订阅" } }
     }
-    // 订阅 id → 订阅名（用于分组 header 显示）
-    val subscriptionNames by remember(subscriptions) {
-        derivedStateOf {
-            subscriptions.associate { it.id to it.name.ifBlank { "未命名订阅" } }
-        }
-    }
-    val filteredNodes by remember(
-        proxyNodes, nodeFilterQuery, nodeFilterProtocol, nodeFilterRegion, nodeFilterNoDelay, nodeSortMode,
+    // 过滤和排序可能遍历大量订阅节点；放到 Default，避免返回首页时占用主线程。
+    val filteredNodes by produceState<List<NodeRow>>(
+        initialValue = emptyList(),
+        proxyNodes,
+        nodeFilterQuery,
+        nodeFilterProtocol,
+        nodeFilterRegion,
+        nodeFilterNoDelay,
+        nodeSortMode,
     ) {
-        derivedStateOf {
-            val q = nodeFilterQuery.trim()
-            val proto = nodeFilterProtocol.trim()
-            val region = nodeFilterRegion.trim()
-            val noDelay = nodeFilterNoDelay
-            val sortMode = nodeSortMode
-            proxyNodes
-                .asSequence()
+        val q = nodeFilterQuery.trim()
+        val proto = nodeFilterProtocol.trim()
+        val region = nodeFilterRegion.trim()
+        val noDelay = nodeFilterNoDelay
+        val sortMode = nodeSortMode
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+            proxyNodes.asSequence()
                 .filter { node ->
-                    val nameHit = q.isEmpty() || node.name.contains(q, ignoreCase = true)
-                    val protoHit = proto.isEmpty() || node.outboundJson.contains(proto, ignoreCase = true)
-                    val regionHit = region.isEmpty() || node.name.contains(region, ignoreCase = true)
-                    // 直接用 urlTestDelay 字段，避免对每个节点反复 parseToJsonElement(outboundJson)
-                    val delayOk = !noDelay || node.urlTestDelay > 0
-                    nameHit && protoHit && regionHit && delayOk
+                    (q.isEmpty() || node.name.contains(q, ignoreCase = true)) &&
+                        (proto.isEmpty() || node.outboundJson.contains(proto, ignoreCase = true)) &&
+                        (region.isEmpty() || node.name.contains(region, ignoreCase = true)) &&
+                        (!noDelay || node.urlTestDelay > 0)
                 }
                 .sortedWith(
-                    // 修复：延迟排序时延迟必须是第一优先级，否则被 name 覆盖。
-                    // 未测速(0)视为 MAX 排最后。
                     if (sortMode == NodeSortMode.LATENCY_ASC) {
                         compareBy<ProxyNode> { it.urlTestDelay.takeIf { d -> d > 0 } ?: Int.MAX_VALUE }
                             .thenBy { it.name.lowercase() }
-                    } else {
-                        compareBy<ProxyNode> { it.name.lowercase() }
-                    }
+                    } else compareBy { it.name.lowercase() },
                 )
                 .take(30)
                 .map { node ->
-                    // 预计算显示摘要：composable 内不再解析 JSON（回首页卡顿主因）
                     val summary = node.outboundJson.nodeSummary()
-                    val delayText = if (node.urlTestDelay > 0) "${node.urlTestDelay}ms" else null
-                    val subtitle = buildString {
+                    val delayText = node.urlTestDelay.takeIf { it > 0 }?.let { "${it}ms" }
+                    NodeRow(node, buildString {
                         append(summary)
-                        delayText?.let { append(" · $it") }
+                        delayText?.let { append(" · ").append(it) }
                         when {
                             node.disabledReason != null -> append(" · 已自动禁用（${node.disabledReason}）")
                             !node.enabled -> append(" · 已禁用")
                         }
-                    }
-                    NodeRow(node = node, subtitle = subtitle)
+                    })
                 }
                 .toList()
         }
@@ -275,32 +267,8 @@ fun HomeScreen() {
         }.getOrNull()
     }
 
-    // 进程隔离后：UI 进程自建 CommandClient 连接 :core 进程的 CommandServer（unix socket 跨进程），
-    // 以 connectedToService 作为「内核是否在跑」的真源（StateFlow 不跨进程共享）。
-    // 关键：CommandClient 的 socket 路径由 Go 侧 basePath（Libbox.setup 设置）决定，
-    // UI 进程必须先调 setup（幂等）才能连到 :core 的 socket，否则 connect 失败、状态恒为停止。
-    // connect() 是阻塞 socket 连接，必须在 IO 线程，否则进首页卡 UI
-    LaunchedEffect(Unit) {
-        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            runCatching { com.sbai.service.LibboxRuntime.setup(context.applicationContext) }
-        }
-        // 延迟连接，避免阻塞首页渲染
-        kotlinx.coroutines.delay(500L)
-        SbCommandClient.connectWithRetry(attempts = 5, delayMs = 1000L)
-    }
+    // 连接在 MainScaffold 级别只启动一次；首页只消费状态，避免返回首页重复建连。
     val coreRunning = running || coreConnected
-    // 低频重试：每 10s 尝试重连，防止 :core 启动慢导致 UI 一直卡在「已停止」
-    // 注意：不在 LaunchedEffect 中使用 while(true)，而是用 repeat 控制重试次数
-    LaunchedEffect(coreRunning) {
-        if (coreRunning) return@LaunchedEffect  // 已连接，不需要重试
-        repeat(3) {  // 最多重试 3 次
-            kotlinx.coroutines.delay(10_000L)
-            if (!coreRunning) {
-                android.util.Log.i("SbAI_VPN", "retrying command client connect (attempt ${it + 1}/3)")
-                SbCommandClient.connectWithRetry(attempts = 3, delayMs = 500L)
-            }
-        }
-    }
 
     // 节点编辑器：整页（二级页面），不是弹窗
     editingNode?.let { node ->
@@ -324,10 +292,15 @@ fun HomeScreen() {
                 store.upsertSubscription(saved)
                 editingSub = null
                 // 保存后立即触发刷新
-                scope.launch {
-                    refreshingId = saved.id
-                    subManager.refresh(saved)
-                    refreshingId = null
+                if (refreshingId == null) {
+                    scope.launch {
+                        refreshingId = saved.id
+                        try {
+                            subManager.refresh(saved)
+                        } finally {
+                            refreshingId = null
+                        }
+                    }
                 }
             },
             onDelete = if (sub.url.isNotBlank()) {
@@ -623,10 +596,15 @@ fun HomeScreen() {
                                 sub = sub,
                                 refreshing = refreshingId == sub.id,
                                 onRefresh = {
-                                    refreshingId = sub.id
-                                    scope.launch {
-                                        subManager.refresh(sub)
-                                        refreshingId = null
+                                    if (refreshingId == null) {
+                                        refreshingId = sub.id
+                                        scope.launch {
+                                            try {
+                                                subManager.refresh(sub)
+                                            } finally {
+                                                refreshingId = null
+                                            }
+                                        }
                                     }
                                 },
                                 onClick = { editingSub = sub },
@@ -648,12 +626,17 @@ fun HomeScreen() {
                                 subtitle = "触发所有启用订阅的拉取 + L7Filter + 测速回填",
                                 icon = Icons.Filled.Refresh,
                                 onClick = {
-                                    scope.launch {
-                                        subscriptions.filter { it.enabled }.forEach { sub ->
-                                            refreshingId = sub.id
-                                            subManager.refresh(sub)
+                                    if (refreshingId == null) {
+                                        scope.launch {
+                                            try {
+                                                subscriptions.filter { it.enabled }.forEach { sub ->
+                                                    refreshingId = sub.id
+                                                    subManager.refresh(sub)
+                                                }
+                                            } finally {
+                                                refreshingId = null
+                                            }
                                         }
-                                        refreshingId = null
                                     }
                                 },
                             )
@@ -694,20 +677,22 @@ fun HomeScreen() {
                             if (batchTestProgress == -1) {
                                 scope.launch {
                                     batchTestProgress = 0
-                                    // 确定测速组：优先 urltest 组，否则 selector 组
-                                    val groupTag = proxyGroups
-                                        .firstOrNull { it.type == "urltest" }?.tag
-                                        ?: proxyGroups.firstOrNull { it.type == "selector" }?.tag
-                                        ?: "lb"
-                                    val results = NodeBatchTester.testNodes(
-                                        nodes = proxyNodes,
-                                        groupTag = groupTag,
-                                        onProgress = { done, total ->
-                                            batchTestProgress = if (total == 0) 100 else done * 100 / total
-                                        },
-                                    )
-                                    NodeBatchTester.applyResults(store, results)
-                                    batchTestProgress = -1
+                                    try {
+                                        val groupTag = proxyGroups
+                                            .firstOrNull { it.type == "urltest" }?.tag
+                                            ?: proxyGroups.firstOrNull { it.type == "selector" }?.tag
+                                            ?: "lb"
+                                        val results = NodeBatchTester.testNodes(
+                                            nodes = proxyNodes,
+                                            groupTag = groupTag,
+                                            onProgress = { done, total ->
+                                                batchTestProgress = if (total == 0) 100 else done * 100 / total
+                                            },
+                                        )
+                                        NodeBatchTester.applyResults(store, results)
+                                    } finally {
+                                        batchTestProgress = -1
+                                    }
                                 }
                             }
                         },
@@ -1148,8 +1133,6 @@ private fun SubscriptionCard(
     val colors = MaterialTheme.colorScheme
     val used = sub.trafficUpload + sub.trafficDownload
     val hasTraffic = sub.trafficTotal > 0
-    var expanded by remember { mutableStateOf(false) }
-
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -1174,12 +1157,9 @@ private fun SubscriptionCard(
                         )
                     }
                     Row {
-                        IconButton(onClick = { expanded = !expanded }) {
-                            Icon(
-                                imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                                contentDescription = if (expanded) "收起" else "展开",
-                            )
-                        }
+                        // 订阅卡片当前不渲染节点子列表；不显示空展开控件，避免点击后无视觉结果。
+                        // 节点统一在下方“节点”区域按过滤/分组展示。
+
                         if (refreshing) {
                             CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
                         } else {
@@ -1211,10 +1191,6 @@ private fun SubscriptionCard(
             }
         }
         
-        // 展开的节点列表
-        if (expanded) {
-            // 节点列表将在调用处渲染
-        }
     }
 }
 
