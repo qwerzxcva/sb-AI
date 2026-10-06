@@ -1,7 +1,10 @@
 package com.sbai.service
 
+import android.annotation.SuppressLint
+import android.app.PendingIntent
 import android.content.Intent
 import android.net.VpnService
+import android.os.Build
 import android.service.quicksettings.Tile
 import android.service.quicksettings.TileService
 import androidx.core.content.ContextCompat
@@ -22,10 +25,22 @@ class SbTileService : TileService() {
             val prepareIntent = VpnService.prepare(this)
             if (prepareIntent != null) {
                 // 未授权：打开主界面引导授权
-                startActivityAndCollapse(
-                    Intent(this, com.sbai.MainActivity::class.java)
-                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-                )
+                val intent = Intent(this, com.sbai.MainActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                    // Android 14+：startActivityAndCollapse(Intent) 已废弃且会抛异常，改用 PendingIntent 重载
+                    val pi = PendingIntent.getActivity(
+                        this,
+                        0,
+                        intent,
+                        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+                    )
+                    startActivityAndCollapse(pi)
+                } else {
+                    @Suppress("DEPRECATION")
+                    @SuppressLint("StartActivityAndCollapseDeprecated")
+                    startActivityAndCollapse(intent)
+                }
             } else {
                 startVpn()
             }

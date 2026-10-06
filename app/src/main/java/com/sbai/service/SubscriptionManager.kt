@@ -114,7 +114,7 @@ class SubscriptionManager(
             val nodes = (if (subscription.removeDuplicates) {
                 // 去重按「配置内容」而非名称：同名但不同服务器/端口/参数的节点都保留，
                 // 只有完全相同的配置才去除（用户反馈：同名节点不应被误删）
-                parsed.distinctBy { normalizeOutbound(it.outboundJson) }
+                parsed.distinctBy { NodeDedup.normalize(it.outboundJson) }
             } else {
                 parsed
             }).map { p ->
@@ -207,17 +207,6 @@ class SubscriptionManager(
             else -> false
         }
     }.getOrDefault(false)
-
-    /**
-     * 归一化 outbound JSON 用于去重：
-     * 解析后按 key 排序重新序列化，忽略 tag/name（节点名可不同但配置相同视为重复）。
-     */
-    private fun normalizeOutbound(outboundJson: String): String = runCatching {
-        val obj = kotlinx.serialization.json.Json.parseToJsonElement(outboundJson).jsonObject
-        val filtered = obj.filterKeys { it != "tag" && it != "name" }
-        // 按 key 排序序列化，保证相同配置产生相同字符串
-        filtered.entries.sortedBy { it.key }.joinToString("|") { "${it.key}=${it.value}" }
-    }.getOrDefault(outboundJson)
 
     private data class TrafficInfo(
         val upload: Long = 0, val download: Long = 0,
