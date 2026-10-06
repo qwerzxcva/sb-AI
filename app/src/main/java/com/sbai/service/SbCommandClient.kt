@@ -94,6 +94,7 @@ object SbCommandClient : CommandClientHandler {
     private val logQueue = ConcurrentLinkedQueue<LogLine>()
     private val logSeq = java.util.concurrent.atomic.AtomicLong(0)
     private const val MAX_LOGS = 500
+    private const val MAX_CONNECTIONS = 300
 
     private var client: CommandClient? = null
     /** libbox 连接状态机（Go 侧维护），与公开 StateFlow 区分命名 */
@@ -312,7 +313,8 @@ object SbCommandClient : CommandClientHandler {
                 connectionState.filterState(Libbox.ConnectionStateActive.toInt())
                 buildList {
                     val it = connectionState.iterator()
-                    while (it.hasNext()) {
+                    // Bound Kotlin allocation, not just the already-built published list.
+                    while (size < MAX_CONNECTIONS && it.hasNext()) {
                         val c = it.next()
                         val proc = runCatching { c.processInfo }.getOrNull()
                         add(
@@ -340,6 +342,8 @@ object SbCommandClient : CommandClientHandler {
                 _connections.value
             }
         }
+        // 保留迭代器顺序的前 MAX_CONNECTIONS 条；不假定 native 迭代顺序为时间排序。
+        // Native 活动连接状态仍由内核维护，此处仅限制 UI 快照。
         _connections.value = snapshot
     }
 
