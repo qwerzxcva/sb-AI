@@ -262,13 +262,8 @@ fun HomeScreen() {
                 .toList()
         }
     }
-    // :core 进程启动错误（跨进程持久化），未连接时展示给用户
-    val persistedError = remember {
-        runCatching {
-            context.getSharedPreferences("sbai_vpn", Context.MODE_PRIVATE)
-                .getString("last_error", null)
-        }.getOrNull()
-    }
+    // :core 进程启动错误已由 VpnRuntimeState.message 跨进程刷新（每 2s），
+    // 旧「读一次 SharedPreferences」的 persistedError 已废弃（只读一次，服务启动后崩溃的错误 UI 不刷新——P0 服务错误跨进程丢失 bug 已通过 VpnRuntimeState 根治）。
 
     // 连接在 MainScaffold 级别只启动一次；首页只消费状态，避免返回首页重复建连。
     // 状态真源：:core 进程发布的真实运行阶段（不用遥测连接冒充 VPN 状态）
@@ -323,9 +318,7 @@ fun HomeScreen() {
                     }
                 }
             },
-            onDelete = if (sub.url.isNotBlank()) {
-                { store.deleteSubscription(sub.id); editingSub = null }
-            } else null,
+            onDelete = { store.deleteSubscription(sub.id); editingSub = null },
         )
         return
     }
@@ -1299,8 +1292,10 @@ private fun SubscriptionEditorDialog(
 
     fun doSave() {
         val u = url.trim()
-        if (!u.startsWith("https://") && !u.startsWith("http://")) {
-            error = "请输入 http/https 订阅地址"; return
+        // 允许空 URL 的本地订阅（WARP/分享链接/手动创建的订阅无源地址），但非空时必须为合法 http(s) 地址
+        if (u.isNotEmpty() && !u.startsWith("https://") && !u.startsWith("http://")) {
+            error = "请输入 http/https 订阅地址"
+            return
         }
         onSave(
             initial.copy(

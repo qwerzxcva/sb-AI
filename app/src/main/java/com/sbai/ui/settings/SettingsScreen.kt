@@ -426,17 +426,17 @@ fun SettingsScreen() {
 
             // ---- 资源管理（与路由规则/DNS 规则功能重叠，默认收起以精简设置页）----
             item {
-                var showResources by rememberSaveable { mutableStateOf(false) }
+                val showResources = remember { mutableStateOf(false) }
                 SbGroup(title = "资源管理（${settings.resources.size}）") {
                     item {
                         SbItem(
-                            title = if (showResources) "收起资源管理" else "展开资源管理",
+                            title = if (showResources.value) "收起资源管理" else "展开资源管理",
                             subtitle = "IP 列表 / GeoIP / 规则集；路由与 DNS 规则已覆盖大多数场景",
-                            icon = if (showResources) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                            onClick = { showResources = !showResources },
+                            icon = if (showResources.value) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                            onClick = { showResources.value = !showResources.value },
                         )
                     }
-                    if (!showResources) return@SbGroup
+                    if (!showResources.value) return@SbGroup
                     item {
                         SbItem(
                             title = "添加资源",
