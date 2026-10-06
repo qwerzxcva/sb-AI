@@ -1425,7 +1425,9 @@ private fun clipboardText(context: Context): String? = runCatching {
 private fun startVpn(context: Context) {
     android.util.Log.i("SbAI_VPN", "startVpn called")
     val intent = Intent(context, SbAiVpnService::class.java).setAction(SbAiVpnService.ACTION_START)
-    ContextCompat.startForegroundService(context, intent)
+    // 等本进程待落盘的配置写完再启动 :core，否则其 reload() 读到旧配置
+    val app = context.applicationContext
+    com.sbai.data.RuleStore.get(app).afterPendingWrites { ContextCompat.startForegroundService(app, intent) }
     android.util.Log.i("SbAI_VPN", "startVpn completed - service starting")
 }
 

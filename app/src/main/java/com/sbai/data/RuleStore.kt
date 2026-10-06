@@ -158,14 +158,20 @@ class RuleStore private constructor(
      * 把最新磁盘态刷进内存 StateFlow，避免 UI 界面与 :core 实际配置脱节。
      * 返回是否发生了外部刷新。
      */
-    fun refreshFromDisk(): Boolean = synchronized(this) {
+    fun refreshFromDisk(): Boolean {
         val f = stateFile
-        if (!f.exists() || f.lastModified() <= lastSeenUpdatedAt) return@synchronized false
-        val env = readEnvelope() ?: return@synchronized false
-        if (env.updatedAt <= lastSeenUpdatedAt) return@synchronized false
-        _state.value = env.data
-        lastSeenUpdatedAt = env.updatedAt
-        true
+        val sig = fileSignature(f) ?: return false
+        if (sig == lastSeenSig) return false
+        // 读文件 + 解析整份 JSON 放在锁外：原实现在 2s 轮询里持锁解析，
+        // 期间主线程上的任何 update() 都会阻塞等锁（首页点击卡住/ANR 的放大器）。
+        val env = readEnvelope() ?: return false
+        return synchronized(this) {
+            lastSeenSig = sig
+            if (env.updatedAt <= lastSeenUpdatedAt) return@synchronized false
+            _state.value = env.data
+            lastSeenUpdatedAt = env.updatedAt
+            true
+        }
     }
 
     private fun persist(next: AppState) {
@@ -209,9 +215,31 @@ class RuleStore private constructor(
         val base = rebaseOnDisk()
         val next = transform(base)
         _state.value = next
+        // 第3轮：主线程（UI 点击回调）调用时，同步序列化整份 AppState 并写盘会卡顿/ANR，
+        // 因此仅在主线程上改为投递到单线程 storeScope（保证写入顺序；启动 :core 用 afterPendingWrites 排在写入之后）。
+        // 非主线程调用方（:core 自动禁用、订阅刷新、批量测速、JVM 单测）依赖「返回即已落盘」的语义，保持同步。
         persistJob?.cancel()
-        commitNow(next)
+        if (isMainThread()) {
+            persistJob = storeScope.launch { commitNow(next) }
+        } else {
+            persistJob = null
+            commitNow(next)
+        }
         next
+    }
+
+    /** JVM 单测中 Looper 为桩实现（getMainLooper 返回 null）→ 视为非主线程，走同步写。 */
+    private fun isMainThread(): Boolean = runCatching {
+        android.os.Looper.getMainLooper()?.thread == Thread.currentThread()
+    }.getOrDefault(false)
+
+    /**
+     * 在本进程所有已排队的落盘完成之后执行 [action]（运行于 IO 单线程，不阻塞调用方）。
+     * storeScope 为 limitedParallelism(1)，按提交顺序执行，因此 action 一定晚于此前的写入。
+     * 用于启动 :core 前保证其 reload() 能读到 UI 刚做的修改。
+     */
+    fun afterPendingWrites(action: () -> Unit) {
+        storeScope.launch { runCatching(action).onFailure { android.util.Log.w("RuleStore", "afterPendingWrites action failed", it) } }
     }
 
     // ---- 领域方法（全部委托到 rebase 后的 update / updateCommitted） ----
