@@ -350,6 +350,8 @@ data class Subscription(
     val removeDuplicates: Boolean = true,
     /** 去除不安全节点（如无加密的 ss / 无 tls 的 trojan） */
     val removeInsecure: Boolean = false,
+    /** 去除信息节点（机场把流量/到期/官网公告伪装成代理节点，名称含"剩余流量""套餐到期""官网"等） */
+    val removeInfoNodes: Boolean = true,
     /** 保留不可达分组（urlTest 后仍有可用节点才移除） */
     val keepWorking: Boolean = false,
     /** 更新后自动测速（需内核运行；测速后可移除不可用节点/按延迟排序） */

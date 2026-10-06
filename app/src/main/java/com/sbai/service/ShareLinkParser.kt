@@ -23,6 +23,30 @@ object ShareLinkParser {
 
     data class ParsedNode(val name: String, val outboundJson: String)
 
+    /**
+     * 判定「信息节点」：机场把「剩余流量 / 套餐到期 / 官网公告 / 使用建议」伪装成代理节点
+     * 塞进 proxies 列表。这些节点名称含明确信息关键词，且通常复用真实节点的 server/uuid。
+     *
+     * 判据（保守，避免误伤真实节点）：
+     *  1. 强关键词：名称含「剩余流量」「已用流量」「总流量」「流量重置」「套餐」「到期」
+     *     「重置剩余」「官网」「公告」「建议」「续费」「距离下次」→ 必是信息节点
+     *  2. 弱关键词「流量」「到期」+ 名称含数字（如「流量：50.62GB」「到期：2026-11-02」）
+     *     → 信息节点（真实节点名几乎不会同时含这些词和量化的数字格式）
+     */
+    fun isInfoNode(name: String): Boolean {
+        val n = name.trim()
+        if (n.isEmpty()) return false
+        val strong = listOf(
+            "剩余流量", "已用流量", "总流量", "流量重置", "套餐", "到期",
+            "重置剩余", "官网", "公告", "建议", "续费", "距离下次",
+            "流量剩余", "过期时间", "有效期",
+        )
+        if (strong.any { n.contains(it) }) return true
+        val weak = listOf("流量", "到期")
+        if (weak.any { n.contains(it) } && Regex("\\d").containsMatchIn(n)) return true
+        return false
+    }
+
     /** 解析单行分享链接；不支持的协议返回 null */
     fun parse(line: String): ParsedNode? {
         val trimmed = line.trim()

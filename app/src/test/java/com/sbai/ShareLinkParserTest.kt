@@ -201,4 +201,44 @@ class ShareLinkParserTest {
         val peer = o["peers"]!!.jsonArray[0].jsonObject
         assertNull(peer["reserved"])
     }
+
+    // ------------------------------------------------------------------
+    // isInfoNode：信息节点过滤（剩余流量/到期/官网公告伪装成节点）
+    // ------------------------------------------------------------------
+
+    @Test
+    fun `info node strong keywords detected`() {
+        // 强关键词：必是信息节点
+        assertTrue(ShareLinkParser.isInfoNode("剩余流量：50.62 GB"))
+        assertTrue(ShareLinkParser.isInfoNode("距离下次重置剩余：27 天"))
+        assertTrue(ShareLinkParser.isInfoNode("套餐到期：2026-11-02"))
+        assertTrue(ShareLinkParser.isInfoNode("建议：感到卡顿请切换到专线节点"))
+        assertTrue(ShareLinkParser.isInfoNode("放丢失官网:https://love.p6m6.com"))
+        assertTrue(ShareLinkParser.isInfoNode("放丢失官网2:https://love3.p6m6.com"))
+    }
+
+    @Test
+    fun `info node weak keyword with digits detected`() {
+        // 弱关键词「流量/到期」+ 数字量化
+        assertTrue(ShareLinkParser.isInfoNode("流量：50GB"))
+        assertTrue(ShareLinkParser.isInfoNode("到期时间 2026"))
+    }
+
+    @Test
+    fun `real node names not misdetected`() {
+        // 真实节点名不含信息关键词，不误伤
+        assertTrue(!ShareLinkParser.isInfoNode("🇭🇰【亚洲】香港01丨直连"))
+        assertTrue(!ShareLinkParser.isInfoNode("🇯🇵【亚洲】日本01丨Vless"))
+        assertTrue(!ShareLinkParser.isInfoNode("🇺🇸【北美洲】美国01原生丨直连【2x】"))
+        assertTrue(!ShareLinkParser.isInfoNode("🇭🇰【亚洲】香港01丨V6【1x】"))
+        assertTrue(!ShareLinkParser.isInfoNode(""))
+    }
+
+    @Test
+    fun `info node weak keyword without digits not misdetected`() {
+        // 弱关键词「流量」但不含数字（如机场节点名叫"流量专线"）不误伤
+        // 注意：「到期」是强关键词，无论含不含数字都会判为信息节点，故这里只测「流量」
+        assertTrue(!ShareLinkParser.isInfoNode("流量专线"))
+        assertTrue(!ShareLinkParser.isInfoNode("香港流量优化"))
+    }
 }

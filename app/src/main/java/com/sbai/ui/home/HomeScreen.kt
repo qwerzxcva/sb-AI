@@ -1248,6 +1248,7 @@ private fun SubscriptionEditorDialog(
     var excludeKw by remember { mutableStateOf(initial.excludeKeyword) }
     var removeDuplicates by remember { mutableStateOf(initial.removeDuplicates) }
     var removeInsecure by remember { mutableStateOf(initial.removeInsecure) }
+    var removeInfoNodes by remember { mutableStateOf(initial.removeInfoNodes) }
     var urlTestAfterUpdate by remember { mutableStateOf(initial.urlTestAfterUpdate) }
     var removeUnavailable by remember { mutableStateOf(initial.removeUnavailable) }
     var sortByLatency by remember { mutableStateOf(initial.sortByLatency) }
@@ -1273,6 +1274,7 @@ private fun SubscriptionEditorDialog(
                 excludeKeyword = excludeKw.trim(),
                 removeDuplicates = removeDuplicates,
                 removeInsecure = removeInsecure,
+                removeInfoNodes = removeInfoNodes,
                 urlTestAfterUpdate = urlTestAfterUpdate,
                 removeUnavailable = removeUnavailable && urlTestAfterUpdate,
                 sortByLatency = sortByLatency && urlTestAfterUpdate,
@@ -1379,6 +1381,7 @@ private fun SubscriptionEditorDialog(
                 Text("节点后处理", style = MaterialTheme.typography.labelLarge)
                 SubOptionSwitch("去重（同名节点保留第一个）", removeDuplicates) { removeDuplicates = it }
                 SubOptionSwitch("去除不安全节点（明文/无加密）", removeInsecure) { removeInsecure = it }
+                SubOptionSwitch("去除信息节点（剩余流量/到期/官网公告）", removeInfoNodes) { removeInfoNodes = it }
                 SubOptionSwitch("更新后自动测速（urltest）", urlTestAfterUpdate) {
                     urlTestAfterUpdate = it
                     if (!it) { removeUnavailable = false; sortByLatency = false }

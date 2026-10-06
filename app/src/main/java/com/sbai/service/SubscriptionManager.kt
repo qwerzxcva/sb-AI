@@ -105,6 +105,9 @@ class SubscriptionManager(
             if (subscription.removeInsecure) {
                 parsed = parsed.filter { !isInsecureNode(it.outboundJson) }
             }
+            if (subscription.removeInfoNodes) {
+                parsed = parsed.filter { !ShareLinkParser.isInfoNode(it.name) }
+            }
             if (parsed.isEmpty()) {
                 return@withContext fail(subscription, "过滤后无剩余节点")
             }
