@@ -163,7 +163,8 @@ object SingBoxConfigGenerator {
             }
 
             add(buildJsonObject { put("type", "direct"); put("tag", "direct") })
-            add(buildJsonObject { put("type", "block"); put("tag", "block") })
+            // sing-box 1.13 已移除特殊出站 block/dns（1.11 起废弃），声明即被内核拒绝；
+            // 拦截统一使用路由动作 {"action":"reject"}。
         }
 
         // sing-box 1.12+：wireguard 等 endpoint 节点单独进 endpoints 数组。
@@ -243,7 +244,15 @@ object SingBoxConfigGenerator {
                         })
                     }
                 }
-                put("final", state.settings.finalOutbound.ifBlank { entryTag })
+                // 1.13 已无 block/dns 特殊出站：旧配置里 final=block/dns 会引用不存在的 tag 导致启动失败，回退到入口。
+                val finalTag = state.settings.finalOutbound.trim()
+                put("final", if (finalTag.isEmpty() || finalTag == "block" || finalTag == "dns") entryTag else finalTag)
+                // 1.12 起 dial 字段缺少 domain_resolver 已废弃（后续版本移除）：为域名形式的节点 server
+                // 指定一个不走代理的解析器，避免「代理节点域名需要经代理解析」的循环。
+                dnsServers.firstOrNull { srv ->
+                    srv["detour"] == null &&
+                        srv["type"]?.jsonPrimitive?.content !in setOf("fakeip", "hosts")
+                }?.get("tag")?.jsonPrimitive?.content?.let { put("default_domain_resolver", it) }
                 put("auto_detect_interface", state.settings.autoDetectInterface)
             }
 
@@ -346,7 +355,8 @@ object SingBoxConfigGenerator {
                     }
                 }
                 s.detour?.takeIf { it.isNotBlank() }?.let { put("detour", it) }
-                s.addressResolver?.takeIf { it.isNotBlank() }?.let { put("address_resolver", it) }
+                // 1.12+ 新格式 DNS server 不再接受 address_resolver（legacy 字段），对应 dial 字段为 domain_resolver。
+                s.addressResolver?.takeIf { it.isNotBlank() }?.let { put("domain_resolver", it) }
                 s.clientSubnet?.takeIf { it.isNotBlank() }?.let { put("client_subnet", it) }
                 if (s.echEnabled && s.type in ECH_CAPABLE) {
                     putJsonObject("tls") {

@@ -87,4 +87,36 @@ class RuleSetReferenceIntegrityTest {
             assertFalse(ib.containsKey("domain_strategy"))
         }
     }
+
+    @Test fun `no legacy special outbounds removed in sing-box 1_13`() {
+        val c = cfg(AppState())
+        val types = c["outbounds"]!!.jsonArray.map { it.jsonObject["type"]!!.jsonPrimitive.content }
+        assertFalse(types.contains("block"))
+        assertFalse(types.contains("dns"))
+    }
+
+    @Test fun `dns servers never emit legacy address_resolver`() {
+        val server = com.sbai.data.DnsServer(tag = "d1", type = com.sbai.data.DnsServerType.HTTPS,
+            address = "https://dns.google/dns-query", addressResolver = "d0")
+        val local = com.sbai.data.DnsServer(tag = "d0", type = com.sbai.data.DnsServerType.UDP, address = "223.5.5.5")
+        val c = cfg(AppState(dnsServers = listOf(local, server)))
+        val servers = c["dns"]!!.jsonObject["servers"]!!.jsonArray.map { it.jsonObject }
+        assertTrue(servers.none { it.containsKey("address_resolver") })
+        assertEquals("d0", servers.first { it["tag"]!!.jsonPrimitive.content == "d1" }["domain_resolver"]!!.jsonPrimitive.content)
+    }
+
+    @Test fun `legacy final block falls back to entry outbound`() {
+        val c = cfg(AppState(settings = com.sbai.data.AppSettings(finalOutbound = "block")))
+        val fin = c["route"]!!.jsonObject["final"]!!.jsonPrimitive.content
+        val tags = c["outbounds"]!!.jsonArray.map { it.jsonObject["tag"]!!.jsonPrimitive.content }
+        assertTrue(fin in tags)
+    }
+
+    @Test fun `default domain resolver is a direct dns server`() {
+        val c = cfg(AppState())
+        val route = c["route"]!!.jsonObject
+        val resolver = route["default_domain_resolver"]!!.jsonPrimitive.content
+        val srv = c["dns"]!!.jsonObject["servers"]!!.jsonArray.map { it.jsonObject }.first { it["tag"]!!.jsonPrimitive.content == resolver }
+        assertFalse(srv.containsKey("detour"))
+    }
 }
