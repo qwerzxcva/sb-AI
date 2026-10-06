@@ -11,6 +11,7 @@ import com.sbai.data.ProxyNode
 import com.sbai.data.RuleStore
 import com.sbai.data.Subscription
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -153,14 +154,17 @@ class SubscriptionManager(
             )
             Log.i(TAG, "subscription ${autoName}: ${nodes.size} nodes ($subFormat)")
             Result.Success(nodes.size)
-        } catch (t: Throwable) {
-            Log.w(TAG, "subscription refresh failed: ${subscription.url}", t)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (t: Exception) {
+            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+            Log.w(TAG, "subscription refresh failed (${t.javaClass.simpleName})")
             // 统一为中文错误提示，避免显示英文异常消息
             val msg = when {
                 t.message?.contains("http") == true || t.message?.contains("HTTP") == true -> "网络请求失败（HTTP ${t.message?.let { Regex("""\d+""").find(it)?.value ?: "?"} }）"
                 t.message?.contains("timeout") == true || t.message?.contains("Timeout") == true -> "连接超时，请检查网络或订阅地址"
                 t.message?.contains("certificate") == true || t.message?.contains("Certificate") == true -> "SSL 证书校验失败，可在订阅设置中开启「跳过 TLS 证书校验」"
-                else -> t.message?.let { "错误: $it" } ?: t.javaClass.simpleName
+                else -> "订阅更新失败（${t.javaClass.simpleName}），请检查地址及内容格式"
             }
             fail(subscription, msg)
         }
@@ -307,11 +311,7 @@ class SubscriptionManager(
                 conn.readTimeout = 20_000
                 // UA：订阅级 override > 全局 override > 品牌 UA
                 conn.setRequestProperty("User-Agent", ua)
-                // 机场常见 SNI 路由：服务器证书与 hostname 不匹配，必须信任所有证书
-                if (conn is javax.net.ssl.HttpsURLConnection) {
-                    conn.sslSocketFactory = unsafeTrustAllSslSocketFactory
-                    conn.hostnameVerifier = javax.net.ssl.HostnameVerifier { _, _ -> true }
-                }
+                // 默认保留系统证书与主机名验证；只有显式 skipCertVerify 才允许放宽。
                 // 机场常用：声明客户端类型以拿到通用订阅格式
                 conn.setRequestProperty("Accept", "*/*")
                 // HWID + device-meta 头部
@@ -346,41 +346,8 @@ class SubscriptionManager(
                 conn.headerFields?.forEach { (k, v) ->
                     if (k != null && v.isNotEmpty()) headers[k.lowercase()] = v.joinToString(",")
                 }
-                val textAndHeaders: Pair<String, MutableMap<String, String>> = runCatching {
-                    conn.inputStream.bufferedReader(Charsets.UTF_8).use { reader ->
-                        val sb = StringBuilder()
-                        val buf = CharArray(8192)
-                        var total = 0
-                        while (true) {
-                            val n = reader.read(buf)
-                            if (n < 0) break
-                            total += n
-                            if (total > MAX_BODY_CHARS) error("订阅内容超过 4MB，已中止")
-                            sb.append(buf, 0, n)
-                        }
-                        sb.toString() to headers
-                    }
-                }.getOrElse { e ->
-                    // 证书错误：尝试用信任所有证书的 fallback 再拉一次
-                    @Suppress("UNCHECKED_CAST")
-                    val httpsConn = conn as? javax.net.ssl.HttpsURLConnection
-                    if (httpsConn != null) applyTrustAll(httpsConn)
-                    conn.connect()
-                    val retryCode = conn.responseCode
-                    if (retryCode !in 200..299) error("HTTP $retryCode")
-                    conn.inputStream.bufferedReader(Charsets.UTF_8).use { reader ->
-                        val sb = StringBuilder()
-                        val buf = CharArray(8192)
-                        var total = 0
-                        while (true) {
-                            val n = reader.read(buf)
-                            if (n < 0) break
-                            total += n
-                            if (total > MAX_BODY_CHARS) error("订阅内容超过 4MB，已中止")
-                            sb.append(buf, 0, n)
-                        }
-                        sb.toString() to headers
-                    }
+                val textAndHeaders = conn.inputStream.bufferedReader(Charsets.UTF_8).use {
+                    it.readBoundedText(MAX_BODY_CHARS) to headers
                 }
                 val traffic = parseUserinfo(textAndHeaders.second["subscription-userinfo"])
                 return FetchResult(textAndHeaders.first, traffic, textAndHeaders.second)
@@ -410,18 +377,5 @@ class SubscriptionManager(
         const val MAX_BODY_CHARS = 4 * 1024 * 1024
         const val MAX_REDIRECTS = 5
 
-        /** 信任所有证书的 SSLSocketFactory（机场证书与 hostname 不匹配时必需，如 SNI 路由） */
-        val unsafeTrustAllSslSocketFactory: javax.net.ssl.SSLSocketFactory by lazy {
-            @Suppress("UNCHECKED_CAST")
-            val trustAll = arrayOf(
-                object : javax.net.ssl.X509TrustManager {
-                    override fun getAcceptedIssuers(): Array<java.security.cert.X509Certificate> = emptyArray()
-                    override fun checkClientTrusted(chain: Array<java.security.cert.X509Certificate>?, authType: String?) {}
-                    override fun checkServerTrusted(chain: Array<java.security.cert.X509Certificate>?, authType: String?) {}
-                }
-            ) as Array<javax.net.ssl.X509TrustManager>
-            val sslContext = javax.net.ssl.SSLContext.getInstance("TLS").apply { init(null, trustAll, java.security.SecureRandom()) }
-            sslContext.socketFactory
-        }
     }
 }

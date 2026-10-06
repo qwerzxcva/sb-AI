@@ -3,6 +3,7 @@ package com.sbai.service
 import android.content.Context
 import android.util.Log
 import androidx.work.CoroutineWorker
+import kotlinx.coroutines.CancellationException
 import androidx.work.WorkerParameters
 import com.sbai.data.RuleStore
 
@@ -59,8 +60,10 @@ class SubUpdateWork(context: Context, params: WorkerParameters) : CoroutineWorke
                         failCount++
                     }
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
-                Log.e(TAG, "subscription ${sub.name} failed", e)
+                Log.e(TAG, "subscription update failed (${e.javaClass.simpleName})")
                 failCount++
             }
         }
