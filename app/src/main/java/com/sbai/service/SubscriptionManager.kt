@@ -406,7 +406,9 @@ class SubscriptionManager(
 
     private companion object {
         const val TAG = "SubscriptionManager"
-        const val UA = "sb-AI/1.0 (sing-box)"
+        // 兼容 UA：很多机场（Cloudflare 防护）按 UA 白名单放行，自定义 UA 会被 403。
+        // clash-verge 是机场普遍放行的客户端 UA；用户可在订阅/全局设置里覆盖。
+        const val UA = "clash-verge/v1.7.3"
         const val MAX_BODY_CHARS = 4 * 1024 * 1024
         const val MAX_REDIRECTS = 5
 

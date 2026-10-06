@@ -66,6 +66,11 @@ object SingBoxConfigGenerator {
 
     fun generateObject(state: AppState): JsonObject {
         val enabledNodes = state.proxyNodes
+            // 订阅禁用（订阅卡片 on/off）→ 该订阅下所有节点退出配置（真实生效，非 UI 摆设）
+            .filter { node ->
+                val subId = node.subscriptionId ?: return@filter true
+                state.subscriptions.firstOrNull { it.id == subId }?.enabled ?: true
+            }
             .filter { it.enabled && it.outboundJson.isNotBlank() }
             .distinctBy { nodeTag(it) }   // 同 tag 去重，避免 outbound tag 冲突
         // sing-box 1.12+：wireguard 等是 endpoint（config.endpoints[]），不是 outbound。

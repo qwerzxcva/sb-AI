@@ -46,10 +46,10 @@ fun SbGlassBottomBar(
                 backdrop = pageBackdrop,
                 shape = { CircleShape },
                 effects = {
-                    // 性能优先：模糊半径 40 → 8 → 4（液态玻璃观感主要靠 vibrancy + highlight，
-                    // 大半径模糊每帧对整页 backdrop 采样是卡顿主因）。
-                    blur(radius = 4f)
-                    colorControls(brightness = 0.1f, saturation = 1.15f, contrast = 1.0f)
+                    // 性能与质感的平衡：JSON 解析卡顿根因已修（第十二批），恢复 blur 8px 质感。
+                    // 降采样 2x 兜底性能（录制像素量 1/4）。
+                    blur(radius = 8f)
+                    colorControls(brightness = 0.1f, saturation = 1.18f, contrast = 1.0f)
                     opacity(0.5f)
                 },
                 highlight = {

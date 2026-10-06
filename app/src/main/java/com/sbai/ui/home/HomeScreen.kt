@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
@@ -132,6 +133,10 @@ fun HomeScreen() {
     var importResult by remember { mutableStateOf<String?>(null) }
     // 批量测速进度：-1 = 未在测；0..100 = 已完成百分比
     var batchTestProgress by remember { mutableStateOf(-1) }
+    // 订阅展开状态：展开的订阅 id 集合（订阅卡片内联显示节点）
+    var expandedSubs by remember { mutableStateOf<Set<String>>(emptySet()) }
+    // 正在单节点测速的节点 id（显示转圈）
+    var testingNodeId by remember { mutableStateOf<String?>(null) }
     // WARP 注册对话框
     var showWarpDialog by remember { mutableStateOf(false) }
 
@@ -175,6 +180,36 @@ fun HomeScreen() {
             scope.launch(kotlinx.coroutines.Dispatchers.IO) {
                 SbCommandClient.connectWithRetry()
             }
+        }
+    }
+
+    // 单节点测速：触发内核 URLTest 后回填该节点延迟。
+    // 需要 VPN 已运行（CommandServer 在线），否则提示先启动。
+    fun testSingleNode(node: ProxyNode) {
+        if (!coreConnected) {
+            importResult = "请先启动 VPN 再测速"
+            return
+        }
+        if (testingNodeId != null) return
+        testingNodeId = node.id
+        scope.launch {
+            runCatching {
+                val groupTag = proxyGroups
+                    .firstOrNull { it.type == "urltest" }?.tag
+                    ?: proxyGroups.firstOrNull { it.type == "selector" }?.tag
+                    ?: "lb"
+                val delay = SbCommandClient.urlTestOutbound(groupTag, node.name, timeoutMs = 5000)
+                if (delay != null && delay > 0) {
+                    store.updateCommitted { s ->
+                        s.copy(proxyNodes = s.proxyNodes.map { n ->
+                            if (n.id == node.id) n.copy(urlTestDelay = delay, urlTestTime = System.currentTimeMillis()) else n
+                        })
+                    }
+                } else {
+                    importResult = "「${node.name}」测速失败（无响应或超时）"
+                }
+            }
+            testingNodeId = null
         }
     }
 
@@ -235,6 +270,11 @@ fun HomeScreen() {
                 .toList()
         }
     }
+    // 独立节点（非订阅来源）：节点卡片已并入订阅卡片，此组只列手动/剪贴板导入的节点
+    val filteredStandaloneNodes by remember(filteredNodes) {
+        derivedStateOf { filteredNodes.filter { it.subscriptionId == null } }
+    }
+    val standaloneNodes = state.proxyNodes.count { it.subscriptionId == null }
     // :core 进程启动错误（跨进程持久化），未连接时展示给用户
     val persistedError = remember {
         runCatching {
@@ -331,24 +371,7 @@ fun HomeScreen() {
                             },
                         )
                     }
-                    // 大号启动按钮（真源 = coreConnected，不用 :core 进程内 status）
-                    Surface(
-                        onClick = { toggleVpn() },
-                        shape = RoundedCornerShape(tokens.groupCornerRadius),
-                        color = if (coreConnected) MaterialTheme.colorScheme.errorContainer
-                        else MaterialTheme.colorScheme.primaryContainer,
-                        modifier = Modifier.size(72.dp),
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                imageVector = Icons.Filled.PowerSettingsNew,
-                                contentDescription = if (coreConnected) "停止" else "启动",
-                                tint = if (coreConnected) MaterialTheme.colorScheme.onErrorContainer
-                                else MaterialTheme.colorScheme.onPrimaryContainer,
-                                modifier = Modifier.size(36.dp),
-                            )
-                        }
-                    }
+                    // 右上角启动按钮已删除：底栏旁 VpnToggleButton 承担启停（避免双入口状态不一致）
                 }
                 SbSpacer()
             }
@@ -586,7 +609,9 @@ fun HomeScreen() {
             item {
                 SbGroup(title = "订阅源") {
                     state.subscriptions.forEach { sub ->
-                        item {
+                        val subNodes = nodesBySubscription[sub.id].orEmpty()
+                        val subExpanded = sub.id in expandedSubs
+                        item(key = "sub-${sub.id}") {
                             SubscriptionCard(
                                 sub = sub,
                                 refreshing = refreshingId == sub.id,
@@ -598,13 +623,40 @@ fun HomeScreen() {
                                     }
                                 },
                                 onClick = { editingSub = sub },
+                                onToggleEnabled = {
+                                    store.upsertSubscription(sub.copy(enabled = !sub.enabled))
+                                },
+                                onToggleExpand = {
+                                    expandedSubs = if (subExpanded) expandedSubs - sub.id else expandedSubs + sub.id
+                                },
+                                expanded = subExpanded,
+                                nodeCount = subNodes.size,
                             )
+                        }
+                        // 订阅展开 → 内联显示该订阅的节点（每节点带启停开关 + 单节点测速）
+                        if (subExpanded) {
+                            for (node in subNodes) {
+                                item(key = "sub-${sub.id}-node-${node.id}") {
+                                    NodeRow(
+                                        node = node,
+                                        testing = testingNodeId == node.id,
+                                        onToggle = {
+                                            store.upsertProxyNode(
+                                                node.copy(enabled = !node.enabled, disabledReason = null),
+                                            )
+                                        },
+                                        onTest = { testSingleNode(node) },
+                                        onClick = { editingNode = node },
+                                        onDelete = { store.deleteProxyNode(node.id) },
+                                    )
+                                }
+                            }
                         }
                     }
                     item {
                         SbItem(
                             title = "添加订阅源",
-                            subtitle = "支持 vless / vmess / trojan / ss / hysteria2 分享链接",
+                            subtitle = "支持分享链接 / Clash YAML / sing-box JSON",
                             icon = Icons.Filled.Add,
                             onClick = { editingSub = Subscription() },
                         )
@@ -684,8 +736,8 @@ fun HomeScreen() {
                 }
             }
             item {
-                SbGroup(title = "节点（${state.proxyNodes.size}）") {
-                    // sb-AI NodeListFilter：过滤栏
+                SbGroup(title = "独立节点（${standaloneNodes}）") {
+                    // 搜索过滤（订阅节点在订阅卡片内展开，这里只列手动/剪贴板导入的独立节点）
                     item {
                         Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
                             OutlinedTextField(
@@ -699,6 +751,7 @@ fun HomeScreen() {
                                         IconButton(onClick = { nodeFilterQuery = "" }) {
                                             Icon(Icons.Filled.Close, contentDescription = "清除", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                                         }
+                item { Spacer(Modifier.height(120.dp)) }
                                     }
                                 },
                             )
@@ -708,11 +761,6 @@ fun HomeScreen() {
                                     selected = nodeFilterNoDelay,
                                     onClick = { nodeFilterNoDelay = !nodeFilterNoDelay },
                                     label = { Text("无延迟") },
-                                )
-                                FilterChip(
-                                    selected = groupBySubscription,
-                                    onClick = { groupBySubscription = !groupBySubscription },
-                                    label = { Text("按订阅分组") },
                                 )
                                 SingleChoiceSegmentedButtonRow {
                                     SegmentedButton(
@@ -729,107 +777,21 @@ fun HomeScreen() {
                             }
                         }
                     }
-                    if (groupBySubscription) {
-                        // 订阅分组视图：按订阅折叠展开
-                        val grouped = filteredNodes.groupBy { it.subscriptionId }
-                        // 独立节点（subscriptionId == null）放在最后，订阅按名称排序
-                        val orderedKeys = grouped.keys
-                            .filterNotNull()
-                            .sortedBy { subscriptionNames[it] ?: it }
-                        val standalone = grouped[null].orEmpty()
-                        val allGroups = orderedKeys.map { it to grouped[it].orEmpty() } +
-                            if (standalone.isNotEmpty()) listOf(null to standalone) else emptyList()
-
-                        for ((subId, nodes) in allGroups) {
-                            val groupKey = subId ?: ""
-                            val groupName = subId?.let { subscriptionNames[it] ?: "未命名订阅" } ?: "独立节点"
-                            val isCollapsed = groupKey in collapsedGroups
-                            item {
-                                SbItem(
-                                    title = "$groupName（${nodes.size}）",
-                                    subtitle = if (isCollapsed) "已折叠，点击展开" else "点击折叠",
-                                    icon = if (isCollapsed) Icons.Filled.ExpandMore else Icons.Filled.ExpandLess,
-                                    onClick = {
-                                        collapsedGroups = if (isCollapsed) collapsedGroups - groupKey
-                                        else collapsedGroups + groupKey
-                                    },
-                                )
-                            }
-                            if (!isCollapsed) {
-                                for (node in nodes) {
-                                    item(key = "node-${node.id}") {
-                                        val displayDelay = if (node.urlTestDelay > 0) "${node.urlTestDelay}ms" else null
-                                        SbItem(
-                                            title = node.name.ifBlank { "未命名节点" },
-                                            subtitle = buildString {
-                                                append(node.outboundJson.nodeSummary())
-                                                displayDelay?.let { append(" · ${it}") }
-                                                when {
-                                                    node.disabledReason != null -> append(" · 已自动禁用（${node.disabledReason}）")
-                                                    !node.enabled -> append(" · 已禁用")
-                                                }
-                                            },
-                                            icon = Icons.Filled.Widgets,
-                                            iconTint = if (node.enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                            onClick = { editingNode = node },
-                                            trailing = {
-                                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                                    Switch(
-                                                        checked = node.enabled,
-                                                        onCheckedChange = {
-                                                            store.upsertProxyNode(
-                                                                node.copy(enabled = !node.enabled, disabledReason = null),
-                                                            )
-                                                        },
-                                                    )
-                                                    IconButton(onClick = { store.deleteProxyNode(node.id) }) {
-                                                        Icon(Icons.Filled.Delete, contentDescription = "删除")
-                                                    }
-                                                }
-                                            },
-                                        )
-                                    }
-                                }
-                            }
+                    for (node in filteredStandaloneNodes) {
+                        item(key = "node-${node.id}") {
+                            NodeRow(
+                                node = node,
+                                testing = testingNodeId == node.id,
+                                onToggle = {
+                                    store.upsertProxyNode(
+                                        node.copy(enabled = !node.enabled, disabledReason = null),
+                                    )
+                                },
+                                onTest = { testSingleNode(node) },
+                                onClick = { editingNode = node },
+                                onDelete = { store.deleteProxyNode(node.id) },
+                            )
                         }
-                    } else {
-                        for (node in filteredNodes) {
-                            item(key = "node-${node.id}") {
-                                val displayDelay = if (node.urlTestDelay > 0) "${node.urlTestDelay}ms" else null
-                                SbItem(
-                                    title = node.name.ifBlank { "未命名节点" },
-                                    subtitle = buildString {
-                                        append(node.outboundJson.nodeSummary())
-                                        displayDelay?.let { append(" · ${it}") }
-                                        when {
-                                            node.disabledReason != null -> append(" · 已自动禁用（${node.disabledReason}）")
-                                            !node.enabled -> append(" · 已禁用")
-                                        }
-                                    },
-                                    icon = Icons.Filled.Widgets,
-                                    iconTint = if (node.enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                    onClick = { editingNode = node },
-                                    trailing = {
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Switch(
-                                                checked = node.enabled,
-                                                onCheckedChange = {
-                                                    store.upsertProxyNode(
-                                                        node.copy(enabled = !node.enabled, disabledReason = null),
-                                                    )
-                                                },
-                                            )
-                                            IconButton(onClick = { store.deleteProxyNode(node.id) }) {
-                                                Icon(Icons.Filled.Delete, contentDescription = "删除")
-                                            }
-                                        }
-                                    },
-                                )
-                            }
-                        }
-                    }
-                    if (state.proxyNodes.size > 20) {
-                        item { SbItem(title = "… 共 ${state.proxyNodes.size} 个节点", subtitle = "显示前 20 个") }
                     }
                     item {
                         SbItem(
@@ -876,7 +838,6 @@ fun HomeScreen() {
                         }
                     }
                 }
-                Spacer(Modifier.height(120.dp))
             }
         }
     }
@@ -1114,11 +1075,14 @@ private fun SubscriptionCard(
     refreshing: Boolean,
     onRefresh: () -> Unit,
     onClick: () -> Unit,
+    onToggleEnabled: () -> Unit,
+    onToggleExpand: () -> Unit,
+    expanded: Boolean,
+    nodeCount: Int,
 ) {
     val colors = MaterialTheme.colorScheme
     val used = sub.trafficUpload + sub.trafficDownload
     val hasTraffic = sub.trafficTotal > 0
-    var expanded by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -1130,7 +1094,7 @@ private fun SubscriptionCard(
             onClick = onClick,
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(12.dp),
-            color = colors.surfaceContainer,
+            color = if (sub.enabled) colors.surfaceContainer else colors.surfaceContainer.copy(alpha = 0.5f),
         ) {
             Column(modifier = Modifier.padding(12.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1138,13 +1102,14 @@ private fun SubscriptionCard(
                         Text(sub.name.ifBlank { sub.url }, style = MaterialTheme.typography.titleSmall, maxLines = 1)
                         Text(
                             sub.lastError?.let { "错误: $it" }
-                                ?: "${sub.nodeCount} 节点 · ${formatTime(sub.lastUpdatedAt)}",
+                                ?: "$nodeCount 节点 · ${formatTime(sub.lastUpdatedAt)}",
                             style = MaterialTheme.typography.bodySmall,
                             color = colors.onSurfaceVariant,
                         )
                     }
-                    Row {
-                        IconButton(onClick = { expanded = !expanded }) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        // 展开/收起节点列表
+                        IconButton(onClick = onToggleExpand) {
                             Icon(
                                 imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
                                 contentDescription = if (expanded) "收起" else "展开",
@@ -1157,6 +1122,17 @@ private fun SubscriptionCard(
                                 Icon(Icons.Filled.Refresh, contentDescription = "更新")
                             }
                         }
+                        // 订阅启停 on/off 开关：off 后该订阅所有节点退出内核配置（真实生效）
+                        Text(
+                            text = if (sub.enabled) "on" else "off",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = if (sub.enabled) colors.primary else colors.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 2.dp),
+                        )
+                        Switch(
+                            checked = sub.enabled,
+                            onCheckedChange = { onToggleEnabled() },
+                        )
                     }
                 }
 
@@ -1180,10 +1156,86 @@ private fun SubscriptionCard(
                 }
             }
         }
-        
-        // 展开的节点列表
-        if (expanded) {
-            // 节点列表将在调用处渲染
+        // 展开的节点列表在调用处（LazyColumn item）渲染，保持列表懒加载
+    }
+}
+
+/** 订阅展开后的节点行：on/off 启停 + 单节点测速 + 点击编辑 + 删除 */
+@Composable
+private fun NodeRow(
+    node: ProxyNode,
+    testing: Boolean,
+    onToggle: () -> Unit,
+    onTest: () -> Unit,
+    onClick: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    val colors = MaterialTheme.colorScheme
+    Surface(
+        onClick = onClick,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 28.dp, vertical = 2.dp),
+        shape = RoundedCornerShape(10.dp),
+        color = if (node.enabled) colors.surfaceContainerHigh else colors.surfaceContainerHigh.copy(alpha = 0.5f),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                Icons.Filled.Widgets,
+                contentDescription = null,
+                tint = if (node.enabled) colors.primary else colors.onSurfaceVariant,
+                modifier = Modifier.size(18.dp),
+            )
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    node.name.ifBlank { "未命名节点" },
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 1,
+                )
+                val delay = if (node.urlTestDelay > 0) " · ${node.urlTestDelay}ms" else ""
+                val state = when {
+                    node.disabledReason != null -> " · 已自动禁用（${node.disabledReason}）"
+                    !node.enabled -> " · 已禁用"
+                    else -> ""
+                }
+                Text(
+                    node.outboundJson.nodeSummary() + delay + state,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.onSurfaceVariant,
+                    maxLines = 1,
+                )
+            }
+            // 单节点测速按钮
+            if (testing) {
+                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+            } else {
+                IconButton(onClick = onTest, modifier = Modifier.size(32.dp)) {
+                    Icon(
+                        Icons.Filled.Bolt,
+                        contentDescription = "测速",
+                        tint = colors.primary,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+            }
+            // 节点启停 on/off 开关
+            Text(
+                text = if (node.enabled) "on" else "off",
+                style = MaterialTheme.typography.labelSmall,
+                color = if (node.enabled) colors.primary else colors.onSurfaceVariant,
+            )
+            Switch(
+                checked = node.enabled,
+                onCheckedChange = { onToggle() },
+                modifier = Modifier.padding(start = 2.dp),
+            )
+            IconButton(onClick = onDelete, modifier = Modifier.size(32.dp)) {
+                Icon(Icons.Filled.Delete, contentDescription = "删除", modifier = Modifier.size(18.dp))
+            }
         }
     }
 }
