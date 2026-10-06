@@ -32,6 +32,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -70,10 +72,19 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             val store = remember { RuleStore.get(this) }
-            val state by store.state.collectAsState()
+            // 关键：这里绝不能全量订阅 AppState。MainActivity 是最顶层，
+            // 全量订阅会导致任何节点/设置的任何字段变化都重组整个 MainScaffold
+            // （含 NavHost 与全部 5 个页面）——这是全局卡顿的最大放大器。
+            // 只用主题需要的两个字段，distinctUntilChanged 去重。
+            val themeMode by remember(store) {
+                store.state.map { it.settings.themeMode }.distinctUntilChanged()
+            }.collectAsState(initial = store.state.value.settings.themeMode)
+            val dynamicColor by remember(store) {
+                store.state.map { it.settings.dynamicColor }.distinctUntilChanged()
+            }.collectAsState(initial = store.state.value.settings.dynamicColor)
             SbAiTheme(
-                themeMode = state.settings.themeMode,
-                dynamicColor = state.settings.dynamicColor,
+                themeMode = themeMode,
+                dynamicColor = dynamicColor,
             ) {
                 MainScaffold()
             }

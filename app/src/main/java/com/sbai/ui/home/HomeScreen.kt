@@ -100,6 +100,8 @@ import com.sbai.ui.components.SbSpacer
 import com.sbai.ui.components.SbSwitchItem
 import com.sbai.ui.theme.LocalSbStyleTokens
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
@@ -113,7 +115,20 @@ import java.util.Locale
 fun HomeScreen() {
     val context = LocalContext.current
     val store = remember { RuleStore.get(context) }
-    val state by store.state.collectAsState()
+    // 关键性能优化：这里绝不能全量订阅 AppState（`state by store.state.collectAsState()`）。
+    // 那会导致任何节点/设置的任何字段变化都重组整个首页（含全部 SbGroup 与节点列表），
+    // 是「回首页卡顿」的另一半根因（另一半是节点 JSON 解析，已由上一批修复）。
+    // 首页只用到 3 个字段，改为字段级订阅 + distinctUntilChanged，只有相关字段真变化才重组。
+    val loadBalance by remember(store) {
+        store.state.map { it.loadBalance }.distinctUntilChanged()
+    }.collectAsState(initial = store.state.value.loadBalance)
+    val subscriptions by remember(store) {
+        store.state.map { it.subscriptions }.distinctUntilChanged()
+    }.collectAsState(initial = store.state.value.subscriptions)
+    val proxyNodes by remember(store) {
+        store.state.map { it.proxyNodes }.distinctUntilChanged()
+    }.collectAsState(initial = store.state.value.proxyNodes)
+
     val status by SbAiVpnService.status.collectAsState()
     val proxyGroups by SbCommandClient.groups.collectAsState()
     val coreConnected by SbCommandClient.connectedToService.collectAsState()
@@ -190,23 +205,23 @@ fun HomeScreen() {
     var groupBySubscription by remember { mutableStateOf(false) }
 
     val running = status is SbAiVpnService.ServiceStatus.Running
-    val lb = state.loadBalance
+    val lb = loadBalance
 
     // 节点过滤结果缓存：避免在 LazyListScope 里每次重组都重新解析全部节点 JSON（卡顿主因）
     // 同时缓存「订阅→节点」分组，避免每次重组都 O(订阅数 × 节点数) 全量 filter
-    val nodesBySubscription by remember(state.proxyNodes) {
+    val nodesBySubscription by remember(proxyNodes) {
         derivedStateOf {
-            state.proxyNodes.groupBy { it.subscriptionId }
+            proxyNodes.groupBy { it.subscriptionId }
         }
     }
     // 订阅 id → 订阅名（用于分组 header 显示）
-    val subscriptionNames by remember(state.subscriptions) {
+    val subscriptionNames by remember(subscriptions) {
         derivedStateOf {
-            state.subscriptions.associate { it.id to it.name.ifBlank { "未命名订阅" } }
+            subscriptions.associate { it.id to it.name.ifBlank { "未命名订阅" } }
         }
     }
     val filteredNodes by remember(
-        state.proxyNodes, nodeFilterQuery, nodeFilterProtocol, nodeFilterRegion, nodeFilterNoDelay, nodeSortMode,
+        proxyNodes, nodeFilterQuery, nodeFilterProtocol, nodeFilterRegion, nodeFilterNoDelay, nodeSortMode,
     ) {
         derivedStateOf {
             val q = nodeFilterQuery.trim()
@@ -214,7 +229,7 @@ fun HomeScreen() {
             val region = nodeFilterRegion.trim()
             val noDelay = nodeFilterNoDelay
             val sortMode = nodeSortMode
-            state.proxyNodes
+            proxyNodes
                 .asSequence()
                 .filter { node ->
                     val nameHit = q.isEmpty() || node.name.contains(q, ignoreCase = true)
@@ -585,7 +600,7 @@ fun HomeScreen() {
             // ---- 订阅源 ----
             item {
                 SbGroup(title = "订阅源") {
-                    state.subscriptions.forEach { sub ->
+                    subscriptions.forEach { sub ->
                         item {
                             SubscriptionCard(
                                 sub = sub,
@@ -609,7 +624,7 @@ fun HomeScreen() {
                             onClick = { editingSub = Subscription() },
                         )
                     }
-                    if (state.subscriptions.size > 1) {
+                    if (subscriptions.size > 1) {
                         item {
                             SbItem(
                                 title = "全部更新",
@@ -617,7 +632,7 @@ fun HomeScreen() {
                                 icon = Icons.Filled.Refresh,
                                 onClick = {
                                     scope.launch {
-                                        state.subscriptions.filter { it.enabled }.forEach { sub ->
+                                        subscriptions.filter { it.enabled }.forEach { sub ->
                                             refreshingId = sub.id
                                             subManager.refresh(sub)
                                         }
@@ -652,7 +667,7 @@ fun HomeScreen() {
 
             // ---- 节点 ----
             // 批量测速面板：对所有启用节点逐个 URLTest，结果回填（参考 LxBox 009 列表测速）
-            if (coreConnected && state.proxyNodes.any { it.enabled }) {
+            if (coreConnected && proxyNodes.any { it.enabled }) {
                 item {
                     SbItem(
                         title = if (batchTestProgress in 0..99) "批量测速中… ${batchTestProgress}%" else "批量测速（所有节点）",
@@ -668,7 +683,7 @@ fun HomeScreen() {
                                         ?: proxyGroups.firstOrNull { it.type == "selector" }?.tag
                                         ?: "lb"
                                     val results = NodeBatchTester.testNodes(
-                                        nodes = state.proxyNodes,
+                                        nodes = proxyNodes,
                                         groupTag = groupTag,
                                         onProgress = { done, total ->
                                             batchTestProgress = if (total == 0) 100 else done * 100 / total
@@ -684,7 +699,7 @@ fun HomeScreen() {
                 }
             }
             item {
-                SbGroup(title = "节点（${state.proxyNodes.size}）") {
+                SbGroup(title = "节点（${proxyNodes.size}）") {
                     // sb-AI NodeListFilter：过滤栏
                     item {
                         Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
@@ -828,8 +843,8 @@ fun HomeScreen() {
                             }
                         }
                     }
-                    if (state.proxyNodes.size > 20) {
-                        item { SbItem(title = "… 共 ${state.proxyNodes.size} 个节点", subtitle = "显示前 20 个") }
+                    if (proxyNodes.size > 20) {
+                        item { SbItem(title = "… 共 ${proxyNodes.size} 个节点", subtitle = "显示前 20 个") }
                     }
                     item {
                         SbItem(
@@ -883,8 +898,16 @@ fun HomeScreen() {
 
     // ---- 对话框 ----
     if (showConfigPreview) {
+        // 配置生成是重操作（序列化全部节点），只在打开预览时算一次；
+        // 用 store.state.value 一次性快照，不订阅（订阅会导致每次重组都重新生成）。
+        val previewConfig by remember(showConfigPreview) {
+            derivedStateOf {
+                runCatching { SingBoxConfigGenerator.generate(store.state.value) }
+                    .getOrElse { "生成失败: ${it.message}" }
+            }
+        }
         ConfigPreviewDialog(
-            config = runCatching { SingBoxConfigGenerator.generate(state) }.getOrElse { "生成失败: ${it.message}" },
+            config = previewConfig,
             onDismiss = { showConfigPreview = false },
         )
     }
@@ -984,7 +1007,7 @@ fun HomeScreen() {
 
     if (showNodesPicker) {
         // 与生成器同口径解析节点 tag（避免显示名与配置 tag 不一致导致勾选无效）
-        val nodeTags = state.proxyNodes.filter { it.enabled }
+        val nodeTags = proxyNodes.filter { it.enabled }
             .map { SingBoxConfigGenerator.nodeTagOf(it) }.distinct()
         AlertDialog(
             onDismissRequest = { showNodesPicker = false },

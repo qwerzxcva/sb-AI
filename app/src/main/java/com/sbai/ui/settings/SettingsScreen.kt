@@ -67,6 +67,8 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -97,9 +99,21 @@ import kotlinx.serialization.json.Json
 fun SettingsScreen() {
     val context = LocalContext.current
     val store = remember { RuleStore.get(context) }
-    val state by store.state.collectAsState()
-    val settings = state.settings
     val tokens = LocalSbStyleTokens.current
+
+    // 字段级订阅：设置页只用 settings/profiles/activeProfileId，
+    // 全量订阅会因节点等无关变化重组本页。
+    val settings by remember(store) {
+        store.state.map { it.settings }.distinctUntilChanged()
+    }.collectAsState(initial = store.state.value.settings)
+    val profiles by remember(store) {
+        store.state.map { it.profiles }.distinctUntilChanged()
+    }.collectAsState(initial = store.state.value.profiles)
+    val activeProfileId by remember(store) {
+        store.state.map { it.activeProfileId }.distinctUntilChanged()
+    }.collectAsState(initial = store.state.value.activeProfileId)
+    // 备份/生成配置/保存快照等低频、需要全量数据的操作，用一次性快照（不订阅）
+    val fullState = store.state.value
 
     var showAppPicker by remember { mutableStateOf(false) }
     var showCustomConfigEditor by remember { mutableStateOf(false) }
@@ -123,7 +137,7 @@ fun SettingsScreen() {
         uri ?: return@rememberLauncherForActivityResult
         runCatching {
             context.contentResolver.openOutputStream(uri)?.use { out ->
-                out.write(backupJson.encodeToString(AppState.serializer(), state).toByteArray())
+                out.write(backupJson.encodeToString(AppState.serializer(), fullState).toByteArray())
             }
             backupMessage = "已导出配置"
         }.onFailure { backupMessage = "导出失败: ${it.message}" }
@@ -560,11 +574,11 @@ fun SettingsScreen() {
 
             // ---- 多配置 Profiles（多配置基准） ----
             item {
-                SbGroup(title = "配置快照（${state.profiles.size}）") {
+                SbGroup(title = "配置快照（${profiles.size}）") {
                     item {
                         SbItem(
                             title = "保存当前配置为快照",
-                            subtitle = if (state.activeProfileId.isEmpty()) "当前未处于快照模式" else "当前在快照: ${state.profiles.find { it.id == state.activeProfileId }?.name}",
+                            subtitle = if (activeProfileId.isEmpty()) "当前未处于快照模式" else "当前在快照: ${profiles.find { it.id == activeProfileId }?.name}",
                             icon = Icons.Filled.Save,
                             onClick = {
                                 profileNameInput = ""
@@ -572,11 +586,11 @@ fun SettingsScreen() {
                             },
                         )
                     }
-                    if (state.profiles.isNotEmpty()) {
+                    if (profiles.isNotEmpty()) {
                         item {
                             Column(Modifier.padding(horizontal = 8.dp)) {
-                                state.profiles.forEach { profile ->
-                                    val isActive = state.activeProfileId == profile.id
+                                profiles.forEach { profile ->
+                                    val isActive = activeProfileId == profile.id
                                     Row(
                                         modifier = Modifier
                                             .fillMaxWidth()
@@ -801,7 +815,7 @@ fun SettingsScreen() {
     }
 
     if (showOverridePreview) {
-        val merged = runCatching { SingBoxConfigGenerator.generate(state) }
+        val merged = runCatching { SingBoxConfigGenerator.generate(fullState) }
             .getOrElse { "合并失败: ${it.message}" }
         AlertDialog(
             onDismissRequest = { showOverridePreview = false },
@@ -848,7 +862,7 @@ fun SettingsScreen() {
                             s.copy(profiles = s.profiles.map { p -> if (p.id == editingProfile!!.id) p.copy(name = name.trim()) else p })
                         }
                     } else {
-                        store.createProfile(name.trim(), state)
+                        store.createProfile(name.trim(), fullState)
                     }
                     showProfileDialog = false
                 }) { Text("确定") }
@@ -884,7 +898,7 @@ fun SettingsScreen() {
             },
             dismissButton = {
                 TextButton(onClick = {
-                    store.replaceAll(BackupManager.merge(state, imported))
+                    store.replaceAll(BackupManager.merge(fullState, imported))
                     backupMessage = "已合并导入配置"
                     pendingImport = null
                 }) { Text("合并导入") }
