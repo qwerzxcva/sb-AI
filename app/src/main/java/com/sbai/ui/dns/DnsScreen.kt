@@ -93,19 +93,19 @@ fun DnsScreen() {
     // 字段级订阅：DNS 页只用到 5 个字段，全量订阅会因节点等无关变化重组本页。
     val dnsServers by remember(store) {
         store.state.map { it.dnsServers }.distinctUntilChanged()
-    }.collectAsState(initial = store.state.value.dnsServers)
+    }.collectAsState(initial = remember(store) { store.state.value.dnsServers })
     val dnsGroups by remember(store) {
         store.state.map { it.dnsGroups }.distinctUntilChanged()
-    }.collectAsState(initial = store.state.value.dnsGroups)
+    }.collectAsState(initial = remember(store) { store.state.value.dnsGroups })
     val dnsRules by remember(store) {
         store.state.map { it.dnsRules }.distinctUntilChanged()
-    }.collectAsState(initial = store.state.value.dnsRules)
+    }.collectAsState(initial = remember(store) { store.state.value.dnsRules })
     val routeRuleSets by remember(store) {
         store.state.map { it.routeRuleSets }.distinctUntilChanged()
-    }.collectAsState(initial = store.state.value.routeRuleSets)
+    }.collectAsState(initial = remember(store) { store.state.value.routeRuleSets })
     val routeRules by remember(store) {
         store.state.map { it.routeRules }.distinctUntilChanged()
-    }.collectAsState(initial = store.state.value.routeRules)
+    }.collectAsState(initial = remember(store) { store.state.value.routeRules })
 
     var tab by remember { mutableIntStateOf(0) }
     var editingServer by remember { mutableStateOf<DnsServer?>(null) }

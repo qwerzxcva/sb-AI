@@ -98,16 +98,16 @@ fun RouteRulesScreen() {
     // 字段级订阅：路由页只用 4 个字段，全量订阅会因节点等无关变化重组本页
     val routeRules by remember(store) {
         store.state.map { it.routeRules }.distinctUntilChanged()
-    }.collectAsState(initial = store.state.value.routeRules)
+    }.collectAsState(initial = remember(store) { store.state.value.routeRules })
     val routeRuleSets by remember(store) {
         store.state.map { it.routeRuleSets }.distinctUntilChanged()
-    }.collectAsState(initial = store.state.value.routeRuleSets)
+    }.collectAsState(initial = remember(store) { store.state.value.routeRuleSets })
     val dnsServers by remember(store) {
         store.state.map { it.dnsServers }.distinctUntilChanged()
-    }.collectAsState(initial = store.state.value.dnsServers)
+    }.collectAsState(initial = remember(store) { store.state.value.dnsServers })
     val dnsGroups by remember(store) {
         store.state.map { it.dnsGroups }.distinctUntilChanged()
-    }.collectAsState(initial = store.state.value.dnsGroups)
+    }.collectAsState(initial = remember(store) { store.state.value.dnsGroups })
 
     var editingRule by remember { mutableStateOf<RouteRule?>(null) }
     var editingRuleSet by remember { mutableStateOf<RouteRuleSet?>(null) }

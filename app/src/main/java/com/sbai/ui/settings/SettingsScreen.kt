@@ -114,13 +114,13 @@ fun SettingsScreen() {
     // 全量订阅会因节点等无关变化重组本页。
     val settings by remember(store) {
         store.state.map { it.settings }.distinctUntilChanged()
-    }.collectAsState(initial = store.state.value.settings)
+    }.collectAsState(initial = remember(store) { store.state.value.settings })
     val profiles by remember(store) {
         store.state.map { it.profiles }.distinctUntilChanged()
-    }.collectAsState(initial = store.state.value.profiles)
+    }.collectAsState(initial = remember(store) { store.state.value.profiles })
     val activeProfileId by remember(store) {
         store.state.map { it.activeProfileId }.distinctUntilChanged()
-    }.collectAsState(initial = store.state.value.activeProfileId)
+    }.collectAsState(initial = remember(store) { store.state.value.activeProfileId })
     // 全量快照只在操作发生时读取，避免未订阅字段更新后闭包仍持有旧值。
     val scope = rememberCoroutineScope()
 

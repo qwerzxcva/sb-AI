@@ -125,13 +125,13 @@ fun HomeScreen() {
     // 首页只用到 3 个字段，改为字段级订阅 + distinctUntilChanged，只有相关字段真变化才重组。
     val loadBalance by remember(store) {
         store.state.map { it.loadBalance }.distinctUntilChanged()
-    }.collectAsState(initial = store.state.value.loadBalance)
+    }.collectAsState(initial = remember(store) { store.state.value.loadBalance })
     val subscriptions by remember(store) {
         store.state.map { it.subscriptions }.distinctUntilChanged()
-    }.collectAsState(initial = store.state.value.subscriptions)
+    }.collectAsState(initial = remember(store) { store.state.value.subscriptions })
     val proxyNodes by remember(store) {
         store.state.map { it.proxyNodes }.distinctUntilChanged()
-    }.collectAsState(initial = store.state.value.proxyNodes)
+    }.collectAsState(initial = remember(store) { store.state.value.proxyNodes })
 
     val status by SbAiVpnService.status.collectAsState()
     val proxyGroups by SbCommandClient.groups.collectAsState()
@@ -273,6 +273,8 @@ fun HomeScreen() {
     // 连接在 MainScaffold 级别只启动一次；首页只消费状态，避免返回首页重复建连。
     // 状态真源：:core 进程发布的真实运行阶段（不用遥测连接冒充 VPN 状态）
     val vpnPhase by VpnRuntimeState.phase.collectAsState()
+    // VPN 错误消息订阅提升到顶层（避免在 LazyColumn item 内联 collectAsState().value）
+    val vpnMessage by VpnRuntimeState.message.collectAsState()
     LaunchedEffect(Unit) {
         while (true) {
             withContext(Dispatchers.IO) { VpnRuntimeState.refreshFromDisk(context) }
@@ -346,7 +348,7 @@ fun HomeScreen() {
                             // 跨进程真源：:core 进程把运行阶段写盘，UI 进程读取；
                             // 不再用 CommandClient 连接状态冒充 VPN 状态。
                             displayVpnPhase(vpnPhase) +
-                                (VpnRuntimeState.message.collectAsState().value?.let { " · $it" } ?: ""),
+                                (vpnMessage?.let { " · $it" } ?: ""),
                             style = MaterialTheme.typography.bodyMedium,
                             color = when {
                                 vpnPhase == VpnRuntimeState.Phase.Error -> MaterialTheme.colorScheme.error

@@ -79,10 +79,10 @@ class MainActivity : ComponentActivity() {
             // 只用主题需要的两个字段，distinctUntilChanged 去重。
             val themeMode by remember(store) {
                 store.state.map { it.settings.themeMode }.distinctUntilChanged()
-            }.collectAsState(initial = store.state.value.settings.themeMode)
+            }.collectAsState(initial = remember(store) { store.state.value.settings.themeMode })
             val dynamicColor by remember(store) {
                 store.state.map { it.settings.dynamicColor }.distinctUntilChanged()
-            }.collectAsState(initial = store.state.value.settings.dynamicColor)
+            }.collectAsState(initial = remember(store) { store.state.value.settings.dynamicColor })
             SbAiTheme(
                 themeMode = themeMode,
                 dynamicColor = dynamicColor,
