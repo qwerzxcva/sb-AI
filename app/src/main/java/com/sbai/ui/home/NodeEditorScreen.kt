@@ -58,7 +58,7 @@ import kotlinx.serialization.json.putJsonObject
 /** 支持的 outbound 类型（含 HTTP / SOCKS 隧道代理） */
 private val OUTBOUND_TYPES = listOf(
     "vless", "vmess", "trojan", "shadowsocks", "hysteria2", "hysteria",
-    "http", "socks", "wireguard", "tor", "ssh", "direct", "block",
+    "http", "socks", "wireguard", "tailscale", "tor", "ssh", "direct", "block",
 )
 
 /** uTLS 指纹（#2） */
@@ -105,6 +105,13 @@ fun NodeEditorScreen(
     var flow by remember { mutableStateOf(parsed?.flow ?: "") }
     var username by remember { mutableStateOf(parsed?.username ?: "") }
 
+    // Tailscale（endpoint，无 server/port）
+    var tsAuthKey by remember { mutableStateOf(parsed?.tsAuthKey ?: "") }
+    var tsControlUrl by remember { mutableStateOf(parsed?.tsControlUrl ?: "") }
+    var tsHostname by remember { mutableStateOf(parsed?.tsHostname ?: "") }
+    var tsEphemeral by remember { mutableStateOf(parsed?.tsEphemeral ?: false) }
+    var tsExitNode by remember { mutableStateOf(parsed?.tsExitNode ?: "") }
+
     // TLS
     var tlsEnabled by remember { mutableStateOf(parsed?.tlsEnabled ?: false) }
     var sni by remember { mutableStateOf(parsed?.sni ?: "") }
@@ -142,7 +149,7 @@ fun NodeEditorScreen(
         return buildJsonObject {
             put("type", type)
             put("tag", effectiveTag)
-            if (type != "direct" && type != "block") {
+            if (type != "direct" && type != "block" && type != "tailscale") {
                 put("server", server.trim())
                 port.trim().toIntOrNull()?.let { put("server_port", it) }
             }
@@ -167,6 +174,14 @@ fun NodeEditorScreen(
                 }
                 "wireguard" -> {
                     put("private_key", password)
+                }
+                "tailscale" -> {
+                    // sing-box tailscale endpoint：无 server/port，认证靠 auth_key 或 OAuth
+                    tsAuthKey.trim().takeIf { it.isNotBlank() }?.let { put("auth_key", it) }
+                    tsControlUrl.trim().takeIf { it.isNotBlank() }?.let { put("control_url", it) }
+                    tsHostname.trim().takeIf { it.isNotBlank() }?.let { put("hostname", it) }
+                    if (tsEphemeral) put("ephemeral", true)
+                    tsExitNode.trim().takeIf { it.isNotBlank() }?.let { put("exit_node", it) }
                 }
                 "ssh" -> {
                     username.trim().takeIf { it.isNotBlank() }?.let { put("user", it) }
@@ -301,7 +316,7 @@ fun NodeEditorScreen(
                     label = { Text("标签 tag（留空自动生成）") }, singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
-                if (type != "direct" && type != "block") {
+                if (type != "direct" && type != "block" && type != "tailscale") {
                     OutlinedTextField(
                         value = server, onValueChange = { server = it },
                         label = { Text("服务器地址") }, singleLine = true,
@@ -351,6 +366,35 @@ fun NodeEditorScreen(
                     "wireguard" -> {
                         SectionTitle("WireGuard")
                         OutlinedTextField(value = password, onValueChange = { password = it }, label = { Text("private_key") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    }
+                    "tailscale" -> {
+                        SectionTitle("Tailscale")
+                        OutlinedTextField(
+                            value = tsAuthKey, onValueChange = { tsAuthKey = it },
+                            label = { Text("auth_key（预认证密钥，可选）") }, singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        OutlinedTextField(
+                            value = tsControlUrl, onValueChange = { tsControlUrl = it },
+                            label = { Text("control_url（默认控制平面）") }, singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        OutlinedTextField(
+                            value = tsHostname, onValueChange = { tsHostname = it },
+                            label = { Text("hostname（tailnet 内主机名）") }, singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        SwitchRow("ephemeral（一次性节点）", tsEphemeral) { tsEphemeral = it }
+                        OutlinedTextField(
+                            value = tsExitNode, onValueChange = { tsExitNode = it },
+                            label = { Text("exit_node（出口节点主机名，可选）") }, singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Text(
+                            "未填 auth_key 时启动后走浏览器 OAuth 登录（需真机验证）",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                     "ssh" -> {
                         SectionTitle("SSH")
@@ -521,6 +565,8 @@ private data class OutboundForm(
     val muxPadding: Boolean, val muxBrutalUpMbps: Int?, val muxBrutalDownMbps: Int?,
     val transportType: String, val wsPath: String, val wsHost: String,
     val grpcServiceName: String, val httpPath: String,
+    val tsAuthKey: String, val tsControlUrl: String, val tsHostname: String,
+    val tsEphemeral: Boolean, val tsExitNode: String,
 )
 
 private val json = Json { ignoreUnknownKeys = true }
@@ -571,5 +617,10 @@ private fun parseOutbound(raw: String): OutboundForm? {
             }.orEmpty()),
         grpcServiceName = transport?.get("service_name")?.jsonPrimitive?.content.orEmpty(),
         httpPath = transport?.get("path")?.jsonPrimitive?.content.orEmpty(),
+        tsAuthKey = s("auth_key"),
+        tsControlUrl = s("control_url"),
+        tsHostname = s("hostname"),
+        tsEphemeral = obj["ephemeral"]?.jsonPrimitive?.content == "true",
+        tsExitNode = s("exit_node"),
     )
 }

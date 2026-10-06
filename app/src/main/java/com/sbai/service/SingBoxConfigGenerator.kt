@@ -737,7 +737,7 @@ object SingBoxConfigGenerator {
         }.getOrNull() in ENDPOINT_TYPES
 
     /** sing-box 1.12+ 中作为 endpoint（config.endpoints[]）的协议类型 */
-    private val ENDPOINT_TYPES = setOf("wireguard", "wg")
+    private val ENDPOINT_TYPES = setOf("wireguard", "wg", "tailscale")
 
     /**
      * 注入 DPI 硬化 TLS 分片（参考 LxBox 016）：对带 tls 块的 outbound 写入

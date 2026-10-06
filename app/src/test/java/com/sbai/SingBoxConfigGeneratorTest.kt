@@ -971,4 +971,46 @@ class SingBoxConfigGeneratorTest {
         val ob = outbounds(cfg).first { it.jsonObject["tag"]?.jsonPrimitive?.content == "n1" }.jsonObject
         assertNull(ob["tls"]!!.jsonObject["fragment"])
     }
+
+    // ------------------------------------------------------------------
+    // Tailscale endpoint（参考 LxBox 030）
+    // ------------------------------------------------------------------
+
+    @Test
+    fun `tailscale node emitted into endpoints not outbounds`() {
+        val ts = ProxyNode(
+            name = "ts1",
+            outboundJson = """{"type":"tailscale","tag":"ts1","auth_key":"tskey-auth-xxx","hostname":"phone"}""",
+        )
+        val state = AppState(proxyNodes = listOf(ts))
+        val cfg = parse(state)
+        // 应出现在 endpoints 数组，而非 outbounds 数组
+        val eps = cfg["endpoints"]!!.jsonArray
+        val tsEp = eps.first { it.jsonObject["tag"]?.jsonPrimitive?.content == "ts1" }.jsonObject
+        assertEquals("tailscale", tsEp["type"]!!.jsonPrimitive.content)
+        assertEquals("tskey-auth-xxx", tsEp["auth_key"]!!.jsonPrimitive.content)
+        // outbounds 里不应有 tailscale 节点（只有 direct/block 兜底）
+        val obTags = outbounds(cfg).map { it.jsonObject["tag"]?.jsonPrimitive?.content }
+        assertTrue("ts1" !in obTags)
+    }
+
+    @Test
+    fun `tailscale node can be referenced by proxy group`() {
+        // tailscale endpoint 的 tag 应能被 proxy selector 组引用（endpoint tag 与 outbound tag 同等）
+        val ts = ProxyNode(
+            name = "ts1",
+            outboundJson = """{"type":"tailscale","tag":"ts1","exit_node":"nas"}""",
+        )
+        val vless = ProxyNode(
+            name = "n1",
+            outboundJson = """{"type":"vless","tag":"n1","server":"1.2.3.4","server_port":443,"uuid":"x"}""",
+        )
+        val state = AppState(proxyNodes = listOf(ts, vless))
+        val cfg = parse(state)
+        // 多节点 → proxy selector 组，outbounds 应引用 ts1 和 n1
+        val proxy = outbounds(cfg).first { it.jsonObject["tag"]?.jsonPrimitive?.content == "proxy" }.jsonObject
+        val refs = proxy["outbounds"]!!.jsonArray.map { it.jsonPrimitive.content }
+        assertTrue("ts1" in refs)
+        assertTrue("n1" in refs)
+    }
 }
