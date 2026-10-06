@@ -98,6 +98,12 @@ android {
             useLegacyPackaging = true
         }
     }
+
+    // JVM 单元测试需关闭 Android 框架的 "not mocked" 异常，让 android.util.Log /
+    // android.os.Process.myPid() 等调用返回默认值而非抛异常。跨进程测试依赖这些方法。
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+    }
 }
 
 dependencies {

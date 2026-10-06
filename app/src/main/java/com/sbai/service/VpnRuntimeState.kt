@@ -56,10 +56,19 @@ object VpnRuntimeState {
      *  2) SharedPreferences（兼容通道，同进程内仍即时生效；老版本 UI 的回退读取路径）。
      */
     fun publish(context: Context, phase: Phase, message: String? = null) {
+        publishState(
+            dir = context.filesDir,
+            prefs = runCatching { context.getSharedPreferences(PREFS, Context.MODE_PRIVATE) }.getOrNull(),
+            phase = phase,
+            message = message,
+        )
+    }
+
+    /** 核心发布逻辑（dir/prefs 可注入，JVM 单测直接驱动）。 */
+    fun publishState(dir: File, prefs: SharedPreferences?, phase: Phase, message: String? = null) {
         _phase.value = phase
         _message.value = message
         runCatching {
-            val dir = context.filesDir
             val target = File(dir, STATE_FILE)
             val tmp = File(dir, "$STATE_FILE.tmp")
             tmp.writeText(json.encodeToString(FileState.serializer(), FileState(phase, message, System.currentTimeMillis())))
@@ -68,12 +77,13 @@ object VpnRuntimeState {
                 tmp.delete()
             }
         }
-        runCatching {
-            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .edit()
-                .putString(KEY_PHASE, phase.name)
-                .putString(KEY_MESSAGE, message)
-                .commit()
+        prefs?.let { p ->
+            runCatching {
+                p.edit()
+                    .putString(KEY_PHASE, phase.name)
+                    .putString(KEY_MESSAGE, message)
+                    .commit()
+            }
         }
     }
 
@@ -82,7 +92,15 @@ object VpnRuntimeState {
      * 优先读 JSON 文件（跨进程永远最新）；文件不存在/损坏时回退旧 SharedPreferences。
      */
     fun refreshFromDisk(context: Context) {
-        val file = File(context.filesDir, STATE_FILE)
+        refreshState(
+            dir = context.filesDir,
+            prefs = runCatching { context.getSharedPreferences(PREFS, Context.MODE_PRIVATE) }.getOrNull(),
+        )
+    }
+
+    /** 核心刷新逻辑（dir/prefs 可注入，JVM 单测直接驱动）。 */
+    fun refreshState(dir: File, prefs: SharedPreferences?) {
+        val file = File(dir, STATE_FILE)
         if (file.exists()) {
             val parsed = runCatching {
                 json.decodeFromString(FileState.serializer(), file.readText())
@@ -93,9 +111,7 @@ object VpnRuntimeState {
                 return
             }
         }
-        val prefs = runCatching {
-            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        }.getOrNull() ?: return
+        if (prefs == null) return
         val stored = runCatching {
             Phase.valueOf(prefs.getString(KEY_PHASE, Phase.Stopped.name) ?: Phase.Stopped.name)
         }.getOrDefault(Phase.Stopped)

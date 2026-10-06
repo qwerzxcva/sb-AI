@@ -24,12 +24,20 @@ import kotlinx.serialization.json.Json
  *    「后写者基于最新磁盘态」，两个进程互不丢更新。
  *  - 旧 SharedPreferences（sb_ai_rules/app_state）仅作首次升级迁移源，不再写。
  */
-class RuleStore private constructor(context: Context) {
+/**
+ * 构造函数参数说明（测试可注入）：
+ *  - stateDir：状态文件目录（生产 = filesDir；JVM 单测 = 临时目录）
+ *  - writerTag：写方标签（生产 = 按进程名检测 "ui"/"core"；单测显式指定）
+ *  - legacyPrefs：旧 SharedPreferences（仅首次升级迁移读一次；单测给空实现）
+ */
+class RuleStore private constructor(
+    stateDir: File,
+    writerTag: String,
+    legacyPrefs: SharedPreferences,
+) {
 
-    private val appContext: Context = context.applicationContext
     /** 仅用于旧数据迁移（一次性读取） */
-    private val legacyPrefs: SharedPreferences =
-        appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    private val legacyPrefs: SharedPreferences = legacyPrefs
 
     private val json = Json {
         ignoreUnknownKeys = true
@@ -37,10 +45,10 @@ class RuleStore private constructor(context: Context) {
         prettyPrint = false
     }
 
-    private val stateFile = File(appContext.filesDir, STATE_FILE_NAME)
+    private val stateFile = File(stateDir, STATE_FILE_NAME)
 
     /** 写方标识：:core 进程写 "core"，UI/WorkManager 等写 "ui" */
-    private val writerTag: String = detectWriterTag(appContext)
+    private val writerTag: String = writerTag
     /** 本进程已知的最新磁盘 updatedAt（快路径比较用，volatile：后台写线程更新） */
     @Volatile
     private var lastSeenUpdatedAt: Long = 0L
@@ -410,23 +418,29 @@ class RuleStore private constructor(context: Context) {
         @Volatile
         private var instance: RuleStore? = null
 
+        /** 生产入口：按进程名检测 writerTag，构造单例。 */
         fun get(context: Context): RuleStore =
             instance ?: synchronized(this) {
-                instance ?: RuleStore(context.applicationContext).also { instance = it }
+                instance ?: RuleStore(
+                    stateDir = context.applicationContext.filesDir,
+                    writerTag = detectWriterTag(context.applicationContext),
+                    legacyPrefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE),
+                ).also { instance = it }
             }
-    }
 
-    /** 检测当前进程归属；UI 进程写 "ui"，:core 进程写 "core"。 */
-    private fun detectWriterTag(context: Context): String {
-        // getRunningAppProcesses() 已废弃但跨版本可用；我们只取当前 PID 对应的那一条，
-        // 不依赖系统精确度，够用。
-        val name = runCatching {
-            val am = context.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
-            @Suppress("DEPRECATION")
-            am.runningAppProcesses?.firstOrNull { it.pid == android.os.Process.myPid() }?.processName
-                ?: ""
-        }.getOrDefault("")
-        return if (name.endsWith(":core")) "core" else "ui"
+        /** JVM 单测入口：指定目录 + writerTag 模拟两个进程共享同一目录。 */
+        internal fun forTesting(stateDir: File, writerTag: String, legacyPrefs: SharedPreferences): RuleStore =
+            RuleStore(stateDir, writerTag, legacyPrefs)
+
+        /** 按进程名检测当前规则库的写方标识："ui" 或 "core"。 */
+        private fun detectWriterTag(context: Context): String {
+            val name = runCatching {
+                val am = context.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+                @Suppress("DEPRECATION")
+                am.runningAppProcesses?.firstOrNull { it.pid == android.os.Process.myPid() }?.processName ?: ""
+            }.getOrDefault("")
+            return if (name.endsWith(":core")) "core" else "ui"
+        }
     }
 
     /** 首次启动时旧 sp 数据的一次性读取（仅用于迁移，不在后续路径中调用） */
