@@ -157,7 +157,8 @@ private fun MainScaffold() {
                 modifier = Modifier.weight(1f),
             )
             Spacer(modifier = Modifier.size(12.dp))
-            VpnToggleButton()
+            // 与 NavigationBar 等高（80dp），上下平齐；圆形按钮直径 = 底栏高度
+            VpnToggleButton(size = 80.dp)
         }
     }
 }

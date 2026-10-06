@@ -1,5 +1,6 @@
 package com.sbai.data
 
+import androidx.compose.runtime.Immutable
 import kotlinx.serialization.Serializable
 import java.util.UUID
 
@@ -304,6 +305,7 @@ data class LoadBalanceConfig(
 // Proxy nodes（订阅解析或手动 JSON）
 // ---------------------------------------------------------------------------
 
+@Immutable
 @Serializable
 data class ProxyNode(
     val id: String = UUID.randomUUID().toString(),
@@ -322,6 +324,7 @@ data class ProxyNode(
 )
 
 /** 订阅源：拉取分享链接并解析为节点 */
+@Immutable
 @Serializable
 data class Subscription(
     val id: String = UUID.randomUUID().toString(),
@@ -516,6 +519,7 @@ data class AppSettings(
 // Aggregate persisted state
 // ---------------------------------------------------------------------------
 
+@Immutable
 @Serializable
 data class AppState(
     val routeRules: List<RouteRule> = emptyList(),

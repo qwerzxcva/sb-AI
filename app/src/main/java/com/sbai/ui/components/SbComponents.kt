@@ -64,8 +64,9 @@ private fun groupItemShape(position: SbGroupItemPosition, outer: androidx.compos
     }
 
 class SbGroupScope internal constructor() {
-    internal val items = mutableListOf<@Composable () -> Unit>()
-    fun item(content: @Composable () -> Unit) { items += content }
+    internal val items = mutableListOf<Pair<Any?, @Composable () -> Unit>>()
+    fun item(content: @Composable () -> Unit) { items += null to content }
+    fun item(key: Any?, content: @Composable () -> Unit) { items += key to content }
 }
 
 /** 分节标签 + 分组卡片列表（Kototoro SettingsPreferenceGroup 的移植） */
@@ -87,19 +88,23 @@ fun SbGroup(
         }
         val tokens = LocalSbStyleTokens.current
         Column(verticalArrangement = Arrangement.spacedBy(tokens.settingsItemGap)) {
-            scope.items.forEachIndexed { index, itemContent ->
+            scope.items.forEachIndexed { index, (itemKey, itemContent) ->
                 val position = when {
                     scope.items.size == 1 -> SbGroupItemPosition.SINGLE
                     index == 0 -> SbGroupItemPosition.FIRST
                     index == scope.items.lastIndex -> SbGroupItemPosition.LAST
                     else -> SbGroupItemPosition.MIDDLE
                 }
-                Surface(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = groupItemShape(position, tokens.settingsGroupOuterCornerRadius, tokens.settingsGroupInnerCornerRadius),
-                    color = MaterialTheme.colorScheme.surfaceContainer,
-                ) {
-                    itemContent()
+                // 用 key 包裹：节点列表等大量 item 时，未变化的 item 跳过重组（回首页卡顿主因之一）
+                val actualKey = itemKey ?: index
+                androidx.compose.runtime.key(actualKey) {
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = groupItemShape(position, tokens.settingsGroupOuterCornerRadius, tokens.settingsGroupInnerCornerRadius),
+                        color = MaterialTheme.colorScheme.surfaceContainer,
+                    ) {
+                        itemContent()
+                    }
                 }
             }
         }
@@ -266,8 +271,8 @@ fun SbCollapsibleGroup(
             }
             AnimatedVisibility(visible = expanded, enter = expandVertically(), exit = shrinkVertically()) {
                 Column(Modifier.fillMaxWidth()) {
-                    scope.items.forEach { itemContent ->
-                        itemContent()
+                    scope.items.forEach { (itemKey, itemContent) ->
+                        androidx.compose.runtime.key(itemKey) { itemContent() }
                     }
                 }
             }

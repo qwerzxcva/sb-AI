@@ -115,7 +115,6 @@ fun HomeScreen() {
     val store = remember { RuleStore.get(context) }
     val state by store.state.collectAsState()
     val status by SbAiVpnService.status.collectAsState()
-    val commandStatus by SbCommandClient.status.collectAsState()
     val proxyGroups by SbCommandClient.groups.collectAsState()
     val coreConnected by SbCommandClient.connectedToService.collectAsState()
     val scope = rememberCoroutineScope()
@@ -221,22 +220,15 @@ fun HomeScreen() {
                     val nameHit = q.isEmpty() || node.name.contains(q, ignoreCase = true)
                     val protoHit = proto.isEmpty() || node.outboundJson.contains(proto, ignoreCase = true)
                     val regionHit = region.isEmpty() || node.name.contains(region, ignoreCase = true)
-                    val delayOk = !noDelay || runCatching {
-                        kotlinx.serialization.json.Json.parseToJsonElement(node.outboundJson)
-                            .jsonObject["delay"]?.jsonPrimitive?.content != null
-                    }.getOrDefault(true)
+                    // 直接用 urlTestDelay 字段，避免对每个节点反复 parseToJsonElement(outboundJson)（回首页卡顿主因）
+                    val delayOk = !noDelay || node.urlTestDelay > 0
                     nameHit && protoHit && regionHit && delayOk
                 }
                 .sortedWith(
                     compareBy(
                         { if (sortMode == NodeSortMode.NAME_ASC) 0 else 1 },
                         { it.name.lowercase() },
-                        {
-                            runCatching {
-                                kotlinx.serialization.json.Json.parseToJsonElement(it.outboundJson)
-                                    .jsonObject["delay"]?.jsonPrimitive?.content?.toLongOrNull()
-                            }.getOrDefault(null) ?: 0L
-                        },
+                        { it.urlTestDelay },  // 直接用字段，不再解析 JSON
                     )
                 )
                 .take(30)
@@ -338,14 +330,6 @@ fun HomeScreen() {
                                 else -> MaterialTheme.colorScheme.onSurfaceVariant
                             },
                         )
-                        if (coreRunning) {
-                            Text(
-                                "↑ ${com.sbai.ui.monitor.formatSpeed(commandStatus.uplink)} · " +
-                                    "↓ ${com.sbai.ui.monitor.formatSpeed(commandStatus.downlink)}",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.secondary,
-                            )
-                        }
                     }
                     // 大号启动按钮（真源 = coreConnected，不用 :core 进程内 status）
                     Surface(
@@ -372,7 +356,7 @@ fun HomeScreen() {
             // ---- 实时流量卡（ClashFest 首页观感；运行中显示） ----
             if (coreRunning) {
                 item {
-                    HomeTrafficCard(commandStatus)
+                    HomeTrafficCard()
                     SbSpacer()
                 }
             }
@@ -773,7 +757,7 @@ fun HomeScreen() {
                             }
                             if (!isCollapsed) {
                                 for (node in nodes) {
-                                    item {
+                                    item(key = "node-${node.id}") {
                                         val displayDelay = if (node.urlTestDelay > 0) "${node.urlTestDelay}ms" else null
                                         SbItem(
                                             title = node.name.ifBlank { "未命名节点" },
@@ -810,7 +794,7 @@ fun HomeScreen() {
                         }
                     } else {
                         for (node in filteredNodes) {
-                            item {
+                            item(key = "node-${node.id}") {
                                 val displayDelay = if (node.urlTestDelay > 0) "${node.urlTestDelay}ms" else null
                                 SbItem(
                                     title = node.name.ifBlank { "未命名节点" },
@@ -1089,7 +1073,9 @@ private fun SubOptionSwitch(label: String, checked: Boolean, onChange: (Boolean)
 // ---------------------------------------------------------------------------
 
 @Composable
-private fun HomeTrafficCard(status: com.sbai.service.SbCommandClient.DashboardStatus) {
+private fun HomeTrafficCard() {
+    // 内部独立 collect 高频流量状态，避免在 HomeScreen 顶层 collect 导致整页每 1s 重组
+    val status by SbCommandClient.status.collectAsState()
     val colors = MaterialTheme.colorScheme
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -1202,13 +1188,31 @@ private fun SubscriptionCard(
     }
 }
 
-private fun String.nodeSummary(): String = runCatching {
-    val obj = Json.parseToJsonElement(this).jsonObject
-    val type = obj["type"]?.toString()?.trim('"').orEmpty()
-    val server = obj["server"]?.toString()?.trim('"').orEmpty()
-    val port = obj["server_port"]?.toString().orEmpty()
-    "$type · $server:$port"
-}.getOrDefault("")
+// 从 outboundJson 提取摘要，用纯字符串查找而非 Json.parseToJsonElement 全量解析。
+// 节点列表渲染时对每个节点调用，全量 JSON 解析（含 tls/headers 等大字段）是回首页/滚动卡顿主因。
+private fun String.nodeSummary(): String {
+    if (isBlank()) return ""
+    fun extract(key: String): String {
+        // 匹配 "key":"value" 或 "key": "value"（value 不含转义引号）
+        val idx = indexOf("\"$key\"")
+        if (idx < 0) return ""
+        var p = idx + key.length + 2
+        while (p < length && (this[p] == ':' || this[p] == ' ' || this[p] == '\t')) p++
+        if (p >= length || this[p] != '"') return ""
+        val start = p + 1
+        var end = start
+        while (end < length && this[end] != '"') end++
+        return substring(start, end)
+    }
+    val type = extract("type")
+    val server = extract("server")
+    val port = extract("server_port")
+    return when {
+        type.isBlank() && server.isBlank() -> ""
+        server.isBlank() -> type
+        else -> "$type · $server:$port"
+    }
+}
 
 private fun clipboardText(context: Context): String? = runCatching {
     val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
