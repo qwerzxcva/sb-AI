@@ -14,6 +14,40 @@ import org.junit.Test
 
 class BackupManagerTest {
 
+    @Test fun `restoring A retains A and later B catalogue`() {
+        val profiles = listOf(com.sbai.data.ConfigProfile(id = "A", name = "A"), com.sbai.data.ConfigProfile(id = "B", name = "B"))
+        val current = AppState(profiles = profiles, activeProfileId = "B")
+        val restored = BackupManager.restoreProfile(current, AppState(settings = AppSettings(mtu = 1400)), "A")
+        assertEquals(profiles, restored.profiles)
+        assertEquals("A", restored.activeProfileId)
+        assertEquals(1400, restored.settings.mtu)
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun `deleted profile cannot be resurrected by late decode`() {
+        BackupManager.restoreProfile(AppState(), AppState(), "deleted")
+    }
+
+    @Test fun `merge deduplicates repeated incoming ids`() {
+        val incoming = AppState(proxyNodes = listOf(
+            ProxyNode(id = "duplicate", name = "first"),
+            ProxyNode(id = "duplicate", name = "second"),
+        ))
+        val merged = BackupManager.merge(AppState(), incoming)
+        assertEquals(1, merged.proxyNodes.size)
+        assertEquals("first", merged.proxyNodes.single().name)
+    }
+
+    @Test fun `empty import preserves TLS fragmentation settings`() {
+        val settings = AppSettings(tlsFragment = true, tlsRecordFragment = true, tlsFragmentFallbackDelay = "900ms")
+        assertEquals(settings, BackupManager.merge(AppState(settings = settings), AppState()).settings)
+    }
+
+    @Test fun `nondefault TLS import overrides current settings`() {
+        val settings = AppSettings(tlsFragment = true, tlsRecordFragment = true, tlsFragmentFallbackDelay = "700ms")
+        assertEquals(settings, BackupManager.merge(AppState(), AppState(settings = settings)).settings)
+    }
+
     @Test
     fun `merge appends non-overlapping lists`() {
         val current = AppState(

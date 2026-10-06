@@ -899,12 +899,18 @@ fun HomeScreen() {
 
     // ---- 对话框 ----
     if (showConfigPreview) {
-        // 配置生成是重操作（序列化全部节点），只在打开预览时算一次；
-        // 用 store.state.value 一次性快照，不订阅（订阅会导致每次重组都重新生成）。
-        val previewConfig by remember(showConfigPreview) {
-            derivedStateOf {
-                runCatching { SingBoxConfigGenerator.generate(store.state.value) }
-                    .getOrElse { "生成失败: ${it.message}" }
+        // 进入预览时取完整快照，后台生成；关闭对话框会取消结果发布。
+        var previewConfig by remember { mutableStateOf("正在生成配置…") }
+        LaunchedEffect(Unit) {
+            val snapshot = store.state.value
+            previewConfig = try {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                    SingBoxConfigGenerator.generate(snapshot)
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                "生成失败: ${e.message}"
             }
         }
         ConfigPreviewDialog(
