@@ -13,6 +13,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
@@ -45,6 +48,7 @@ import com.sbai.data.RuleStore
 import com.sbai.ui.components.BottomBarController
 import com.sbai.ui.components.SbGlassBottomBar
 import com.sbai.ui.components.SbNavItem
+import com.sbai.ui.components.VpnToggleButton
 import com.sbai.ui.dns.DnsScreen
 import com.sbai.ui.home.HomeScreen
 import com.sbai.ui.monitor.MonitorScreen
@@ -127,17 +131,8 @@ private fun MainScaffold() {
             composable(Screen.Settings.route) { SettingsScreen() }
         }
 
-        SbGlassBottomBar(
-            pageBackdrop = pageBackdrop,
-            items = items.map { SbNavItem(it.route, it.title, it.icon) },
-            currentRoute = currentRoute,
-            onSelect = { route ->
-                navController.navigate(route) {
-                    popUpTo(navController.graph.findStartDestination().id) { saveState = true }
-                    launchSingleTop = true
-                    restoreState = true
-                }
-            },
+        // FlClash 风格：底栏胶囊 + 右侧独立圆形 VPN 开关按钮
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .align(Alignment.BottomCenter)
@@ -146,7 +141,24 @@ private fun MainScaffold() {
                 .padding(bottom = 12.dp)
                 // 下滑隐藏：整体下移出屏幕
                 .offset(y = barOffset),
-        )
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            SbGlassBottomBar(
+                pageBackdrop = pageBackdrop,
+                items = items.map { SbNavItem(it.route, it.title, it.icon) },
+                currentRoute = currentRoute,
+                onSelect = { route ->
+                    navController.navigate(route) {
+                        popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                        launchSingleTop = true
+                        restoreState = true
+                    }
+                },
+                modifier = Modifier.weight(1f),
+            )
+            Spacer(modifier = Modifier.size(12.dp))
+            VpnToggleButton()
+        }
     }
 }
 

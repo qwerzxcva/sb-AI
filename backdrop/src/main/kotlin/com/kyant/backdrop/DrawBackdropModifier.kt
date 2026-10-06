@@ -459,4 +459,6 @@ private class DrawBackdropNode(
 }
 
 // Kototoro patch -- see the resolutionScale note in DrawBackdropNode.
-private const val BackdropResolutionScale = 2f
+// 降采样比例：底栏模糊半径已降到 4px，模糊本身会掩盖采样损失，可安全提高降采样。
+// 3x = 录制像素量 1/9，滚动时 GPU 录制/采样带宽骤降（卡顿主因之一）。
+private const val BackdropResolutionScale = 3f
