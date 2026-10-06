@@ -148,6 +148,15 @@ object ClashYamlParser {
                 "hysteria2" -> {
                     put("password", m.str("password").orEmpty())
                     m.str("obfs-password")?.takeIf { it.isNotBlank() }?.let { put("obfs_password", it) }
+                    // 端口跳跃（port hopping）：Clash `ports`/`mport` → sing-box `server_ports`
+                    // 格式：`20000-50000,60000` → `["20000:50000", "60000:60000"]`
+                    val ports = m.str("ports") ?: m.str("mport")
+                    if (!ports.isNullOrBlank()) {
+                        val ranges = parsePortRanges(ports)
+                        if (ranges.isNotEmpty()) {
+                            putJsonArray("server_ports") { ranges.forEach(::add) }
+                        }
+                    }
                     putTls(this, m, forceSni = true)
                 }
 
@@ -408,4 +417,29 @@ object ClashYamlParser {
     @Suppress("UNCHECKED_CAST")
     private fun Map<String, Any?>.map(key: String): Map<String, Any?> =
         (this[key] as? Map<String, Any?>) ?: emptyMap()
+
+    /**
+     * 解析 Clash 端口范围字符串 → sing-box `server_ports` 数组元素。
+     * Clash 格式：`20000-50000,60000`（hyphen 表示范围，逗号分隔）
+     * sing-box 格式：`["20000:50000", "60000:60000"]`（colon 表示 low:high）
+     * 单个端口补成 `port:port`（与 LxBox hysteria2 契约一致）。
+     */
+    private fun parsePortRanges(raw: String): List<String> =
+        raw.split(',')
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .mapNotNull { token ->
+                when {
+                    token.contains('-') -> {
+                        val parts = token.split('-')
+                        val low = parts[0].trim().toIntOrNull() ?: return@mapNotNull null
+                        val high = parts[1].trim().toIntOrNull() ?: return@mapNotNull null
+                        if (low in 1..65535 && high in low..65535) "$low:$high" else null
+                    }
+                    else -> {
+                        val p = token.toIntOrNull() ?: return@mapNotNull null
+                        if (p in 1..65535) "$p:$p" else null
+                    }
+                }
+            }
 }

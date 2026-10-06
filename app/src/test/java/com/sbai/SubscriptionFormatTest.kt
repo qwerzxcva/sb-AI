@@ -132,4 +132,66 @@ rules:
         // server_port 是整数，JSON 序列化后不带引号
         assertTrue(result.nodes[0].outboundJson.contains("18445"))
     }
+
+    @Test
+    fun `clash hysteria2 ports range maps to server_ports`() {
+        val yaml = """
+proxies:
+  - name: "香港01"
+    type: hysteria2
+    server: 209.9.200.33
+    port: 20000
+    ports: 20000-50000
+    password: "pass"
+    sni: d1.awsstatic.com
+    skip-cert-verify: true
+""".trimIndent()
+        val result = SubscriptionFormat.parse(yaml)
+        assertNotNull(result)
+        result!!
+        assertEquals(1, result.nodes.size)
+        val json = result.nodes[0].outboundJson
+        // server_ports 应包含 "20000:50000"（hyphen → colon）
+        assertTrue(json.contains("server_ports"))
+        assertTrue(json.contains("20000:50000"))
+    }
+
+    @Test
+    fun `clash hysteria2 mport multi ranges maps to server_ports`() {
+        val yaml = """
+proxies:
+  - name: "香港02"
+    type: hysteria2
+    server: 209.9.200.33
+    port: 20000
+    mport: 20000-30000,40000
+    password: "pass"
+    sni: bing.com
+""".trimIndent()
+        val result = SubscriptionFormat.parse(yaml)
+        assertNotNull(result)
+        result!!
+        val json = result.nodes[0].outboundJson
+        // 范围 + 单端口：20000:30000 和 40000:40000
+        assertTrue(json.contains("20000:30000"))
+        assertTrue(json.contains("40000:40000"))
+    }
+
+    @Test
+    fun `clash hysteria2 without ports has no server_ports`() {
+        val yaml = """
+proxies:
+  - name: "香港03"
+    type: hysteria2
+    server: hk01.poke-mon.xyz
+    port: 8443
+    password: "pass"
+    sni: www.bing.com
+""".trimIndent()
+        val result = SubscriptionFormat.parse(yaml)
+        assertNotNull(result)
+        result!!
+        val json = result.nodes[0].outboundJson
+        assertTrue(!json.contains("server_ports"))
+    }
 }
