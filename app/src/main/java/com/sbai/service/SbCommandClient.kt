@@ -202,25 +202,37 @@ object SbCommandClient : CommandClientHandler {
         }
     }
 
+    // 以下均为 libbox native 同步 IPC 调用（unix socket 往返），UI 点击直接调用会阻塞主线程；
+    // 真机 ANR 栈已证实 native CommandClient 调用在 main 线程会导致输入超时。统一投递到 IO。
+
     /** 关闭单条连接 */
     fun closeConnection(id: String) {
-        runCatching { client?.closeConnection(id) }
-            .onFailure { Log.w(TAG, "closeConnection failed", it) }
+        ioScope.launch {
+            runCatching { client?.closeConnection(id) }
+                .onFailure { Log.w(TAG, "closeConnection failed", it) }
+        }
     }
 
     /** 关闭全部连接 */
     fun closeAllConnections() {
-        runCatching { client?.closeConnections() }
-            .onFailure { Log.w(TAG, "closeConnections failed", it) }
+        ioScope.launch {
+            runCatching { client?.closeConnections() }
+                .onFailure { Log.w(TAG, "closeConnections failed", it) }
+        }
     }
 
     fun selectOutbound(groupTag: String, outboundTag: String) {
-        runCatching { client?.selectOutbound(groupTag, outboundTag) }
+        ioScope.launch {
+            runCatching { client?.selectOutbound(groupTag, outboundTag) }
+                .onFailure { Log.w(TAG, "selectOutbound failed", it) }
+        }
     }
 
     fun urlTest(groupTag: String) {
-        runCatching { client?.urlTest(groupTag) }
-            .onFailure { Log.w(TAG, "urlTest failed for group: $groupTag", it) }
+        ioScope.launch {
+            runCatching { client?.urlTest(groupTag) }
+                .onFailure { Log.w(TAG, "urlTest failed for group: $groupTag", it) }
+        }
     }
 
     /** 对指定节点执行单次测速 */

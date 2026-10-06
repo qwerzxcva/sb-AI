@@ -42,8 +42,15 @@ class RuleStoreCrossProcessTest {
         outboundJson = """{"type":"vless","tag":"$tag","server":"1.2.3.4","server_port":443,"uuid":"x"}""",
     )
 
-    /** 等待两个连续写入的 updatedAt 严格递增（System.currentTimeMillis 分辨率 1ms）。 */
-    private fun settle() = Thread.sleep(5)
+    /**
+     * 模拟跨进程交接：先等待两侧异步落盘完成（update() 为后台写，真实场景中
+     * UI 启动 VPN 前同样会 flush），再留出 updatedAt 递增间隔。
+     */
+    private fun settle() {
+        ui.flushPendingWrites()
+        core.flushPendingWrites()
+        Thread.sleep(5)
+    }
 
     @Test
     fun `ui update rebases on core external write (no lost update)`() {

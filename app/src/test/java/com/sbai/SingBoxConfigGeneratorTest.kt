@@ -624,7 +624,12 @@ class SingBoxConfigGeneratorTest {
             action = RuleAction.ROUTE_DIRECT,
             ruleSetTags = listOf(url1, "existing-tag", url2, url1), // url1 重复
         )
-        val state = AppState(routeRules = listOf(rule), routeRuleSets = listOf())
+        // existing-tag 必须真实声明：引用未声明的 rule_set 会被 sing-box 拒绝启动，生成器会跳过该规则
+        val url3 = "https://example.com/existing.srs"
+        val state = AppState(
+            routeRules = listOf(rule),
+            routeRuleSets = listOf(com.sbai.data.RouteRuleSet(tag = "existing-tag", url = url3)),
+        )
         val cfg = parse(state)
 
         // 路由规则里的 rule_set 应引用生成的 tag（不是原始 URL）
@@ -634,10 +639,10 @@ class SingBoxConfigGeneratorTest {
         assertTrue(tags.contains("existing-tag"))
         assertEquals(2, tags.count { it.startsWith("url-") })  // 2 个不同 URL → 2 个 tag
 
-        // route.rule_set 里应自动创建 2 个 remote 规则集（去重后）
+        // route.rule_set：显式 existing-tag + 自动创建的 2 个 remote 规则集（去重后）
         val ruleSets = cfg["route"]!!.jsonObject["rule_set"]!!.jsonArray
         val urls = ruleSets.map { it.jsonObject["url"]?.jsonPrimitive?.content }
-        assertEquals(2, urls.count { it != null })
+        assertEquals(3, urls.count { it != null })
         assertTrue(urls.contains(url1))
         assertTrue(urls.contains(url2))
         ruleSets.forEach { rs ->

@@ -224,6 +224,7 @@ class SbAiVpnService : VpnService() {
                     }
                 } catch (t: Throwable) {
                     Log.e(TAG, "failed to start vpn", t)
+                    writeDiagnostic("start failed", t)
                     synchronized(requestLock) {
                         if (!stopRequested && !destroyed) {
                             startRequested = false
@@ -254,6 +255,20 @@ class SbAiVpnService : VpnService() {
         }
     }
 
+    /**
+     * 部分 ROM（ColorOS 等）默认屏蔽第三方应用 logcat，启动失败时无从排查。
+     * 把失败堆栈追加写到 filesDir/sb-ai-vpn-diag.log（仅异常信息，不含订阅 URL/凭据），上限 64KB。
+     */
+    private fun writeDiagnostic(stage: String, t: Throwable?) {
+        runCatching {
+            val f = java.io.File(filesDir, "sb-ai-vpn-diag.log")
+            if (f.exists() && f.length() > 64 * 1024) f.delete()
+            val sw = java.io.StringWriter()
+            t?.printStackTrace(java.io.PrintWriter(sw))
+            f.appendText("[${System.currentTimeMillis()}] $stage\n$sw\n")
+        }
+    }
+
     private fun stopVpn() = requestStop()
 
     private fun requestStop(destroying: Boolean = false) {
@@ -273,8 +288,11 @@ class SbAiVpnService : VpnService() {
                 lifecycleMutex.withLock {
                     cleanup()
                     synchronized(requestLock) {
+                        // 启动失败后 stopSelf→onDestroy 也会走到这里：不能用 Stopped 覆盖 Error，
+                        // 否则 UI 永远看不到真实失败原因（真机复现：state 文件始终 Stopped 且 message=null）。
                         if (_status.value !is ServiceStatus.Error) {
                             _status.value = ServiceStatus.Stopped
+                            VpnRuntimeState.publish(this@SbAiVpnService, VpnRuntimeState.Phase.Stopped)
                         }
                         // 无论 destroying 与否，stop 完成都写 Stopped
                         VpnRuntimeState.publish(this@SbAiVpnService, VpnRuntimeState.Phase.Stopped, null, System.currentTimeMillis())

@@ -106,7 +106,10 @@ class RuleStore private constructor(
      * 返回写入的 updatedAt。
      */
     private fun writeEnvelope(data: AppState): Long {
-        val ts = System.currentTimeMillis()
+        // 单调递增：两个进程在同一毫秒内先后写入时，currentTimeMillis 相同会让对方的
+        // refreshFromDisk/rebaseOnDisk 判定「不比已知新」而漏读（RuleStoreCrossProcessTest 偶发失败根因）。
+        // reload/rebase 已把 lastSeenUpdatedAt 推到磁盘最新值，因此 +1 保证严格大于上一次写入。
+        val ts = maxOf(System.currentTimeMillis(), lastSeenUpdatedAt + 1)
         val pid = android.os.Process.myPid()
         val tmpName = "$STATE_FILE_NAME.${writerTag}.$pid.tmp"
         val tmp = File(stateFile.parentFile, tmpName)
@@ -174,6 +177,18 @@ class RuleStore private constructor(
             runCatching { writeEnvelope(next) }
                 .onFailure { android.util.Log.w("RuleStore", "配置异步写入失败", it) }
         }
+    }
+
+    /**
+     * 等待本进程尚未完成的异步落盘。
+     *
+     * update() 走后台异步写；若随后另一进程（:core 启动 VPN 时 reload）立刻读盘，
+     * 会读到旧数据并在其上提交，之后本进程迟到的异步写又会整份覆盖对方的改动（双向丢更新）。
+     * 启动 VPN 前、以及测试模拟跨进程交接前必须先 flush。必须在非主线程调用。
+     */
+    fun flushPendingWrites() {
+        val job = synchronized(this) { persistJob } ?: return
+        kotlinx.coroutines.runBlocking { job.join() }
     }
 
     /** 同步落盘（订阅/节点等跨进程立即生效的关键变更；:core 的自动禁用也走这里） */

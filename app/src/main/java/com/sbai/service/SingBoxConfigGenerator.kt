@@ -268,8 +268,9 @@ object SingBoxConfigGenerator {
                     put("strict_route", state.settings.strictRoute)
                     // TUN 网络栈：system / gvisor / mixed
                     put("stack", state.settings.tunStack.ifBlank { "mixed" })
-                    put("sniff", true)
-                    put("sniff_override_destination", false)
+                    // sing-box 1.13 已移除 inbound 上的 legacy 字段（sniff / sniff_override_destination 等），
+                    // 带上会被内核拒绝："legacy inbound fields are deprecated ... removed in sing-box 1.13.0"。
+                    // 真机复现即为 VPN 无法启动的根因。嗅探改由 route.rules 中的 {"action":"sniff"} 承担（见下方路由规则）。
 
                     when (state.settings.perAppProxy.mode) {
                         PerAppProxyMode.INCLUDE ->
@@ -413,6 +414,22 @@ object SingBoxConfigGenerator {
             }
         }.distinct()
 
+    private fun resolveRuleSetTag(entry: String): String {
+        val t = entry.trim()
+        return if (t.startsWith("http://") || t.startsWith("https://")) urlRuleSetTag(t) else t
+    }
+
+    /** 配置里实际声明的 rule_set tag 集合（显式规则集 + 资源注入 + 路由规则内联 URL）。 */
+    internal fun definedRuleSetTags(state: AppState): Set<String> = buildSet {
+        state.routeRuleSets.filter { it.enabled && it.tag.isNotBlank() }.forEach { add(it.tag) }
+        state.settings.resources
+            .filter { it.enabled && it.resType == com.sbai.data.ResourceType.CHINA_IP && it.content.isNotEmpty() }
+            .forEach { add("res-${it.id.take(8)}") }
+        addAll(inlineUrlRuleSets(state).keys)
+    }
+
+    private val ACTION_ONLY_KEYS = setOf("outbound", "action", "reject_method", "invert")
+
     private fun buildRouteRules(state: AppState, entryTag: String): List<JsonObject> {
         val rules = mutableListOf<JsonObject>()
         rules.add(buildJsonObject { put("action", "sniff") })
@@ -441,8 +458,21 @@ object SingBoxConfigGenerator {
         if (chinaIpResource != null) {
             // 规则已在 rule_set 块中注入（inline format），此处无需重复；保留标记以便未来扩展
         }
+        // 引用未声明的 rule_set 会让 sing-box 直接拒绝启动（rule-set not found）。
+        // AND 规则含不存在的规则集永远无法命中 → 整条跳过；OR 规则仅去掉该引用。
+        val definedTags = definedRuleSetTags(state)
         state.routeRules.filter { it.enabled }.forEach { rule ->
-            rules.add(buildRouteRule(rule, entryTag))
+            val missing = resolveRuleSetTags(rule).filterNot { it in definedTags }
+            val effective = when {
+                missing.isEmpty() -> rule
+                rule.logic == RuleLogic.OR -> rule.copy(
+                    ruleSetTags = rule.ruleSetTags.filter { e -> resolveRuleSetTag(e) in definedTags },
+                )
+                else -> return@forEach
+            }
+            val built = buildRouteRule(effective, entryTag)
+            // 去掉引用后若已无任何匹配条件，不能退化成「匹配全部流量」的规则
+            if (missing.isEmpty() || built.keys.any { it !in ACTION_ONLY_KEYS }) rules.add(built)
         }
         return rules
     }
@@ -648,17 +678,20 @@ object SingBoxConfigGenerator {
         val groupOfTag = state.dnsGroups.associate { it.name to it.serverTags }
 
         // 1) 用户手动创建的 DNS 规则（按列表顺序 = 优先级，必须最先匹配）
+        val dnsDefinedTags = definedRuleSetTags(state)
         state.dnsRules.filter { it.enabled }.forEach { r ->
             val server = resolveDnsTag(r.server, groupOfTag, state)
             // route 动作必须有有效 server，否则整条跳过（避免悬空引用 / 残缺规则）
             val needsServer = r.action.isBlank() || r.action == "route"
             if (needsServer && server == null) return@forEach
+            // DNS 规则为 AND 语义：引用未声明的规则集既无法命中又会导致内核拒绝配置 → 跳过
+            if (r.ruleSetTags.any { resolveRuleSetTag(it) !in dnsDefinedTags }) return@forEach
             result.add(buildJsonObject {
                 if (r.domains.isNotEmpty()) putJsonArray("domain") { r.domains.forEach(::add) }
                 if (r.domainSuffixes.isNotEmpty()) putJsonArray("domain_suffix") { r.domainSuffixes.forEach(::add) }
                 if (r.domainKeywords.isNotEmpty()) putJsonArray("domain_keyword") { r.domainKeywords.forEach(::add) }
                 if (r.domainRegexes.isNotEmpty()) putJsonArray("domain_regex") { r.domainRegexes.forEach(::add) }
-                if (r.ruleSetTags.isNotEmpty()) putJsonArray("rule_set") { r.ruleSetTags.forEach(::add) }
+                if (r.ruleSetTags.isNotEmpty()) putJsonArray("rule_set") { r.ruleSetTags.map(::resolveRuleSetTag).distinct().forEach(::add) }
                 if (r.ipCidrs.isNotEmpty()) putJsonArray("ip_cidr") { r.ipCidrs.forEach(::add) }
                 if (r.networks.isNotEmpty()) putJsonArray("network") { r.networks.forEach(::add) }
                 if (r.ports.isNotEmpty()) putJsonArray("port") { r.ports.forEach(::add) }
