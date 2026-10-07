@@ -46,6 +46,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import com.sbai.service.SbCommandClient
+import com.sbai.service.VpnRuntimeState
 import com.sbai.ui.components.BottomBarClearance
 import com.sbai.ui.components.SbGroup
 import com.sbai.ui.components.SbItem
@@ -62,6 +63,19 @@ fun MonitorScreen() {
     val logs by SbCommandClient.logs.collectAsState()
     val connections by SbCommandClient.connections.collectAsState()
     val connected by SbCommandClient.connectedToService.collectAsState()
+    // 跨进程遥测快照（UI 主进程通过共享文件读取 :core 发布的 CommandClient 数据）。
+    // 刷新时机：进入页面时 + tab 切换时 + 每 3s 轮询（覆盖冷启动时文件尚未落盘的窗口）。
+    var telemetry by remember { mutableStateOf<VpnRuntimeState.TelemetrySnapshot?>(null) }
+    LaunchedEffect(Unit) {
+        VpnRuntimeState.refreshTelemetry(context)
+        telemetry = VpnRuntimeState.telemetry.value
+        while (true) {
+            kotlinx.coroutines.delay(3_000L)
+            VpnRuntimeState.refreshTelemetry(context)
+            telemetry = VpnRuntimeState.telemetry.value
+        }
+    }
+    LaunchedEffect(tab) { VpnRuntimeState.refreshTelemetry(context); telemetry = VpnRuntimeState.telemetry.value }
     var query by remember { mutableStateOf("") }
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -98,8 +112,8 @@ fun MonitorScreen() {
 
             TabRow(selectedTabIndex = tab) {
                 Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("状态") })
-                Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("连接（${connections.size}）") })
-                Tab(selected = tab == 2, onClick = { tab = 2 }, text = { Text("日志（${logs.size}）") })
+                Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("连接（${connections.size.coerceAtLeast(telemetry?.connections ?: 0)}）") })
+                Tab(selected = tab == 2, onClick = { tab = 2 }, text = { Text("日志（${logs.size.coerceAtLeast(telemetry?.logTail?.size ?: 0)}）") })
             }
 
         if (tab == 0) {
@@ -107,14 +121,21 @@ fun MonitorScreen() {
                 item { Spacer(Modifier.height(16.dp)) }
 
                 // 连接状态大卡（有色彩层次，避免「黑的要死」）
+                // 跨进程时：telemetry != null → 显示共享快照（含 uptime/publicIp/connections）；否则 fallback 到 CommandClient
                 item {
-                    StatusHeroCard(connected = connected, status = status)
+                    StatusHeroCard(
+                        connected = connected || telemetry != null,
+                        status = telemetry?.toStatus() ?: status,
+                        uptimeSec = telemetry?.uptimeSec,
+                        publicIp = telemetry?.publicIp,
+                        loadingHint = telemetry == null && !connected,
+                    )
                     Spacer(Modifier.height(16.dp))
                 }
 
-                // 实时流量卡
+                // 实时流量卡（跨进程时优先用共享快照的流量）
                 item {
-                    TrafficCard(status = status)
+                    TrafficCard(status = telemetry?.toStatus() ?: status)
                     Spacer(Modifier.height(16.dp))
                 }
 
@@ -131,20 +152,22 @@ fun MonitorScreen() {
                 }
 
                 item {
+                    val effStatus = telemetry?.toStatus() ?: status
+                    val connCount = (telemetry?.connections ?: 0).coerceAtLeast(status.connectionsIn + status.connectionsOut)
                     SbGroup(title = "内核详情") {
                         item {
-                            SbItem(title = "连接数", subtitle = "入站 ${status.connectionsIn} · 出站 ${status.connectionsOut}")
+                            SbItem(title = "连接数", subtitle = "活跃 ${connCount} · 出站 ${effStatus.connectionsOut}")
                         }
                         item {
-                            SbItem(title = "内存占用", subtitle = formatBytes(status.memory))
+                            SbItem(title = "内存占用", subtitle = formatBytes(effStatus.memory))
                         }
                         item {
-                            SbItem(title = "累计流量", subtitle = "↑ ${formatBytes(status.uplinkTotal)} · ↓ ${formatBytes(status.downlinkTotal)}")
+                            SbItem(title = "累计流量", subtitle = "↑ ${formatBytes(effStatus.uplinkTotal)} · ↓ ${formatBytes(effStatus.downlinkTotal)}")
                         }
                     }
                 }
                 item {
-                    if (!connected) {
+                    if (!connected && telemetry == null) {
                         Spacer(Modifier.height(16.dp))
                         Text(
                             "服务未运行时此处无数据。启动 VPN 后自动连接内核。",
@@ -187,8 +210,16 @@ fun MonitorScreen() {
                     }
                 }
                 if (!connected) {
+                    val tele = telemetry
                     Text(
-                        "服务未运行，无连接数据。",
+                    buildString {
+                        if (tele != null && tele.connections > 0) {
+                            append("跨进程遥测中：当前活跃连接 ${tele.connections} 条。")
+                            append("\n逐条连接列表需进程内内核通道，监控页以摘要展示。")
+                        } else {
+                            append("服务未运行，无连接数据。")
+                        }
+                    },
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -215,14 +246,20 @@ fun MonitorScreen() {
             }
         } else {
             Column(Modifier.fillMaxSize()) {
+                val teleLogs = telemetry?.logTail.orEmpty()
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
+                    val effLogCount = logs.size.coerceAtLeast(teleLogs.size)
                     Text(
-                        if (connected) "内核日志（最多保留 500 条）" else "服务未运行，无内核日志",
+                        when {
+                            connected -> "内核日志（最多保留 500 条）"
+                            effLogCount > 0 -> "跨进程遥测日志（最近 ${effLogCount} 条）"
+                            else -> "服务未运行，无内核日志"
+                        },
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.weight(1f),
@@ -231,16 +268,20 @@ fun MonitorScreen() {
                         Icon(Icons.Filled.ClearAll, contentDescription = "清空")
                     }
                 }
+                // 跨进程回退：主进程 in-process CommandClient 无数据时，用共享快照的 logTail
+                val effLogs: List<SbCommandClient.LogLine> =
+                    if (logs.isNotEmpty()) logs
+                    else teleLogs.mapIndexed { i, t -> SbCommandClient.LogLine(i.toLong(), t) }
                 val listState = rememberLazyListState()
-                LaunchedEffect(logs.size) {
-                    if (logs.isNotEmpty()) listState.animateScrollToItem(logs.size - 1)
+                LaunchedEffect(effLogs.size) {
+                    if (effLogs.isNotEmpty()) listState.animateScrollToItem(effLogs.size - 1)
                 }
                 LazyColumn(
                     state = listState,
                     verticalArrangement = Arrangement.spacedBy(2.dp),
                     modifier = Modifier.fillMaxSize(),
                 ) {
-                    items(logs, key = { it.seq }) { line ->
+                    items(effLogs, key = { it.seq }) { line ->
                         Text(
                             line.text,
                             style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
@@ -351,6 +392,34 @@ internal fun formatBytes(bytes: Long): String {
 
 internal fun formatSpeed(bytesPerSec: Long): String =
     if (bytesPerSec <= 0) "0 B/s" else formatBytes(bytesPerSec) + "/s"
+
+internal fun formatUptime(sec: Long): String = buildString {
+    val s = sec.coerceAtLeast(0L)
+    if (s >= 3600) {
+        append(s / 3600).append("h")
+        append((s % 3600) / 60).append("m")
+    } else if (s >= 60) {
+        append(s / 60).append("m")
+        append(s % 60).append("s")
+    } else {
+        append(s).append("s")
+    }
+}
+
+/** 把共享遥测快照转回 DashboardStatus（供 StatusHeroCard / TrafficCard / 首页流量卡复用，无需重写组件）。 */
+internal fun VpnRuntimeState.TelemetrySnapshot?.toStatus(): SbCommandClient.DashboardStatus = when {
+    this == null -> SbCommandClient.DashboardStatus()
+    else -> SbCommandClient.DashboardStatus(
+        memory = this.memory,
+        connectionsIn = 0,
+        connectionsOut = 0,
+        uplink = this.uplink,
+        downlink = this.downlink,
+        uplinkTotal = this.uplinkTotal,
+        downlinkTotal = this.downlinkTotal,
+        connected = true,
+    )
+}
 
 // ---------------------------------------------------------------------------
 // sb-AI 统计页：按规则 / 按出口聚合流量
@@ -487,7 +556,13 @@ private fun AggregationCard(
 // ---------------------------------------------------------------------------
 
 @Composable
-private fun StatusHeroCard(connected: Boolean, status: SbCommandClient.DashboardStatus) {
+private fun StatusHeroCard(
+    connected: Boolean,
+    status: SbCommandClient.DashboardStatus,
+    uptimeSec: Long? = null,
+    publicIp: String? = "",
+    loadingHint: Boolean = false,
+) {
     val colors = MaterialTheme.colorScheme
     // 与首页等其他页面保持一致：使用 surfaceContainer，避免 primaryContainer 造成视觉反差
     val bg = colors.surfaceContainer
@@ -512,7 +587,12 @@ private fun StatusHeroCard(connected: Boolean, status: SbCommandClient.Dashboard
                 )
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    if (connected) "sing-box 运行中 · 实时接收状态" else "启动 VPN 后自动连接",
+                    buildString {
+                        append(if (connected) "sing-box 运行中 · " else "启动 VPN 后自动连接")
+                        if (uptimeSec != null && uptimeSec > 0) append("运行 ${formatUptime(uptimeSec)}")
+                        if (publicIp?.isNotBlank() == true) append(" · IP: $publicIp")
+                        if (loadingHint) append("（共享数据加载中…）")
+                    },
                     style = MaterialTheme.typography.bodyMedium,
                     color = fg.copy(alpha = 0.8f),
                 )

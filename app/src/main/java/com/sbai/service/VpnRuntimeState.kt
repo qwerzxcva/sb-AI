@@ -45,6 +45,44 @@ object VpnRuntimeState {
     private val _message = MutableStateFlow<String?>(null)
     val message: StateFlow<String?> = _message
 
+    /** 跨进程遥测快照（:core 周期发布，UI 进程读取；独立文件避免与 phase 文件读写竞争）。 */
+    private val _telemetry = MutableStateFlow<TelemetrySnapshot?>(null)
+    val telemetry: StateFlow<TelemetrySnapshot?> = _telemetry
+
+    private const val TELEMETRY_FILE = "sb-ai-vpn-telemetry.json"
+
+    @Serializable
+    data class ConnBrief(
+        val id: String = "",
+        val domain: String = "",
+        val destination: String = "",
+        val outbound: String = "",
+        val rule: String = "",
+        val processPath: String = "",
+        val uplinkTotal: Long = 0,
+        val downlinkTotal: Long = 0,
+        val createdAt: Long = 0L,
+    )
+
+    /**
+     * 跨进程遥测快照：由 :core 进程周期发布，UI 进程经共享文件读取。
+     * 修复「监控页/首页在主进程拿不到 CommandClient 数据」（CommandServer 在 :core）。
+     */
+    @Serializable
+    data class TelemetrySnapshot(
+        val uplink: Long = 0,        // B/s
+        val downlink: Long = 0,      // B/s
+        val uplinkTotal: Long = 0,   // B
+        val downlinkTotal: Long = 0, // B
+        val connections: Int = 0,    // 活跃连接数
+        val memory: Long = 0,        // 字节
+        val uptimeSec: Long = 0,    // 秒（连接时长）
+        val publicIp: String = "",  // 出口 IP（"" = 未知）
+        val connList: List<ConnBrief> = emptyList(),
+        val logTail: List<String> = emptyList(),
+        val updatedAt: Long = 0L,
+    )
+
     /**
      * 由 :core 进程调用：写入真实阶段。
      *
@@ -83,8 +121,7 @@ object VpnRuntimeState {
         }
     }
 
-    /**
-     * 由 UI 进程调用：读取 :core 发布的最新阶段（刷新内存镜像）。
+    /** 由 UI 进程调用：读取 :core 发布的最新阶段（刷新内存镜像）。
      * 优先读 JSON 文件（跨进程永远最新）；文件不存在/损坏时回退旧 SharedPreferences。
      */
     fun refreshFromDisk(context: Context) {
@@ -92,6 +129,40 @@ object VpnRuntimeState {
             dir = context.filesDir,
             prefs = runCatching { context.getSharedPreferences(PREFS, Context.MODE_PRIVATE) }.getOrNull(),
         )
+    }
+
+    /** 由 :core 进程调用：发布遥测快照到独立共享文件（UI 进程可读）。核心 dir 可注入便于单测。 */
+    fun publishTelemetry(context: Context, snapshot: TelemetrySnapshot) {
+        publishTelemetry(context.filesDir, snapshot)
+    }
+
+    /** 核心：写遥测文件（tmp+rename 原子写，跨进程永远读到完整 JSON）。 */
+    fun publishTelemetry(dir: File, snapshot: TelemetrySnapshot) {
+        _telemetry.value = snapshot
+        runCatching {
+            val target = File(dir, TELEMETRY_FILE)
+            val tmp = File(dir, "$TELEMETRY_FILE.tmp")
+            tmp.writeText(json.encodeToString(TelemetrySnapshot.serializer(), snapshot))
+            if (!tmp.renameTo(target)) {
+                target.writeText(tmp.readText())
+                tmp.delete()
+            }
+        }
+    }
+
+    /** 由 UI 进程调用：从共享文件刷新遥测快照到内存镜像。 */
+    fun refreshTelemetry(context: Context) {
+        refreshTelemetry(context.filesDir)
+    }
+
+    /** 核心：读遥测文件（JVM 单测直接驱动）。文件缺失/损坏 → 保留当前镜像。 */
+    fun refreshTelemetry(dir: File) {
+        val file = File(dir, TELEMETRY_FILE)
+        if (!file.exists()) return
+        val parsed = runCatching {
+            json.decodeFromString(TelemetrySnapshot.serializer(), file.readText())
+        }.getOrNull()
+        if (parsed != null) _telemetry.value = parsed
     }
 
     /** 核心刷新逻辑（dir/prefs 可注入，JVM 单测直接驱动）。 */
