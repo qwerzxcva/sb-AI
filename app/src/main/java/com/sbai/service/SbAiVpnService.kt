@@ -15,7 +15,9 @@ import com.sbai.data.RuleStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -43,6 +45,7 @@ class SbAiVpnService : VpnService() {
     private var startRequested = false
     private var stopRequested = false
     private var destroyed = false
+    private var heartbeatJob: Job? = null
     private var runtime: LibboxServiceRuntime? = null
     private var platformInterface: SbPlatformInterface? = null
 
@@ -96,6 +99,22 @@ class SbAiVpnService : VpnService() {
                 VpnRuntimeState.publish(this, VpnRuntimeState.Phase.Error, t.message ?: t.javaClass.simpleName, System.currentTimeMillis())
                 stopSelf()
                 return
+            }
+            // Only the :core service renews the lease. Never derive VPN state from telemetry.
+            // Delaying first avoids a redundant write immediately after Starting publication.
+            heartbeatJob = scope.launch {
+                while (true) {
+                    delay(HEARTBEAT_INTERVAL_MS)
+                    synchronized(requestLock) {
+                        if (!startRequested || stopRequested || destroyed) return@launch
+                        val phase = when (_status.value) {
+                            ServiceStatus.Starting -> VpnRuntimeState.Phase.Starting
+                            ServiceStatus.Running -> VpnRuntimeState.Phase.Running
+                            else -> return@launch
+                        }
+                        VpnRuntimeState.publish(this@SbAiVpnService, phase)
+                    }
+                }
             }
         }
 
@@ -229,6 +248,8 @@ class SbAiVpnService : VpnService() {
                         if (!stopRequested && !destroyed) {
                             startRequested = false
                             stopRequested = true
+                            heartbeatJob?.cancel()
+                            heartbeatJob = null
                             _status.value = ServiceStatus.Error(t.message ?: "unknown")
                             persistError(t.message ?: t.javaClass.simpleName)
                             VpnRuntimeState.publish(this@SbAiVpnService, VpnRuntimeState.Phase.Error, t.message ?: t.javaClass.simpleName, System.currentTimeMillis())
@@ -277,6 +298,8 @@ class SbAiVpnService : VpnService() {
             if (stopRequested && !destroying) return
             stopRequested = true
             startRequested = false
+            heartbeatJob?.cancel()
+            heartbeatJob = null
             if (_status.value !is ServiceStatus.Error) {
                 _status.value = ServiceStatus.Stopping
                 // 写时间戳；UI 侧用「Starting 超过 90s 视为卡死」做兜底
@@ -393,6 +416,7 @@ class SbAiVpnService : VpnService() {
         const val ACTION_STOP = "com.sbai.action.STOP"
         private const val CHANNEL_ID = "sb_ai_vpn"
         private const val NOTIFICATION_ID = 1
+        private const val HEARTBEAT_INTERVAL_MS = 5_000L
         private const val TAG = "SbAiVpnService"
 
         private val _status = MutableStateFlow<ServiceStatus>(ServiceStatus.Stopped)

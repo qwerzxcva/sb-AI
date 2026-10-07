@@ -90,27 +90,65 @@ class VpnRuntimeStateFileChannelTest {
     }
 
     @Test
-    fun `missing file falls back to prefs`() {
+    fun `missing file cannot trust untimed active prefs`() {
         val prefs = FakeSharedPreferences()
         prefs.edit().putString("phase", "Running").putString("last_error", "ok").commit()
-
-        // 一个没有状态文件的目录（模拟 :core 尚未发布过文件）
         val emptyDir = File(System.getProperty("java.io.tmpdir"), "sbai-vpn-empty-${System.nanoTime()}")
         emptyDir.mkdirs()
 
-        VpnRuntimeState.refreshState(emptyDir, prefs)
-        assertEquals(VpnRuntimeState.Phase.Running, VpnRuntimeState.phase.value)
-        assertEquals("ok", VpnRuntimeState.message.value)
+        VpnRuntimeState.refreshState(emptyDir, prefs, 30_000L)
+        assertEquals(VpnRuntimeState.Phase.Error, VpnRuntimeState.phase.value)
+        assertEquals(VpnRuntimeState.STALE_MESSAGE, VpnRuntimeState.message.value)
+        assertTrue(!VpnRuntimeState.isActive())
     }
 
     @Test
-    fun `corrupt file falls back to prefs`() {
+    fun `corrupt file cannot trust untimed active prefs`() {
         val prefs = FakeSharedPreferences()
         prefs.edit().putString("phase", "Starting").putString("last_error", null).commit()
         File(dir, "sb-ai-vpn-state.json").writeText("{ not json at all")
 
-        VpnRuntimeState.refreshState(dir, prefs)
+        VpnRuntimeState.refreshState(dir, prefs, 30_000L)
+        assertEquals(VpnRuntimeState.Phase.Error, VpnRuntimeState.phase.value)
+    }
+
+    @Test
+    fun `fresh activity remains active until lease expires`() {
+        val now = 100_000L
+        for (phase in listOf(VpnRuntimeState.Phase.Starting, VpnRuntimeState.Phase.Running, VpnRuntimeState.Phase.Stopping)) {
+            assertEquals(phase to null, VpnRuntimeState.observedState(phase, null, now, now + VpnRuntimeState.LEASE_TIMEOUT_MS))
+            assertEquals(VpnRuntimeState.Phase.Error to VpnRuntimeState.STALE_MESSAGE,
+                VpnRuntimeState.observedState(phase, null, now, now + VpnRuntimeState.LEASE_TIMEOUT_MS + 1))
+        }
+    }
+
+    @Test
+    fun `stale running file becomes retryable and a restart replaces it`() {
+        VpnRuntimeState.publishState(dir, null, VpnRuntimeState.Phase.Running, nowMs = 100_000L)
+        VpnRuntimeState.refreshState(dir, null, 100_000L + VpnRuntimeState.LEASE_TIMEOUT_MS + 1)
+        assertEquals(VpnRuntimeState.Phase.Error, VpnRuntimeState.phase.value)
+        assertEquals(VpnRuntimeState.STALE_MESSAGE, VpnRuntimeState.message.value)
+        assertTrue(!VpnRuntimeState.isActive())
+
+        VpnRuntimeState.publishState(dir, null, VpnRuntimeState.Phase.Starting, nowMs = 200_000L)
+        VpnRuntimeState.refreshState(dir, null, 200_001L)
         assertEquals(VpnRuntimeState.Phase.Starting, VpnRuntimeState.phase.value)
+        assertNull(VpnRuntimeState.message.value)
+        VpnRuntimeState.publishState(dir, null, VpnRuntimeState.Phase.Running, nowMs = 200_002L)
+        VpnRuntimeState.refreshState(dir, null, 200_003L)
+        assertEquals(VpnRuntimeState.Phase.Running, VpnRuntimeState.phase.value)
+    }
+
+    @Test
+    fun `stop and startup error remain terminal regardless of age`() {
+        val now = 100_000L
+        assertEquals(VpnRuntimeState.Phase.Error to "启动失败",
+            VpnRuntimeState.observedState(VpnRuntimeState.Phase.Error, "启动失败", now, now + 999_999L))
+        assertEquals(VpnRuntimeState.Phase.Stopped to null,
+            VpnRuntimeState.observedState(VpnRuntimeState.Phase.Stopped, null, now, now + 999_999L))
+        VpnRuntimeState.publishState(dir, null, VpnRuntimeState.Phase.Stopped, nowMs = now)
+        VpnRuntimeState.refreshState(dir, null, now + 999_999L)
+        assertEquals(VpnRuntimeState.Phase.Stopped, VpnRuntimeState.phase.value)
     }
 
     @Test

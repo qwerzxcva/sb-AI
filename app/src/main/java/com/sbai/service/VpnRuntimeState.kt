@@ -8,21 +8,14 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
-/**
- * VPN 服务真实运行阶段的跨进程真源（UI 进程可读）。
- *
- * 背景：
- *  - SbAiVpnService 运行在 :core 进程（AndroidManifest 中 android:process=":core"），
- *    其 status 是进程内 StateFlow，不会跨进程共享，UI 进程读到的可能是初始值。
- *  - SbCommandClient.connectedToService 只表示遥测通道是否连上命令服务端，
- *    不能用来判断 VPN 是否在跑：连接失败不等于服务停止，服务已启动也可能暂未连上。
- *
- * 因此 :core 进程把阶段写入 SharedPreferences（MODE_PRIVATE 对同应用跨进程可读，
- * 这里仅存状态枚举和错误消息，不存订阅 URL 或凭据），UI 进程读取并镜像到 StateFlow。
- */
+/** :core 发布的 VPN 阶段。遥测连接状态不能作为 VPN 运行真源。 */
 object VpnRuntimeState {
 
     enum class Phase { Stopped, Starting, Running, Stopping, Error }
+
+    // 心跳间隔由服务控制；超过四个 5 秒周期才判定租约失效。
+    const val LEASE_TIMEOUT_MS = 20_000L
+    const val STALE_MESSAGE = "VPN 服务状态未知（运行状态已过期），请重试"
 
     private const val PREFS = "sbai_vpn"
     private const val KEY_PHASE = "phase"
@@ -35,13 +28,11 @@ object VpnRuntimeState {
     private data class FileState(
         val phase: Phase = Phase.Stopped,
         val message: String? = null,
-        /** 发布方（:core）的写入时刻 */
         val publishedAt: Long = 0L,
     )
 
     private val _phase = MutableStateFlow(Phase.Stopped)
     val phase: StateFlow<Phase> = _phase
-
     private val _message = MutableStateFlow<String?>(null)
     val message: StateFlow<String?> = _message
 
@@ -75,18 +66,11 @@ object VpnRuntimeState {
         }
         prefs?.let { p ->
             runCatching {
-                p.edit()
-                    .putString(KEY_PHASE, phase.name)
-                    .putString(KEY_MESSAGE, message)
-                    .commit()
+                p.edit().putString(KEY_PHASE, phase.name).putString(KEY_MESSAGE, message).commit()
             }
         }
     }
 
-    /**
-     * 由 UI 进程调用：读取 :core 发布的最新阶段（刷新内存镜像）。
-     * 优先读 JSON 文件（跨进程永远最新）；文件不存在/损坏时回退旧 SharedPreferences。
-     */
     fun refreshFromDisk(context: Context) {
         refreshState(
             dir = context.filesDir,
@@ -94,16 +78,21 @@ object VpnRuntimeState {
         )
     }
 
-    /** 核心刷新逻辑（dir/prefs 可注入，JVM 单测直接驱动）。 */
-    fun refreshState(dir: File, prefs: SharedPreferences?) {
+    /** UI 每次刷新都按当前时钟重新判定租约，不向磁盘回写推断结果。 */
+    fun refreshState(
+        dir: File, prefs: SharedPreferences?, nowMs: Long = System.currentTimeMillis(),
+    ) {
         val file = File(dir, STATE_FILE)
         if (file.exists()) {
             val parsed = runCatching {
                 json.decodeFromString(FileState.serializer(), file.readText())
             }.getOrNull()
             if (parsed != null) {
-                _phase.value = parsed.phase
-                _message.value = parsed.message
+                val (phase, message) = observedState(
+                    parsed.phase, parsed.message, parsed.publishedAt, nowMs,
+                )
+                _phase.value = phase
+                _message.value = message
                 return
             }
         }
@@ -111,8 +100,12 @@ object VpnRuntimeState {
         val stored = runCatching {
             Phase.valueOf(prefs.getString(KEY_PHASE, Phase.Stopped.name) ?: Phase.Stopped.name)
         }.getOrDefault(Phase.Stopped)
-        _phase.value = stored
-        _message.value = prefs.getString(KEY_MESSAGE, null)
+        // 兼容通道没有时间戳：旧的活动阶段无法证明存活，绝不能无限期卡住按钮。
+        val (phase, message) = observedState(
+            stored, prefs.getString(KEY_MESSAGE, null), 0L, nowMs,
+        )
+        _phase.value = phase
+        _message.value = message
     }
 
     fun isActive(): Boolean =

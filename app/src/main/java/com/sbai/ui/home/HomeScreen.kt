@@ -1102,16 +1102,13 @@ private fun statusText(status: SbAiVpnService.ServiceStatus): String = when (sta
     else -> "已停止"
 }
 
-/**
- * 跨进程显示状态：服务跑在 :core 进程，UI 进程的 SbAiVpnService.status 不更新。
- * 以 CommandClient 是否连上 CommandServer（unix socket）为运行真源；
- * 仅在 UI 进程捕获到 Starting/Stopping/Error 瞬时态时优先显示它们。
- */
-private fun displayVpnPhase(phase: VpnRuntimeState.Phase): String = when (phase) {
+/** :core 发布的跨进程阶段是状态来源；遥测连接不代表 VPN 正在运行。 */
+private fun displayVpnPhase(phase: VpnRuntimeState.Phase, message: String?): String = when (phase) {
     VpnRuntimeState.Phase.Starting -> "启动中…"
     VpnRuntimeState.Phase.Running -> "运行中"
     VpnRuntimeState.Phase.Stopping -> "停止中…"
-    VpnRuntimeState.Phase.Error -> "启动失败"
+    VpnRuntimeState.Phase.Error ->
+        if (message == VpnRuntimeState.STALE_MESSAGE) "状态未知，可重试" else "启动失败"
     VpnRuntimeState.Phase.Stopped -> "已停止"
 }
 
