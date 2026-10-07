@@ -97,23 +97,24 @@ class MainActivity : ComponentActivity() {
 private fun MainScaffold() {
     val context = androidx.compose.ui.platform.LocalContext.current
     val navController = rememberNavController()
-    val commandConnected by com.sbai.service.SbCommandClient.connectedToService.collectAsState()
 
     // 连接是应用级资源，不应绑在 HomeScreen 的进入/退出生命周期上。
-    // 进入首页时只需显示已有 StateFlow，避免每次返回首页重复 setup + 重试连接。
-    LaunchedEffect(commandConnected) {
-        if (commandConnected) return@LaunchedEffect
-        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            runCatching { com.sbai.service.LibboxRuntime.setup(context.applicationContext) }
-            com.sbai.service.SbCommandClient.connectWithRetry(attempts = 3, delayMs = 500L)
-        }
-        // 服务可能在页面加载后才完成启动；重试仍在 IO，且随 MainScaffold 生命周期取消。
-        repeat(3) {
-            if (com.sbai.service.SbCommandClient.connectedToService.value) return@LaunchedEffect
-            kotlinx.coroutines.delay(10_000L)
-            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                com.sbai.service.SbCommandClient.connectWithRetry(attempts = 2, delayMs = 500L)
+    // 旧版按 commandConnected 为 key：首次连接失败（服务未启动/ native 未就绪）后
+    // key 恒为 false，本作用域内不会再触发 → :core 稍后启动成功时 UI 永远连不上，
+    // 表现就是「启动后无任何反应」。现改为常驻轮询：断线期间每 15s 重试一次，
+    // 服务（手动启动/自启/重启恢复）任何时刻起来都能被 UI 接管。
+    LaunchedEffect(Unit) {
+        while (true) {
+            if (!com.sbai.service.SbCommandClient.connectedToService.value) {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    runCatching { com.sbai.service.LibboxRuntime.setup(context.applicationContext) }
+                        .onFailure {
+                            android.util.Log.e("SbAI_Scaffold", "libbox native setup failed; command channel unavailable", it)
+                        }
+                    com.sbai.service.SbCommandClient.connectWithRetry(attempts = 3, delayMs = 500L)
+                }
             }
+            kotlinx.coroutines.delay(15_000L)
         }
     }
     val items = listOf(Screen.Home, Screen.Routes, Screen.Dns, Screen.Monitor, Screen.Settings)

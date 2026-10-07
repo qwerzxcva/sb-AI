@@ -17,7 +17,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -54,18 +57,35 @@ fun VpnToggleButton(
     val vpnPhase by com.sbai.service.VpnRuntimeState.phase.collectAsState()
     val coreConnected by SbCommandClient.connectedToService.collectAsState()
 
-    // UI 进程启动时先同步一次磁盘上的真实阶段
+    // UI 进程启动时先同步一次磁盘上的真实阶段；每 2s 轮询一次。
+    // 额外读一次 publishedAt 做「卡死检测」：服务崩溃/被杀后 phase 永远卡在
+    // Starting/Stopping 会导致本按钮 busy=true 吞掉所有点击（「点了没反应」P0）。
+    var lastPublishedAt by remember { mutableStateOf(0L) }
+
     LaunchedEffect(Unit) {
-        withContext(Dispatchers.IO) { VpnRuntimeState.refreshFromDisk(context) }
+        withContext(Dispatchers.IO) {
+            VpnRuntimeState.refreshFromDisk(context)
+            lastPublishedAt = VpnRuntimeState.lastPublishedAt(context)
+        }
         while (true) {
             delay(2000L)
-            withContext(Dispatchers.IO) { VpnRuntimeState.refreshFromDisk(context) }
+            withContext(Dispatchers.IO) {
+                VpnRuntimeState.refreshFromDisk(context)
+                lastPublishedAt = VpnRuntimeState.lastPublishedAt(context)
+            }
         }
     }
-    val running = vpnPhase == VpnRuntimeState.Phase.Running ||
-        vpnPhase == VpnRuntimeState.Phase.Starting
-    val busy = vpnPhase == VpnRuntimeState.Phase.Starting ||
-        vpnPhase == VpnRuntimeState.Phase.Stopping
+    // 生效的 phase：Starting/Stopping 超时（>90s）视为已失效 → 回退 Stopped
+    val effectivePhase = when (vpnPhase) {
+        VpnRuntimeState.Phase.Starting, VpnRuntimeState.Phase.Stopping ->
+            if (lastPublishedAt > 0 &&
+                System.currentTimeMillis() - lastPublishedAt > VpnRuntimeState.STUCK_TIMEOUT_MS
+            ) VpnRuntimeState.Phase.Stopped else vpnPhase
+        else -> vpnPhase
+    }
+    val running = effectivePhase == VpnRuntimeState.Phase.Running
+    val busy = effectivePhase == VpnRuntimeState.Phase.Starting ||
+        effectivePhase == VpnRuntimeState.Phase.Stopping
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult(),

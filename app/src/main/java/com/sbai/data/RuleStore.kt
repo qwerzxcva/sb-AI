@@ -2,21 +2,42 @@ package com.sbai.data
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.sbai.service.NodeDedup
+import java.io.File
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import com.sbai.service.NodeDedup
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
 /**
- * 规则仓库：SharedPreferences + kotlinx.serialization 持久化。
- * 全部读取走内存 StateFlow，写入后立即落盘。
+ * 规则仓库：filesDir/sb-ai-state.json（原子写）+ 内存 StateFlow。
+ *
+ * 跨进程数据通道（关键设计）：
+ *  - UI 进程与 :core 进程（SbAiVpnService）各自持有一个 RuleStore 单例。
+ *  - 旧实现用 SharedPreferences 落盘：两个进程各自缓存内存副本，:core 的 commit
+ *    （如自动禁用坏节点）对 UI 侧不可见，UI 的下次写入会用旧内存整份覆盖 :core 的
+ *    变更 → 自动禁用被静默撤销、VPN 反复起不来（P0 相关根因之一）。
+ *  - 现改为 JSON 文件 + tmp/rename 原子写：任何进程读文件都拿到最新落盘值；
+ *    每次写前先 rebaseOnDisk（mtime 快路径，无外部新写则不重解析），保证
+ *    「后写者基于最新磁盘态」，两个进程互不丢更新。
+ *  - 旧 SharedPreferences（sb_ai_rules/app_state）仅作首次升级迁移源，不再写。
  */
-class RuleStore private constructor(context: Context) {
+/**
+ * 构造函数参数说明（测试可注入）：
+ *  - stateDir：状态文件目录（生产 = filesDir；JVM 单测 = 临时目录）
+ *  - writerTag：写方标签（生产 = 按进程名检测 "ui"/"core"；单测显式指定）
+ *  - legacyPrefs：旧 SharedPreferences（仅首次升级迁移读一次；单测给空实现）
+ */
+class RuleStore private constructor(
+    stateDir: File,
+    writerTag: String,
+    legacyPrefs: SharedPreferences,
+) {
 
-    private val prefs: SharedPreferences =
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    /** 仅用于旧数据迁移（一次性读取） */
+    private val legacyPrefs: SharedPreferences = legacyPrefs
 
     private val json = Json {
         ignoreUnknownKeys = true
@@ -24,7 +45,22 @@ class RuleStore private constructor(context: Context) {
         prettyPrint = false
     }
 
-    private val _state = MutableStateFlow(load())
+    private val stateFile = File(stateDir, STATE_FILE_NAME)
+
+    /** 写方标识：:core 进程写 "core"，UI/WorkManager 等写 "ui" */
+    private val writerTag: String = writerTag
+    /** 本进程已知的最新磁盘 updatedAt（快路径比较用，volatile：后台写线程更新） */
+    @Volatile
+    private var lastSeenUpdatedAt: Long = 0L
+
+    @Serializable
+    private data class Envelope(
+        val updatedAt: Long,
+        val writer: String,
+        val data: AppState,
+    )
+
+    private val _state = MutableStateFlow(initialLoad())
     val state: StateFlow<AppState> = _state.asStateFlow()
 
     // 异步落盘用的后台作用域（单线程，保证写入顺序）
@@ -33,80 +69,138 @@ class RuleStore private constructor(context: Context) {
     )
     private var persistJob: kotlinx.coroutines.Job? = null
 
-    private fun load(): AppState {
-        val raw = prefs.getString(KEY_STATE, null) ?: return AppState()
-        return runCatching { json.decodeFromString(AppState.serializer(), raw) }
+    private fun initialLoad(): AppState {
+        val env = readEnvelope()
+        if (env != null) {
+            lastSeenUpdatedAt = env.updatedAt
+            return env.data
+        }
+        // 首次升级/老用户：状态还在旧 SharedPreferences，迁移到新文件后以文件为准
+        val legacyRaw = legacyPrefs.getString(KEY_STATE, null)
+        val legacy = legacyRaw?.let {
+            runCatching { json.decodeFromString(AppState.serializer(), it) }.getOrNull()
+        }
+        if (legacy != null) {
+            lastSeenUpdatedAt = writeEnvelope(legacy)
+            return legacy
+        }
+        return AppState()
+    }
+
+    /** 读磁盘信封；解析失败做隔离备份（不覆盖、不丢数据），返回 null */
+    private fun readEnvelope(): Envelope? {
+        val f = stateFile
+        if (!f.exists()) return null
+        return runCatching { json.decodeFromString(Envelope.serializer(), f.readText()) }
             .getOrElse {
-                // 解析失败时先备份原始内容再回退默认值，避免下次 persist 把用户数据静默清空
-                android.util.Log.e("RuleStore", "配置解析失败，已备份原始内容", it)
+                android.util.Log.e("RuleStore", "配置文件解析失败，已隔离备份原始内容", it)
                 runCatching {
-                    prefs.edit()
-                        .putString("app_state.corrupt.${System.currentTimeMillis()}", raw)
-                        .commit()
+                    f.copyTo(File(f.parentFile, "$STATE_FILE_NAME.corrupt.${System.currentTimeMillis()}"), overwrite = false)
                 }
-                AppState()
+                null
             }
     }
 
     /**
-     * 从磁盘重新载入配置。
+     * 原子写：先写「本进程专属」tmp（避免跨进程 tmp 竞态），再 rename 到目标。
+     * 返回写入的 updatedAt。
+     */
+    private fun writeEnvelope(data: AppState): Long {
+        val ts = System.currentTimeMillis()
+        val pid = android.os.Process.myPid()
+        val tmpName = "$STATE_FILE_NAME.${writerTag}.$pid.tmp"
+        val tmp = File(stateFile.parentFile, tmpName)
+        tmp.writeText(json.encodeToString(Envelope.serializer(), Envelope(ts, writerTag, data)))
+        if (!tmp.renameTo(stateFile)) {
+            stateFile.writeText(tmp.readText())
+            tmp.delete()
+        }
+        lastSeenUpdatedAt = ts
+        return ts
+    }
+
+    /**
+     * 写前 rebase：磁盘上若有比本进程已知状态更新的写入（:core 的自动禁用等），
+     * 先把磁盘态刷进内存，后续 transform 基于最新数据。
+     * mtime 快路径：没有外部新写时只 stat 一次文件，不重新解析 JSON。
+     */
+    private fun rebaseOnDisk(): AppState = synchronized(this) {
+        val f = stateFile
+        if (f.exists() && f.lastModified() > lastSeenUpdatedAt) {
+            val env = readEnvelope()
+            if (env != null) {
+                _state.value = env.data
+                lastSeenUpdatedAt = env.updatedAt
+                android.util.Log.i("RuleStore", "rebased on external write (writer=${env.writer}, ts=${env.updatedAt})")
+            }
+        }
+        _state.value
+    }
+
+    /**
+     * 从磁盘重新载入配置（全量，忽略 rebase 快路径）。
      *
-     * 必需场景：VPN 服务运行在独立的 `:core` 进程，该进程的 RuleStore 单例在首次构造时
-     * 只读一次磁盘快照；UI 进程改了配置后，:core 里的内存 StateFlow 仍是旧值。
-     * 因此服务每次启动前必须调用本方法，否则会拿旧配置起内核。
+     * 必需场景：VPN 服务运行在独立的 `:core` 进程，服务启动前调用本方法拿到
+     * UI 刚改的最新配置。:core 的 reload() 是全量冷读，不依赖 mtime/lastSeen。
      */
     fun reload(): AppState = synchronized(this) {
-        val fresh = load()
-        _state.value = fresh
-        fresh
+        val env = readEnvelope()
+        _state.value = env?.data ?: legacyLoad()
+        lastSeenUpdatedAt = env?.updatedAt ?: 0L
+        _state.value
+    }
+
+    /**
+     * UI 侧定期调用（配合 2s 轮询）：若 :core 期间写过盘（自动禁用坏节点等），
+     * 把最新磁盘态刷进内存 StateFlow，避免 UI 界面与 :core 实际配置脱节。
+     * 返回是否发生了外部刷新。
+     */
+    fun refreshFromDisk(): Boolean = synchronized(this) {
+        val f = stateFile
+        if (!f.exists() || f.lastModified() <= lastSeenUpdatedAt) return@synchronized false
+        val env = readEnvelope() ?: return@synchronized false
+        if (env.updatedAt <= lastSeenUpdatedAt) return@synchronized false
+        _state.value = env.data
+        lastSeenUpdatedAt = env.updatedAt
+        true
     }
 
     private fun persist(next: AppState) {
         _state.value = next
-        // 关键优化：写盘改为后台异步 apply()，避免主线程被大 JSON 序列化阻塞（卡顿元凶）。
-        // 跨进程可见性由两点保证：
-        //   1) VPN 服务(:core)启动前会调用 reload() 重新读盘；
-        //   2) 下面对「订阅/节点/设置」等关键变更，额外用 commit() 同步一次（见 commitNow）。
-        // 这样既消除了每次切开关都同步写整份配置的主线程开销，又不丢跨进程一致性。
+        // 写盘改后台异步原子写（tmp+rename），避免主线程被大 JSON 序列化阻塞（卡顿元凶）。
+        // 跨进程可见性由 rebaseOnDisk + 原子 rename 保证（旧 SharedPreferences 方案做不到）。
         persistJob?.cancel()
         persistJob = storeScope.launch {
-            runCatching {
-                prefs.edit()
-                    .putString(KEY_STATE, json.encodeToString(AppState.serializer(), next))
-                    .apply()
-            }.onFailure {
-                android.util.Log.w("RuleStore", "配置异步写入失败", it)
-            }
+            runCatching { writeEnvelope(next) }
+                .onFailure { android.util.Log.w("RuleStore", "配置异步写入失败", it) }
         }
     }
 
-    /** 对跨进程立即生效的关键变更，同步落盘一次（低频调用，开销可接受） */
+    /** 同步落盘（订阅/节点等跨进程立即生效的关键变更；:core 的自动禁用也走这里） */
     private fun commitNow(next: AppState) {
-        runCatching {
-            prefs.edit()
-                .putString(KEY_STATE, json.encodeToString(AppState.serializer(), next))
-                .commit()
-        }.onFailure {
-            android.util.Log.w("RuleStore", "配置同步写入失败", it)
-        }
+        runCatching { writeEnvelope(next) }
+            .onFailure { android.util.Log.w("RuleStore", "配置同步写入失败", it) }
     }
 
     fun update(transform: (AppState) -> AppState) = synchronized(this) {
-        val next = transform(_state.value)
+        val base = rebaseOnDisk()
+        val next = transform(base)
         persist(next)
         next
     }
 
-    /** 订阅/节点/负载均衡等变更后调用：在异步写之外再同步落盘一次，保证 :core 立即可见 */
+    /** 订阅/节点/负载均衡等变更后调用：rebase + 同步落盘，保证 :core 立即可见 */
     fun updateCommitted(transform: (AppState) -> AppState) = synchronized(this) {
-        val next = transform(_state.value)
+        val base = rebaseOnDisk()
+        val next = transform(base)
         _state.value = next
         persistJob?.cancel()
         commitNow(next)
         next
     }
 
-    // ---- Route rules ----
+    // ---- 领域方法（全部委托到 rebase 后的 update / updateCommitted） ----
+
     fun upsertRouteRule(rule: RouteRule) = update { s ->
         val list = s.routeRules.toMutableList()
         val idx = list.indexOfFirst { it.id == rule.id }
@@ -146,7 +240,6 @@ class RuleStore private constructor(context: Context) {
 
     // ---- Route rule sets ----
     fun upsertRuleSet(rs: RouteRuleSet) = update { s ->
-        // 未填 tag 时按顺序自动生成（ruleset-1, ...）
         val target = if (rs.tag.isBlank()) {
             rs.copy(tag = nextTag(s.routeRuleSets.map { it.tag }, "ruleset"))
         } else rs
@@ -160,7 +253,6 @@ class RuleStore private constructor(context: Context) {
         val removedTag = s.routeRuleSets.firstOrNull { it.id == id }?.tag
         s.copy(
             routeRuleSets = s.routeRuleSets.filterNot { it.id == id },
-            // 级联清理：剔除所有规则对该规则集 tag 的引用，避免悬空 rule_set 导致 checkConfig 失败
             routeRules = s.routeRules.map { r ->
                 if (removedTag != null && removedTag in r.ruleSetTags) {
                     r.copy(ruleSetTags = r.ruleSetTags - removedTag)
@@ -176,12 +268,10 @@ class RuleStore private constructor(context: Context) {
 
     // ---- DNS servers ----
     fun upsertDnsServer(server: DnsServer) = update { s ->
-        // 未填 tag 时按顺序自动生成（dns-1, dns-2, ...）
         val target = if (server.tag.isBlank()) {
             server.copy(tag = nextTag(s.dnsServers.map { it.tag }, "dns"))
         } else server
         val list = s.dnsServers.toMutableList()
-        // fakeIP 唯一性：sing-box 只允许一个 fakeip server；新建/启用 fakeip 时禁用其它 fakeip
         if (target.type == DnsServerType.FAKEIP && target.enabled) {
             for (i in list.indices) {
                 if (list[i].type == DnsServerType.FAKEIP && list[i].id != target.id && list[i].enabled) {
@@ -254,8 +344,6 @@ class RuleStore private constructor(context: Context) {
         s.copy(proxyNodes = s.proxyNodes.filterNot { it.id == id })
     }
 
-    /** 用订阅解析结果整体替换该订阅下的节点。
-     *  去重策略由 NodeDedup.mergeWithSubscription 决定：尊重每个订阅的 removeDuplicates 开关。 */
     fun replaceSubscriptionNodes(subscriptionId: String, nodes: List<ProxyNode>) = updateCommitted { s ->
         val others = s.proxyNodes.filterNot { it.subscriptionId == subscriptionId }
         val allowDedupeFor = { sid: String? ->
@@ -317,7 +405,6 @@ class RuleStore private constructor(context: Context) {
     fun activateProfile(id: String) {
         val profile = _state.value.profiles.find { it.id == id } ?: return
         persist(_state.value.copy(activeProfileId = id))
-        // 快照还原到内存 StateFlow（磁盘存的是当前编辑态，profile.snapshot 保持原始快照）
         val restored = runCatching { json.decodeFromString(AppState.serializer(), profile.snapshot) }
             .getOrElse { _state.value }
         _state.value = restored.copy(activeProfileId = id)
@@ -326,13 +413,48 @@ class RuleStore private constructor(context: Context) {
     companion object {
         private const val PREFS_NAME = "sb_ai_rules"
         private const val KEY_STATE = "app_state"
+        private const val STATE_FILE_NAME = "sb-ai-state.json"
 
         @Volatile
         private var instance: RuleStore? = null
 
+        /** 生产入口：按进程名检测 writerTag，构造单例。 */
         fun get(context: Context): RuleStore =
             instance ?: synchronized(this) {
-                instance ?: RuleStore(context.applicationContext).also { instance = it }
+                instance ?: RuleStore(
+                    stateDir = context.applicationContext.filesDir,
+                    writerTag = detectWriterTag(context.applicationContext),
+                    legacyPrefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE),
+                ).also { instance = it }
+            }
+
+        /** JVM 单测入口：指定目录 + writerTag 模拟两个进程共享同一目录。 */
+        internal fun forTesting(stateDir: File, writerTag: String, legacyPrefs: SharedPreferences): RuleStore =
+            RuleStore(stateDir, writerTag, legacyPrefs)
+
+        /** 按进程名检测当前规则库的写方标识："ui" 或 "core"。 */
+        private fun detectWriterTag(context: Context): String {
+            val name = runCatching {
+                val am = context.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+                @Suppress("DEPRECATION")
+                am.runningAppProcesses?.firstOrNull { it.pid == android.os.Process.myPid() }?.processName ?: ""
+            }.getOrDefault("")
+            return if (name.endsWith(":core")) "core" else "ui"
+        }
+    }
+
+    /** 首次启动时旧 sp 数据的一次性读取（仅用于迁移，不在后续路径中调用） */
+    private fun legacyLoad(): AppState {
+        val raw = legacyPrefs.getString(KEY_STATE, null) ?: return AppState()
+        return runCatching { json.decodeFromString<AppState>(raw) }
+            .getOrElse {
+                android.util.Log.e("RuleStore", "旧 sp 配置文件解析失败，已隔离备份原始内容", it)
+                runCatching {
+                    legacyPrefs.edit()
+                        .putString("app_state.corrupt.${System.currentTimeMillis()}", raw)
+                        .commit()
+                }
+                AppState()
             }
     }
 }
