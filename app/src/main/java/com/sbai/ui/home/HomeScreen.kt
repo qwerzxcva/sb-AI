@@ -777,12 +777,15 @@ fun HomeScreen() {
                                     icon = Icons.Filled.Bolt,
                                     onClick = {
                                         scope.launch {
-                                            // 触发内核 urltest（CommandServer 侧自动执行）
-                                            SbCommandClient.urlTest("lb")
-                                            // 等待 3s 让测速完成
-                                            delay(3000)
-                                            // 回填结果到节点对象
-                                            SbCommandClient.syncUrlTestResultsToNodes(store)
+                                            // 只使用当前核心实际公布的 lb 组；不以固定等待时间或旧缓存冒充新测速结果。
+                                            val group = proxyGroups.firstOrNull {
+                                                it.tag == "lb" && it.type in setOf("urltest", "selector")
+                                            } ?: return@launch
+                                            val results = NodeBatchTester.testNodes(
+                                                nodes = proxyNodes,
+                                                groupTag = group.tag,
+                                            )
+                                            NodeBatchTester.applyResults(store, results)
                                         }
                                     },
                                 )
