@@ -160,13 +160,9 @@ class RuleStore private constructor(
      */
     fun refreshFromDisk(): Boolean {
         val f = stateFile
-        val sig = fileSignature(f) ?: return false
-        if (sig == lastSeenSig) return false
-        // 读文件 + 解析整份 JSON 放在锁外：原实现在 2s 轮询里持锁解析，
-        // 期间主线程上的任何 update() 都会阻塞等锁（首页点击卡住/ANR 的放大器）。
+        if (!f.exists() || f.lastModified() <= lastSeenUpdatedAt) return false
         val env = readEnvelope() ?: return false
         return synchronized(this) {
-            lastSeenSig = sig
             if (env.updatedAt <= lastSeenUpdatedAt) return@synchronized false
             _state.value = env.data
             lastSeenUpdatedAt = env.updatedAt

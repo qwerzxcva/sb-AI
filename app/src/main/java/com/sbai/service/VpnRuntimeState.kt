@@ -88,11 +88,8 @@ object VpnRuntimeState {
                 json.decodeFromString(FileState.serializer(), file.readText())
             }.getOrNull()
             if (parsed != null) {
-                val (phase, message) = observedState(
-                    parsed.phase, parsed.message, parsed.publishedAt, nowMs,
-                )
-                _phase.value = phase
-                _message.value = message
+                _phase.value = parsed.phase
+                _message.value = parsed.message
                 return
             }
         }
@@ -100,12 +97,8 @@ object VpnRuntimeState {
         val stored = runCatching {
             Phase.valueOf(prefs.getString(KEY_PHASE, Phase.Stopped.name) ?: Phase.Stopped.name)
         }.getOrDefault(Phase.Stopped)
-        // 兼容通道没有时间戳：旧的活动阶段无法证明存活，绝不能无限期卡住按钮。
-        val (phase, message) = observedState(
-            stored, prefs.getString(KEY_MESSAGE, null), 0L, nowMs,
-        )
-        _phase.value = phase
-        _message.value = message
+        _phase.value = stored
+        _message.value = prefs.getString(KEY_MESSAGE, null)
     }
 
     fun isActive(): Boolean =

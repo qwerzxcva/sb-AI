@@ -433,7 +433,7 @@ fun HomeScreen() {
                         Text(
                             // 跨进程真源：:core 进程把运行阶段写盘，UI 进程读取；
                             // 不再用 CommandClient 连接状态冒充 VPN 状态。
-                            displayVpnPhase(effectivePhase) +
+                            displayVpnPhase(effectivePhase, vpnMessage) +
                                 (vpnMessage?.let { " · $it" } ?: ""),
                             style = MaterialTheme.typography.bodyMedium,
                             color = when {
