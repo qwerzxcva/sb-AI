@@ -74,7 +74,13 @@ object ShareLinkParser {
                 trimmed.startsWith("trojan://") -> parseTrojan(trimmed)
                 trimmed.startsWith("ss://") -> parseShadowsocks(trimmed)
                 trimmed.startsWith("hysteria2://") || trimmed.startsWith("hy2://") -> parseHysteria2(trimmed)
+                trimmed.startsWith("hysteria://") -> parseHysteria(trimmed)
                 trimmed.startsWith("wireguard://") || trimmed.startsWith("wg://") -> parseWireguard(trimmed)
+                trimmed.startsWith("tuic://") -> parseTuic(trimmed)
+                trimmed.startsWith("anytls://") -> parseAnytls(trimmed)
+                trimmed.startsWith("ssh://") -> parseSsh(trimmed)
+                // http:// and socks:// are intentionally not parsed as share links
+                // to avoid false positives on plain subscription URLs (e.g. http://example.com/sub).
                 else -> null
             }
         }.getOrNull()
@@ -400,6 +406,133 @@ object ShareLinkParser {
                     if (reserved != null) putJsonArray("reserved") { reserved.forEach(::add) }
                 })
             }
+        }
+        return ParsedNode(p.name, outbound.toString())
+    }
+
+    private fun parseHysteria(url: String): ParsedNode {
+        val p = splitUrl(url, "hysteria")
+        val outbound = buildJsonObject {
+            put("type", "hysteria")
+            put("tag", p.name)
+            put("server", p.host)
+            put("server_port", p.port)
+            p.query["auth"]?.takeIf { it.isNotBlank() }?.let { put("auth_str", it) }
+                ?: p.query["password"]?.takeIf { it.isNotBlank() }?.let { put("auth_str", it) }
+            p.query["up"]?.toIntOrNull()?.takeIf { it > 0 }?.let { put("up_mbps", it) }
+            p.query["down"]?.toIntOrNull()?.takeIf { it > 0 }?.let { put("down_mbps", it) }
+            p.query["obfs"]?.takeIf { it.isNotBlank() }?.let { obfsType ->
+                putJsonObject("obfs") {
+                    put("type", obfsType)
+                    p.query["obfs-password"]?.takeIf { it.isNotBlank() }?.let { put("password", it) }
+                }
+            }
+            putJsonObject("tls") {
+                put("enabled", true)
+                p.query["sni"]?.takeIf { it.isNotBlank() }?.let { put("server_name", it) }
+                if (p.query["insecure"] == "1" || p.query["allowInsecure"] == "1") put("insecure", true)
+            }
+        }
+        return ParsedNode(p.name, outbound.toString())
+    }
+
+    private fun parseTuic(url: String): ParsedNode {
+        val p = splitUrl(url, "tuic")
+        val uuid = p.userInfo.substringBefore(':').trim()
+        val password = p.userInfo.substringAfter(':', "").trim()
+        val outbound = buildJsonObject {
+            put("type", "tuic")
+            put("tag", p.name)
+            put("server", p.host)
+            put("server_port", p.port)
+            if (uuid.isNotBlank()) put("uuid", uuid)
+            if (password.isNotBlank()) put("password", password)
+            p.query["congestion_control"]?.takeIf { it.isNotBlank() }?.let { put("congestion_control", it) }
+            p.query["udp_relay_mode"]?.takeIf { it.isNotBlank() }?.let { put("udp_relay_mode", it) }
+            putJsonObject("tls") {
+                put("enabled", true)
+                p.query["sni"]?.takeIf { it.isNotBlank() }?.let { put("server_name", it) }
+                if (p.query["insecure"] == "1" || p.query["allowInsecure"] == "1" || p.query["allow_insecure"] == "1") put("insecure", true)
+            }
+        }
+        return ParsedNode(p.name, outbound.toString())
+    }
+
+    private fun parseAnytls(url: String): ParsedNode {
+        val p = splitUrl(url, "anytls")
+        val outbound = buildJsonObject {
+            put("type", "anytls")
+            put("tag", p.name)
+            put("server", p.host)
+            put("server_port", p.port)
+            put("password", p.userInfo)
+            putJsonObject("tls") {
+                put("enabled", true)
+                p.query["sni"]?.takeIf { it.isNotBlank() }?.let { put("server_name", it) }
+                if (p.query["insecure"] == "1" || p.query["allowInsecure"] == "1") put("insecure", true)
+            }
+        }
+        return ParsedNode(p.name, outbound.toString())
+    }
+
+    private fun parseSsh(url: String): ParsedNode {
+        val p = splitUrl(url, "ssh")
+        val user = p.userInfo.substringBefore(':').trim().ifBlank { "root" }
+        val password = p.userInfo.substringAfter(':', "").trim().ifBlank { null }
+        val outbound = buildJsonObject {
+            put("type", "ssh")
+            put("tag", p.name)
+            put("server", p.host)
+            put("server_port", p.port)
+            put("user", user)
+            password?.takeIf { it.isNotBlank() }?.let { put("password", it) }
+            p.query["private_key"]?.takeIf { it.isNotBlank() }?.let {
+                put("private_key", it.replace("\\n", "\n"))
+            }
+            p.query["private_key_passphrase"]?.takeIf { it.isNotBlank() }?.let { put("private_key_passphrase", it) }
+        }
+        return ParsedNode(p.name, outbound.toString())
+    }
+
+    private fun parseHttp(url: String): ParsedNode {
+        val p = splitUrl(url, "http")
+        val user = p.userInfo.substringBefore(':').trim().ifBlank { null }
+        val password = p.userInfo.substringAfter(':', "").trim().ifBlank { null }
+        val outbound = buildJsonObject {
+            put("type", "http")
+            put("tag", p.name)
+            put("server", p.host)
+            put("server_port", p.port)
+            user?.takeIf { it.isNotBlank() }?.let { put("username", it) }
+            password?.takeIf { it.isNotBlank() }?.let { put("password", it) }
+            if (p.query["tls"] == "1" || p.query["sni"]?.isNotBlank() == true) {
+                putJsonObject("tls") {
+                    put("enabled", true)
+                    p.query["sni"]?.takeIf { it.isNotBlank() }?.let { put("server_name", it) }
+                    if (p.query["insecure"] == "1") put("insecure", true)
+                }
+            }
+        }
+        return ParsedNode(p.name, outbound.toString())
+    }
+
+    private fun parseSocks(url: String): ParsedNode {
+        val scheme = when {
+            url.startsWith("socks5://") -> "socks5"
+            url.startsWith("socks4://") -> "socks4"
+            else -> "socks"
+        }
+        val p = splitUrl(url, scheme)
+        val user = p.userInfo.substringBefore(':').trim().ifBlank { null }
+        val password = p.userInfo.substringAfter(':', "").trim().ifBlank { null }
+        val outbound = buildJsonObject {
+            put("type", "socks")
+            put("tag", p.name)
+            put("server", p.host)
+            put("server_port", p.port)
+            put("version", if (scheme == "socks4") "4" else "5")
+            user?.takeIf { it.isNotBlank() }?.let { put("username", it) }
+            password?.takeIf { it.isNotBlank() }?.let { put("password", it) }
         }
         return ParsedNode(p.name, outbound.toString())
     }
