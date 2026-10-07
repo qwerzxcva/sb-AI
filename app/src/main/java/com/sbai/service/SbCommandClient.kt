@@ -426,6 +426,6 @@ object SbCommandClient : CommandClientHandler {
         _logs.value = logQueue.toList()
     }
 
-    private const val StatusIntervalNanos = 1_000_000_000L // 1s（平衡实时性和性能）
+    internal const val StatusIntervalNanos = 1_000_000_000L // 1s（平衡实时性和性能）
     private const val TAG = "SbCommandClient"
 }
