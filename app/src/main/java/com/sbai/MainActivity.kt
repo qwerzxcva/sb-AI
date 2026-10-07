@@ -121,11 +121,10 @@ private fun MainScaffold() {
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
 
-    // 磨砂开关拆成两层，避免为恢复质感重新引入首页卡顿：
-    //  - barGlass：底栏自身低半径采样，成本低、提供实时透光磨砂质感。
-    //  - pageGlass：把整个 NavHost 页面捕获为纹理，成本高；首页长列表下会明显放大开销，
-    //    因此保持关闭。底栏磨砂仍可用，因为底栏采样不需要全页纹理。
-    val barGlass = true
+    // LayerBackdrop 只有在页面使用 layerBackdrop 写入内容后才能被底栏采样。
+    // 全页捕获曾导致首页卡顿，因此暂不启用；底栏使用半透明背景，
+    // 不把空 LayerBackdrop 的绘制误称为实时磨砂。后续须在设备上验证低成本采样方案。
+    val barGlass = false
     val pageGlass = false
     val pageBackdrop = rememberLayerBackdrop()
 
