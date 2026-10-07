@@ -91,6 +91,8 @@ import com.sbai.data.UrltestMode
 import com.sbai.service.SbAiVpnService
 import com.sbai.service.SbCommandClient
 import com.sbai.service.VpnRuntimeState
+import com.sbai.ui.monitor.formatUptime
+import com.sbai.ui.monitor.toStatus
 import com.sbai.service.NodeBatchTester
 import com.sbai.service.SingBoxConfigGenerator
 import com.sbai.service.SubscriptionManager
@@ -316,12 +318,16 @@ fun HomeScreen() {
     val vpnPhase by VpnRuntimeState.phase.collectAsState()
     // VPN 错误消息订阅提升到顶层（避免在 LazyColumn item 内联 collectAsState().value）
     val vpnMessage by VpnRuntimeState.message.collectAsState()
+    // 跨进程遥测快照（连接时长/出口IP/流量），由 :core 周期发布、上方轮询刷新
+    val telemetry by VpnRuntimeState.telemetry.collectAsState()
     // 卡死检测：Starting/Stopping 超过 90s 视为已回退 Stopped（服务崩溃/被杀场景）
     var lastPublishedAt by remember { mutableStateOf(0L) }
     LaunchedEffect(Unit) {
         while (true) {
             withContext(Dispatchers.IO) {
                 VpnRuntimeState.refreshFromDisk(context)
+                // 跨进程遥测快照（:core 发布的流量/连接/时长/出口IP），首页状态卡与监控页共用
+                VpnRuntimeState.refreshTelemetry(context)
                 // :core 会异步自动禁用坏节点；UI 轮询时把最新磁盘态刷入内存，
                 // 否则首页的代理列表/节点数量会滞后（P0 相关体验问题）。
                 RuleStore.get(context).refreshFromDisk()
@@ -445,6 +451,18 @@ fun HomeScreen() {
                                 else -> MaterialTheme.colorScheme.onSurfaceVariant
                             },
                         )
+                        // 连接时长 + 出口 IP（跨进程遥测快照，:core 周期发布；主进程共享文件读取）
+                        val tele = telemetry
+                        if (effectivePhase == VpnRuntimeState.Phase.Running && tele != null && tele.uptimeSec > 0) {
+                            Text(
+                                buildString {
+                                    append("已连接 ${formatUptime(tele.uptimeSec)}")
+                                    if (tele.publicIp.isNotBlank()) append(" · 出口 ${tele.publicIp}")
+                                },
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
                     // 启动控制已收敛到底栏常驻 VPN 控件（导航栏旁），此处不再重复提供按钮。
                 }
@@ -1145,6 +1163,9 @@ private fun SubOptionSwitch(label: String, checked: Boolean, onChange: (Boolean)
 private fun HomeTrafficCard() {
     // 内部独立 collect 高频流量状态，避免在 HomeScreen 顶层 collect 导致整页每 1s 重组
     val status by SbCommandClient.status.collectAsState()
+    val telemetry by VpnRuntimeState.telemetry.collectAsState()
+    // 跨进程：主进程 in-process CommandClient 无数据时，用 :core 发布的共享快照
+    val effStatus = telemetry?.toStatus() ?: status
     val colors = MaterialTheme.colorScheme
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -1160,7 +1181,7 @@ private fun HomeTrafficCard() {
             Column {
                 Text("实时流量", style = MaterialTheme.typography.labelMedium, color = colors.onPrimaryContainer.copy(alpha = 0.75f))
                 Text(
-                    "↑ ${com.sbai.ui.monitor.formatSpeed(status.uplink)}   ↓ ${com.sbai.ui.monitor.formatSpeed(status.downlink)}",
+                    "↑ ${com.sbai.ui.monitor.formatSpeed(effStatus.uplink)}   ↓ ${com.sbai.ui.monitor.formatSpeed(effStatus.downlink)}",
                     style = MaterialTheme.typography.titleLarge,
                     color = colors.onPrimaryContainer,
                 )
@@ -1168,7 +1189,7 @@ private fun HomeTrafficCard() {
             Column(horizontalAlignment = Alignment.End) {
                 Text("累计", style = MaterialTheme.typography.labelMedium, color = colors.onPrimaryContainer.copy(alpha = 0.75f))
                 Text(
-                    "↑ ${com.sbai.ui.monitor.formatBytes(status.uplinkTotal)}   ↓ ${com.sbai.ui.monitor.formatBytes(status.downlinkTotal)}",
+                    "↑ ${com.sbai.ui.monitor.formatBytes(effStatus.uplinkTotal)}   ↓ ${com.sbai.ui.monitor.formatBytes(effStatus.downlinkTotal)}",
                     style = MaterialTheme.typography.titleSmall,
                     color = colors.onPrimaryContainer,
                 )

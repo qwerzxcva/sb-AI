@@ -48,6 +48,10 @@ class SbAiVpnService : VpnService() {
     private var heartbeatJob: Job? = null
     private var runtime: LibboxServiceRuntime? = null
     private var platformInterface: SbPlatformInterface? = null
+    /** 跨进程遥测：VPN Running 时刻 + 周期发布协程（:core 把 in-process CommandClient 数据写共享文件）。 */
+    private var startedAtMs = 0L
+    private var telemetryJob: kotlinx.coroutines.Job? = null
+    private var telemetryActive = false
 
     private fun canStart(): Boolean = synchronized(requestLock) {
         startRequested && !stopRequested && !destroyed
@@ -59,6 +63,7 @@ class SbAiVpnService : VpnService() {
         val platform = platformInterface
         runtime = null
         platformInterface = null
+        stopTelemetryLoop() // 停止遥测发布循环 + 重置出口 IP 缓存
         runCatching { SbCommandClient.disconnect() }
             .onFailure { Log.w(TAG, "command client cleanup failed", it) }
         try {
@@ -238,6 +243,7 @@ class SbAiVpnService : VpnService() {
                             _status.value = ServiceStatus.Running
                             VpnRuntimeState.publish(this@SbAiVpnService, VpnRuntimeState.Phase.Running, null, System.currentTimeMillis())
                             running = true
+                            startTelemetryLoop()
                             Log.i(TAG, "startVpn: VPN running")
                         }
                     }
@@ -290,6 +296,71 @@ class SbAiVpnService : VpnService() {
         }
     }
 
+    /**
+     * 启动跨进程遥测发布循环（:core 侧）：周期把 in-process CommandClient 的状态/连接/日志
+     * 快照写入 VpnRuntimeState 共享文件，供主进程（监控页/首页）读取。修复「监控页无数据」。
+     * 同时在后台触发一次出口 IP 查询（best-effort，不阻塞发布）。
+     */
+    private fun startTelemetryLoop() {
+        stopTelemetryLoop()
+        startedAtMs = System.currentTimeMillis()
+        telemetryActive = true
+        telemetryJob = scope.launch {
+            // 后台查出口 IP（不阻塞发布循环；结果缓存供后续快照读取）
+            launch {
+                runCatching {
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        PublicIpLookup.lookupBlocking()
+                    }
+                }
+            }
+            while (telemetryActive) {
+                try {
+                    val st = SbCommandClient.status.value
+                    val conns = SbCommandClient.connections.value
+                    val logs = SbCommandClient.logs.value
+                    val now = System.currentTimeMillis()
+                    val snap = VpnRuntimeState.TelemetrySnapshot(
+                        uplink = st.uplink,
+                        downlink = st.downlink,
+                        uplinkTotal = st.uplinkTotal,
+                        downlinkTotal = st.downlinkTotal,
+                        connections = conns.size,
+                        memory = st.memory,
+                        uptimeSec = ((now - startedAtMs) / 1000L).coerceAtLeast(0L),
+                        publicIp = PublicIpLookup.cached(),
+                        connList = conns.takeLast(TELEMETRY_CONN_CAP).map { c ->
+                            VpnRuntimeState.ConnBrief(
+                                id = c.id,
+                                domain = c.domain,
+                                destination = c.destination,
+                                outbound = c.outbound,
+                                rule = c.rule,
+                                processPath = c.processPath,
+                                uplinkTotal = c.uplinkTotal,
+                                downlinkTotal = c.downlinkTotal,
+                                createdAt = c.createdAt,
+                            )
+                        },
+                        logTail = logs.takeLast(TELEMETRY_LOG_CAP).map { it.text },
+                        updatedAt = now,
+                    )
+                    VpnRuntimeState.publishTelemetry(this@SbAiVpnService, snap)
+                } catch (t: Throwable) {
+                    Log.w(TAG, "telemetry publish failed", t)
+                }
+                kotlinx.coroutines.delay(TELEMETRY_INTERVAL_MS)
+            }
+        }
+    }
+
+    /** 停止遥测发布循环（stop/cleanup 时调用；切换节点后重置出口 IP 缓存）。 */
+    private fun stopTelemetryLoop() {
+        telemetryActive = false
+        telemetryJob?.let { runCatching { it.cancel() } }
+        telemetryJob = null
+        PublicIpLookup.reset()
+    }
     private fun stopVpn() = requestStop()
 
     private fun requestStop(destroying: Boolean = false) {
@@ -386,12 +457,7 @@ class SbAiVpnService : VpnService() {
             Intent(VpnControlReceiver.ACTION_NEXT_NODE).setPackage(packageName),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
-        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            Notification.Builder(this, CHANNEL_ID)
-        } else {
-            @Suppress("DEPRECATION")
-            Notification.Builder(this)
-        }
+        val builder = Notification.Builder(this, CHANNEL_ID)
         return builder
             .setContentTitle(getString(R.string.app_name))
             .setContentText(text)
@@ -414,6 +480,9 @@ class SbAiVpnService : VpnService() {
     companion object {
         const val ACTION_START = "com.sbai.action.START"
         const val ACTION_STOP = "com.sbai.action.STOP"
+        const val TELEMETRY_INTERVAL_MS = 2500L
+        const val TELEMETRY_CONN_CAP = 50
+        const val TELEMETRY_LOG_CAP = 50
         private const val CHANNEL_ID = "sb_ai_vpn"
         private const val NOTIFICATION_ID = 1
         private const val HEARTBEAT_INTERVAL_MS = 5_000L
