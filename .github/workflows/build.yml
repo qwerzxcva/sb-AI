@@ -48,6 +48,27 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
+      # 防「声称改了实际没改」：确认工作树与提交内容一致，
+      # 且没有把受版本控制的产物误留在未跟踪状态。
+      - name: Verify tree is clean
+        run: |
+          git status --porcelain
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "::error::Working tree not clean — commit or stash your changes"
+            exit 1
+          fi
+
+      # 防「产物被误提交」：libbox.aar 等大体积内核产物必须由 .gitignore 忽略。
+      # 注意：gradle-wrapper.jar / classes.jar 是合法 tracked 文件，故只校验 app/libs 下的产物。
+      - name: Verify no build artifacts are tracked
+        run: |
+          TRACKED=$(git ls-files 'app/libs/*.aar' 'app/libs/*.jar' '*.apk')
+          if [ -n "$TRACKED" ]; then
+            echo "::error::Build artifacts must not be tracked: $TRACKED"
+            exit 1
+          fi
+          echo "✓ no stray build artifacts tracked"
+
       - name: Run unit tests
         run: ./gradlew :app:testDebugUnitTest --stacktrace
 
@@ -57,6 +78,19 @@ jobs:
         with:
           name: test-results
           path: app/build/test-results/testDebugUnitTest/*.xml
+          if-no-files-found: warn
+
+      # 静态门禁：lint 错误一律失败，warning 由 lint-baseline.xml 收口。
+      # 新增未基线化的 warning 会在这里暴露，防止代码质量无声劣化。
+      - name: Run lint
+        run: ./gradlew :app:lintDebug --stacktrace
+
+      - name: Upload lint report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lint-report
+          path: app/build/reports/lint-results-debug.*
           if-no-files-found: warn
 
       - name: Build release APK
