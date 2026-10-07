@@ -278,6 +278,10 @@ fun HomeScreen() {
                             .thenBy { it.name.lowercase() }
                     } else compareBy { it.name.lowercase() },
                 )
+                // 按订阅分别限制预览，避免全局截断使后面的订阅显示为空。
+                .groupBy { it.subscriptionId }
+                .values.asSequence()
+                .flatMap { group -> group.asSequence().take(30) }
                 .map { node ->
                     val summary = node.outboundJson.nodeSummary()
                     val delayText = node.urlTestDelay.takeIf { it > 0 }?.let { "${it}ms" }
@@ -867,22 +871,20 @@ fun HomeScreen() {
                         }
                     }
                     // 独立节点（subscriptionId==null，即 WARP / 手动添加 / 剪贴板导入）：
-                    // review-fix 的框架把节点渲染移到订阅卡片展开区，导致独立节点在 UI 里完全不可见——
-                    // 这是 P0 回归：WARP 节点创建后无法启停/删除/测速。补回独立节点区并复用过滤栏结果。
                     for (row in filteredStandaloneNodes) {
-                                        item(key = "standalone-${row.node.id}") {
-                                            StandaloneNodeRow(
-                                                node = row.node,
-                                                subtitle = row.subtitle,
-                                                testing = testingNodeId == row.node.id,
-                                                onToggle = {
-                                                    store.upsertProxyNode(row.node.copy(enabled = !row.node.enabled, disabledReason = null))
-                                                },
-                                                onTest = { testSingleNode(row.node) },
-                                                onClick = { editingNode = row.node },
-                                                onDelete = { store.deleteProxyNode(row.node.id) },
-                                            )
-                                        }
+                        item(key = "standalone-${row.node.id}") {
+                            StandaloneNodeRow(
+                                node = row.node,
+                                subtitle = row.subtitle,
+                                testing = testingNodeId == row.node.id,
+                                onToggle = {
+                                    store.upsertProxyNode(row.node.copy(enabled = !row.node.enabled, disabledReason = null))
+                                },
+                                onTest = { testSingleNode(row.node) },
+                                onClick = { editingNode = row.node },
+                                onDelete = { store.deleteProxyNode(row.node.id) },
+                            )
+                        }
                     }
                     item {
                         SbItem(
