@@ -40,7 +40,9 @@ object ClashYamlParser {
     )
 
     fun parse(yamlText: String): Parsed? = runCatching {
-        val root = Yaml().load<Any>(yamlText) as? Map<*, *> ?: return null
+        // 使用 SafeConstructor 防止 SnakeYAML 反序列化任意类（安全加固）
+        val yaml = Yaml(org.yaml.snakeyaml.constructor.SafeConstructor(org.yaml.snakeyaml.LoaderOptions()))
+        val root = yaml.load<Any>(yamlText) as? Map<*, *> ?: return null
 
         val nodes = parseProxies(root["proxies"])
         val groups = parseGroups(root["proxy-groups"], nodes.map { it.name }.toSet())
