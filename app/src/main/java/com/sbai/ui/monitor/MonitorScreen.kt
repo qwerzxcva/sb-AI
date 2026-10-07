@@ -209,20 +209,32 @@ fun MonitorScreen() {
                         Icon(Icons.Filled.Close, contentDescription = "关闭全部连接")
                     }
                 }
+                val tele = telemetry
                 if (!connected) {
-                    val tele = telemetry
-                    Text(
-                    buildString {
-                        if (tele != null && tele.connections > 0) {
-                            append("跨进程遥测中：当前活跃连接 ${tele.connections} 条。")
-                            append("\n逐条连接列表需进程内内核通道，监控页以摘要展示。")
-                        } else {
-                            append("服务未运行，无连接数据。")
+                    if (!tele?.connList.isNullOrEmpty()) {
+                        // 跨进程：主进程拿不到逐条关闭通道，但能看 :core 发布的连接列表快照
+                        Text(
+                            "跨进程遥测（最近 ${tele!!.connList.size} 条，完整控制需进程内通道）",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        LazyColumn(
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.fillMaxSize(),
+                        ) {
+                            items(tele!!.connList, key = { it.id }) { c ->
+                                TelemetryConnectionCard(entry = c)
+                            }
+                            item { Spacer(Modifier.height(112.dp)) }
                         }
-                    },
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    } else {
+                        Text(
+                            "服务未运行，无连接数据。",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 } else if (filtered.isEmpty()) {
                     Text(
                         if (connections.isEmpty()) "当前无活跃连接。" else "无匹配连接。",
@@ -347,6 +359,70 @@ private fun ConnectionCard(entry: SbCommandClient.ConnectionEntry, onClose: () -
                     tint = MaterialTheme.colorScheme.error,
                     modifier = Modifier.size(18.dp),
                 )
+            }
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            if (entry.outbound.isNotBlank()) {
+                Text(
+                    "→ ${entry.outbound}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+            if (entry.rule.isNotBlank()) {
+                Text(
+                    "rule: ${entry.rule}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            Text(
+                "↑${formatBytes(entry.uplinkTotal)} ↓${formatBytes(entry.downlinkTotal)}",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.secondary,
+            )
+        }
+    }
+}
+
+/**
+ * 跨进程连接卡片：渲染 :core 发布的 [VpnRuntimeState.ConnBrief] 快照。
+ * 与 [ConnectionCard] 布局一致，但无关闭按钮（主进程无法向 :core 下发 close 命令），
+ * 用于监控页"连接"tab 的跨进程回退展示，使 connList 数据真正被消费（非死代码）。
+ */
+@Composable
+private fun TelemetryConnectionCard(entry: VpnRuntimeState.ConnBrief) {
+    val title = entry.domain.ifBlank { entry.destination }.ifBlank { "(unknown)" }
+    val app = entry.processPath.substringAfterLast('/').ifBlank { "" }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(
+                MaterialTheme.colorScheme.surfaceContainer,
+                MaterialTheme.shapes.small,
+            )
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    title,
+                    style = MaterialTheme.typography.titleSmall,
+                    maxLines = 1,
+                )
+                if (app.isNotBlank()) {
+                    Text(
+                        app,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                    )
+                }
             }
         }
         Row(

@@ -417,12 +417,7 @@ class SbAiVpnService : VpnService() {
             Intent(VpnControlReceiver.ACTION_NEXT_NODE).setPackage(packageName),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
-        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            Notification.Builder(this, CHANNEL_ID)
-        } else {
-            @Suppress("DEPRECATION")
-            Notification.Builder(this)
-        }
+        val builder = Notification.Builder(this, CHANNEL_ID)
         return builder
             .setContentTitle(getString(R.string.app_name))
             .setContentText(text)
