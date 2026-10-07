@@ -39,7 +39,7 @@ object VpnRuntimeState {
     /**
      * 由 :core 进程调用：写入真实阶段。
      *
-     * @param publishedAt 写入时刻 ms；UI 侧据此判断「Starting/Stopping 卡死」（超过 STUCK_TIMEOUT_MS 视为 Stopped）。
+     * @param publishedAt 写入时刻 ms；UI 侧据此判断租约是否过期。
      */
     fun publish(context: Context, phase: Phase, message: String? = null, publishedAt: Long = System.currentTimeMillis()) {
         publishState(
@@ -47,18 +47,18 @@ object VpnRuntimeState {
             prefs = runCatching { context.getSharedPreferences(PREFS, Context.MODE_PRIVATE) }.getOrNull(),
             phase = phase,
             message = message,
-            publishedAt = publishedAt,
+            nowMs = publishedAt,
         )
     }
 
     /** 核心发布逻辑（dir/prefs 可注入，JVM 单测直接驱动）。 */
-    fun publishState(dir: File, prefs: SharedPreferences?, phase: Phase, message: String? = null, publishedAt: Long = System.currentTimeMillis()) {
+    fun publishState(dir: File, prefs: SharedPreferences?, phase: Phase, message: String? = null, nowMs: Long = System.currentTimeMillis()) {
         _phase.value = phase
         _message.value = message
         runCatching {
             val target = File(dir, STATE_FILE)
             val tmp = File(dir, "$STATE_FILE.tmp")
-            tmp.writeText(json.encodeToString(FileState.serializer(), FileState(phase, message, publishedAt)))
+            tmp.writeText(json.encodeToString(FileState.serializer(), FileState(phase, message, nowMs)))
             if (!tmp.renameTo(target)) {
                 target.writeText(tmp.readText())
                 tmp.delete()
@@ -68,6 +68,24 @@ object VpnRuntimeState {
             runCatching {
                 p.edit().putString(KEY_PHASE, phase.name).putString(KEY_MESSAGE, message).commit()
             }
+        }
+    }
+
+    /** 纯函数：活动阶段无有效租约时显示可重试的异常，而不是继续声称 VPN 正在运行。 */
+    fun observedState(
+        phase: Phase,
+        message: String?,
+        publishedAt: Long,
+        nowMs: Long,
+    ): Pair<Phase, String?> {
+        if (phase != Phase.Starting && phase != Phase.Running && phase != Phase.Stopping) {
+            return phase to message
+        }
+        val age = nowMs - publishedAt
+        return if (publishedAt > 0L && age >= 0L && age <= LEASE_TIMEOUT_MS) {
+            phase to message
+        } else {
+            Phase.Error to STALE_MESSAGE
         }
     }
 
@@ -88,8 +106,11 @@ object VpnRuntimeState {
                 json.decodeFromString(FileState.serializer(), file.readText())
             }.getOrNull()
             if (parsed != null) {
-                _phase.value = parsed.phase
-                _message.value = parsed.message
+                val (phase, message) = observedState(
+                    parsed.phase, parsed.message, parsed.publishedAt, nowMs,
+                )
+                _phase.value = phase
+                _message.value = message
                 return
             }
         }
@@ -97,8 +118,12 @@ object VpnRuntimeState {
         val stored = runCatching {
             Phase.valueOf(prefs.getString(KEY_PHASE, Phase.Stopped.name) ?: Phase.Stopped.name)
         }.getOrDefault(Phase.Stopped)
-        _phase.value = stored
-        _message.value = prefs.getString(KEY_MESSAGE, null)
+        // 兼容通道没有时间戳：旧的活动阶段无法证明存活，绝不能无限期卡住按钮。
+        val (phase, message) = observedState(
+            stored, prefs.getString(KEY_MESSAGE, null), 0L, nowMs,
+        )
+        _phase.value = phase
+        _message.value = message
     }
 
     fun isActive(): Boolean =
