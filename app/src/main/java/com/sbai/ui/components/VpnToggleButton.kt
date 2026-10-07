@@ -143,7 +143,17 @@ private fun startVpn(context: Context) {
         .setAction(SbAiVpnService.ACTION_START)
     // 等本进程待落盘的配置写完再启动 :core，否则其 reload() 读到旧配置
     val app = context.applicationContext
-    com.sbai.data.RuleStore.get(app).afterPendingWrites { ContextCompat.startForegroundService(app, intent) }
+    com.sbai.data.RuleStore.get(app).afterPendingWrites {
+        try {
+            ContextCompat.startForegroundService(app, intent)
+        } catch (e: Exception) {
+            // 后台启动限制、权限或服务声明错误可能在这里直接抛出；不能只写日志，
+            // 否则按钮看起来完全没有反应，且 :core 从未收到启动请求。
+            android.util.Log.e("VpnToggleButton", "VPN foreground service launch failed", e)
+            VpnRuntimeState.publish(app, VpnRuntimeState.Phase.Error,
+                "无法启动 VPN 服务（${e.javaClass.simpleName}）：${e.message ?: "请检查系统权限"}")
+        }
+    }
 }
 
 private fun stopVpn(context: Context) {
