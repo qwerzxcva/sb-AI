@@ -179,7 +179,8 @@ private fun MainScaffold() {
                 .offset(y = barOffset),
         ) {
             val compact = maxWidth < 420.dp
-            val controlHeight = if (compact) 56.dp else 80.dp
+            // 与底栏同排平齐；宽屏也保持紧凑，56dp 点击区域不随屏宽放大。
+            val controlHeight = 56.dp
             val sidePadding = if (compact) 8.dp else 20.dp
             val gap = if (compact) 8.dp else 12.dp
             Row(
