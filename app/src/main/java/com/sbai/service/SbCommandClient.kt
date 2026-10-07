@@ -244,7 +244,7 @@ object SbCommandClient : CommandClientHandler {
             .flatMap { (_, items) -> items.entries }
             .associate { (tag, delay) -> tag to delay }
         val updatedNodes = state.proxyNodes.map { node ->
-            val delay = delayMap[node.name]
+            val delay = delayMap[SingBoxConfigGenerator.nodeTagOf(node)]
             if (delay != null && delay != node.urlTestDelay) {
                 changed = true
                 node.copy(urlTestDelay = delay, urlTestTime = System.currentTimeMillis())
