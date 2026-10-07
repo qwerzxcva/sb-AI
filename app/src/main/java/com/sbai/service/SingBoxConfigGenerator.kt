@@ -184,7 +184,12 @@ object SingBoxConfigGenerator {
             putJsonObject("dns") {
                 putJsonArray("servers") { dnsServers.forEach(::add) }
                 putJsonArray("rules") { dnsRules.forEach(::add) }
-                put("strategy", state.settings.dnsStrategy)
+                // §246 hotfix：sing-box 1.14+ 全局 dns.strategy 与 dns.rules 中的 query_type / ip_version
+                // 规则共存时触发内核 FATAL（「Legacy strategy DNS rule action option is deprecated…」），
+                // VPN 启动失败，用户感知为「连不上节点」。LxBox 通过 post-step 剥离冲突 rules 中的 legacy
+                // strategy 字段兜底（降级到全局 default 策略）。sb-AI 选择直接不输出全局 strategy，
+                // 因为 per-rule ip_strategy 已覆盖所有用户配置场景；保留此字段仅会造成无谓的启动失败。
+                // 参考：~/LxBox/app/lib/services/builder/post_steps/heal_legacy_dns_strategy.dart
                 put("independent_cache", true)
                 put("final", defaultDnsTag)
             }
