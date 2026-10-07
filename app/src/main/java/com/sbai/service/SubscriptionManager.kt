@@ -161,7 +161,16 @@ class SubscriptionManager(
                 t.message?.contains("http") == true || t.message?.contains("HTTP") == true -> "网络请求失败（HTTP ${t.message?.let { Regex("""\d+""").find(it)?.value ?: "?"} }）"
                 t.message?.contains("timeout") == true || t.message?.contains("Timeout") == true -> "连接超时，请检查网络或订阅地址"
                 t.message?.contains("certificate") == true || t.message?.contains("Certificate") == true -> "SSL 证书校验失败，可在订阅设置中开启「跳过 TLS 证书校验」"
-                else -> "订阅更新失败（${t.javaClass.simpleName}），请检查地址及内容格式"
+                else -> {
+                    // 保留英文异常关键信息（URL / 域名 / 错误码）以便用户诊断，
+                    // 避免"请检查地址及内容格式"这种空壳提示：表面有错误提示，实际上不生效/不指导。
+                    val detail = t.message?.let { msg ->
+                        // 截取第一段有意义的内容（URL、域名、错误码均可能出现在消息里）
+                        val snippet = msg.split("\n").firstOrNull()?.take(80)?.trim() ?: msg
+                        "：$snippet"
+                    } ?: ""
+                    "订阅更新失败（${t.javaClass.simpleName}$detail）"
+                }
             }
             fail(subscription, msg)
         }

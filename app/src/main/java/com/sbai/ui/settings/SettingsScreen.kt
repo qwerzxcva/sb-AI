@@ -137,6 +137,8 @@ fun SettingsScreen() {
     var editingResource by remember { mutableStateOf<com.sbai.data.Resource?>(null) }
     // ---- 备份导入模式选择（merge / replace） ----
     var pendingImport by remember { mutableStateOf<AppState?>(null) }
+    // 资源管理展开态：页面级 rememberSaveable，LazyColumn item 回收后保持用户选择（旧 bug：状态锁在 item 内）
+    var showResources by rememberSaveable { mutableStateOf(false) }
 
     val backupJson = remember {
         Json { prettyPrint = true; encodeDefaults = true; ignoreUnknownKeys = true }
@@ -426,7 +428,8 @@ fun SettingsScreen() {
 
             // ---- 资源管理（与路由规则/DNS 规则功能重叠，默认收起以精简设置页）----
             item {
-                val showResources = remember { mutableStateOf(false) }
+                // 展开态提升到页面级 rememberSaveable：LazyColumn item 回收后仍保持用户展开/收起选择
+                val showResources = rememberSaveable { mutableStateOf(false) }
                 SbGroup(title = "资源管理（${settings.resources.size}）") {
                     item {
                         SbItem(
