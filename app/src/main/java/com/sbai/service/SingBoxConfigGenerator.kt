@@ -185,7 +185,12 @@ object SingBoxConfigGenerator {
             putJsonObject("dns") {
                 putJsonArray("servers") { dnsServers.forEach(::add) }
                 putJsonArray("rules") { dnsRules.forEach(::add) }
-                put("strategy", state.settings.dnsStrategy)
+                // §246 hotfix：sing-box 1.14+ 全局 dns.strategy 与 dns.rules 中的 query_type / ip_version
+                // 规则共存时触发内核 FATAL（「Legacy strategy DNS rule action option is deprecated…」），
+                // VPN 启动失败，用户感知为「连不上节点」。LxBox 通过 post-step 剥离冲突 rules 中的 legacy
+                // strategy 字段兜底（降级到全局 default 策略）。sb-AI 选择直接不输出全局 strategy，
+                // 因为 per-rule ip_strategy 已覆盖所有用户配置场景；保留此字段仅会造成无谓的启动失败。
+                // 参考：~/LxBox/app/lib/services/builder/post_steps/heal_legacy_dns_strategy.dart
                 put("independent_cache", true)
                 put("final", defaultDnsTag)
             }
@@ -844,23 +849,31 @@ object SingBoxConfigGenerator {
         }
     }
 
+    /** 共享单线程池：串行校验（防 native checkConfig 并发竞争），避免每次调用新建线程池泄漏。 */
+    private val validatorExecutor = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+        Thread(r, "config-validator").apply { isDaemon = true }
+    }
+
     /** 配置校验：调用 libbox.checkConfig；失败时返回可读错误（5 秒超时） */
     fun validate(configJson: String): String? {
         return runCatching {
             // checkConfig 是 JNI 同步调用，必须在 IO 线程执行，加超时保护
-            var result: String? = null
-            val lock = Any()
-            java.util.concurrent.Executors.newSingleThreadExecutor { r ->
-                Thread(r, "config-validator").apply { isDaemon = true }
-            }.submit {
+            val task: java.util.concurrent.Callable<String?> = java.util.concurrent.Callable {
                 try {
                     io.nekohasekai.libbox.Libbox.checkConfig(configJson)
-                    synchronized(lock) { result = null }
+                    null
                 } catch (e: Exception) {
-                    synchronized(lock) { result = e.message ?: "unknown error" }
+                    e.message ?: "unknown error"
                 }
-            }.get(5, java.util.concurrent.TimeUnit.SECONDS)
-            result
+            }
+            val future = validatorExecutor.submit(task)
+            try {
+                future.get(5, java.util.concurrent.TimeUnit.SECONDS)
+            } catch (t: java.util.concurrent.TimeoutException) {
+                // 超时：中断阻塞线程，共享池保证下一个校验排队串行
+                future.cancel(true)
+                throw t
+            }
         }.getOrElse { e ->
             android.util.Log.e("SingBoxConfig", "checkConfig timeout/failed", e)
             if (e is java.util.concurrent.TimeoutException) "配置校验超时（可能是内核不兼容）" else e.message ?: "未知错误"

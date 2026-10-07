@@ -218,7 +218,11 @@ fun HomeScreen() {
                     .firstOrNull { it.type == "urltest" }?.tag
                     ?: proxyGroups.firstOrNull { it.type == "selector" }?.tag
                     ?: "lb"
-                val delay = SbCommandClient.urlTestOutbound(groupTag, node.name, timeoutMs = 5000)
+                val delay = SbCommandClient.urlTestOutbound(
+                    groupTag,
+                    com.sbai.service.SingBoxConfigGenerator.nodeTagOf(node),
+                    timeoutMs = 5000,
+                )
                 if (delay != null && delay > 0) {
                     store.updateCommitted { s ->
                         s.copy(proxyNodes = s.proxyNodes.map { n ->
@@ -312,6 +316,8 @@ fun HomeScreen() {
     val vpnPhase by VpnRuntimeState.phase.collectAsState()
     // VPN 错误消息订阅提升到顶层（避免在 LazyColumn item 内联 collectAsState().value）
     val vpnMessage by VpnRuntimeState.message.collectAsState()
+    // 卡死检测：Starting/Stopping 超过 90s 视为已回退 Stopped（服务崩溃/被杀场景）
+    var lastPublishedAt by remember { mutableStateOf(0L) }
     LaunchedEffect(Unit) {
         while (true) {
             withContext(Dispatchers.IO) {
@@ -319,15 +325,12 @@ fun HomeScreen() {
                 // :core 会异步自动禁用坏节点；UI 轮询时把最新磁盘态刷入内存，
                 // 否则首页的代理列表/节点数量会滞后（P0 相关体验问题）。
                 RuleStore.get(context).refreshFromDisk()
+                // 卡死检测需要「当前」时间戳：旧实现只在启动时读一次，
+                // 90s 后任何 Starting/Stopping（含合法慢启动）都会误判为卡死、
+                // 按钮被锁死或 VPN 显示状态错误（P0：点了没反应/状态错乱）。
+                lastPublishedAt = VpnRuntimeState.lastPublishedAt(context)
             }
             delay(2000L)
-        }
-    }
-    // 卡死检测：Starting/Stopping 超过 90s 视为已回退 Stopped（服务崩溃/被杀场景）
-    var lastPublishedAt by remember { mutableStateOf(0L) }
-    LaunchedEffect(Unit) {
-        withContext(Dispatchers.IO) {
-            lastPublishedAt = VpnRuntimeState.lastPublishedAt(context)
         }
     }
     val effectivePhase = when (vpnPhase) {

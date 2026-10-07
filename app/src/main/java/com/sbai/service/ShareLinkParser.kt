@@ -207,8 +207,12 @@ object ShareLinkParser {
                 putJsonObject("tls") {
                     put("enabled", true)
                     p.query["sni"]?.takeIf { it.isNotBlank() }?.let { put("server_name", it) }
-                    p.query["fp"]?.takeIf { it.isNotBlank() }?.let {
-                        putJsonObject("utls") { put("enabled", true); put("fingerprint", it) }
+                    p.query["fp"]?.takeIf { it.isNotBlank() }?.let { rawFp ->
+                        val fp = UtlsFingerprintNormalizer.normalize(rawFp)
+                        putJsonObject("utls") {
+                            put("enabled", true)
+                            put("fingerprint", fp)
+                        }
                     }
                     if (security == "reality") {
                         putJsonObject("reality") {

@@ -256,7 +256,7 @@ object SbCommandClient : CommandClientHandler {
             .flatMap { (_, items) -> items.entries }
             .associate { (tag, delay) -> tag to delay }
         val updatedNodes = state.proxyNodes.map { node ->
-            val delay = delayMap[node.name]
+            val delay = delayMap[SingBoxConfigGenerator.nodeTagOf(node)]
             if (delay != null && delay != node.urlTestDelay) {
                 changed = true
                 node.copy(urlTestDelay = delay, urlTestTime = System.currentTimeMillis())
@@ -438,6 +438,6 @@ object SbCommandClient : CommandClientHandler {
         _logs.value = logQueue.toList()
     }
 
-    private const val StatusIntervalNanos = 1_000_000_000L // 1s（平衡实时性和性能）
+    internal const val StatusIntervalNanos = 1_000_000_000L // 1s（平衡实时性和性能）
     private const val TAG = "SbCommandClient"
 }
