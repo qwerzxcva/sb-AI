@@ -48,15 +48,18 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      # 防「声称改了实际没改」：确认工作树与提交内容一致，
-      # 且没有把受版本控制的产物误留在未跟踪状态。
-      - name: Verify tree is clean
+      # 防「声称改了实际没提交」：只检查 tracked 文件的改动。
+      # 必须忽略 untracked —— 上游 fetch-libbox.sh 会生成 app/libs/(被 gitignore)，
+      # 若把 untracked 也算进来，本步骤在 CI 上必然误报。
+      - name: Verify no uncommitted changes
         run: |
-          git status --porcelain
-          if [ -n "$(git status --porcelain)" ]; then
-            echo "::error::Working tree not clean — commit or stash your changes"
+          DIRTY=$(git status --porcelain --untracked-files=no)
+          if [ -n "$DIRTY" ]; then
+            echo "::error::Uncommitted changes to tracked files:"
+            echo "$DIRTY"
             exit 1
           fi
+          echo "✓ no uncommitted changes to tracked files"
 
       # 防「产物被误提交」：libbox.aar 等大体积内核产物必须由 .gitignore 忽略。
       # 注意：gradle-wrapper.jar / classes.jar 是合法 tracked 文件，故只校验 app/libs 下的产物。
