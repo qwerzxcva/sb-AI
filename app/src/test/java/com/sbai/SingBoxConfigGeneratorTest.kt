@@ -647,7 +647,7 @@ class SingBoxConfigGeneratorTest {
         assertTrue(urls.contains(url2))
         ruleSets.forEach { rs ->
             assertEquals("remote", rs.jsonObject["type"]!!.jsonPrimitive.content)
-            assertEquals("source", rs.jsonObject["format"]!!.jsonPrimitive.content)
+            assertEquals("binary", rs.jsonObject["format"]!!.jsonPrimitive.content)
         }
     }
 

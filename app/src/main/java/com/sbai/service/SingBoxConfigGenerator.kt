@@ -200,7 +200,8 @@ object SingBoxConfigGenerator {
                             when (rs.type) {
                                 RuleSetType.REMOTE -> {
                                     put("type", "remote")
-                                    put("format", "source")
+                                    // .srs 是 sing-box 二进制规则集；误标为 source 会导致下载后解析失败。
+                                    put("format", remoteRuleSetFormat(rs.url))
                                     put("url", rs.url)
                                     rs.downloadDetour?.takeIf { it.isNotBlank() }
                                         ?.let { put("download_detour", it) }
@@ -239,7 +240,7 @@ object SingBoxConfigGenerator {
                         add(buildJsonObject {
                             put("tag", tag)
                             put("type", "remote")
-                            put("format", "source")
+                            put("format", remoteRuleSetFormat(url))
                             put("url", url)
                         })
                     }
@@ -406,6 +407,10 @@ object SingBoxConfigGenerator {
         }
         return map
     }
+
+    /** 远程 .srs 使用 binary，其余 URL 使用 source；忽略查询串和 fragment。 */
+    internal fun remoteRuleSetFormat(url: String): String =
+        if (url.substringBefore('#').substringBefore('?').endsWith(".srs", ignoreCase = true)) "binary" else "source"
 
     /** 由 URL 生成稳定的规则集 tag */
     private fun urlRuleSetTag(url: String): String {
