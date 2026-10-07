@@ -278,6 +278,9 @@ object SingBoxConfigGenerator {
                     put("strict_route", state.settings.strictRoute)
                     // TUN 网络栈：system / gvisor / mixed
                     put("stack", state.settings.tunStack.ifBlank { "mixed" })
+                    // endpoint_independent：允许不同源端口的连接复用同一连接（提升 UDP 性能）
+                    // sing-box 1.12+ 推荐在 TUN 上启用
+                    put("endpoint_independent", true)
                     // sing-box 1.13 已移除 inbound 上的 legacy 字段（sniff / sniff_override_destination 等），
                     // 带上会被内核拒绝："legacy inbound fields are deprecated ... removed in sing-box 1.13.0"。
                     // 真机复现即为 VPN 无法启动的根因。嗅探改由 route.rules 中的 {"action":"sniff"} 承担（见下方路由规则）。
