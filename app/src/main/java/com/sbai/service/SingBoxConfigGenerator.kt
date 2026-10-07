@@ -555,6 +555,19 @@ object SingBoxConfigGenerator {
     // ------------------------------------------------------------------
 
     /** 供 UI 展示：把自动推导的 DNS 规则也算出来（只读） */
+    /** 只依赖 DNS 推导所需字段的重载，便于调用方做字段级缓存（避免订阅整个 AppState） */
+    fun autoDnsRulesFromRouteRules(
+        dnsServers: List<com.sbai.data.DnsServer>,
+        dnsGroups: List<com.sbai.data.DnsGroup>,
+        routeRules: List<com.sbai.data.RouteRule>,
+    ): List<com.sbai.data.DnsRule> = autoDnsRules(
+        AppState(
+            dnsServers = dnsServers,
+            dnsGroups = dnsGroups,
+            routeRules = routeRules,
+        )
+    )
+
     fun autoDnsRules(state: AppState): List<DnsRule> {
         val defaultDnsTag = state.dnsServers.firstOrNull { it.enabled && it.tag.isNotBlank() }?.tag
             ?: "dns-default"

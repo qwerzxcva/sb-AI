@@ -63,10 +63,14 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -91,15 +95,34 @@ import com.sbai.ui.components.SbSpacer
 import com.sbai.ui.components.SbSwitchItem
 import com.sbai.ui.theme.LocalSbStyleTokens
 import kotlinx.serialization.json.Json
+import java.io.ByteArrayOutputStream
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun SettingsScreen() {
     val context = LocalContext.current
     val store = remember { RuleStore.get(context) }
-    val state by store.state.collectAsState()
-    val settings = state.settings
     val tokens = LocalSbStyleTokens.current
+
+    // 字段级订阅：设置页只用 settings/profiles/activeProfileId，
+    // 全量订阅会因节点等无关变化重组本页。
+    val settings by remember(store) {
+        store.state.map { it.settings }.distinctUntilChanged()
+    }.collectAsState(initial = remember(store) { store.state.value.settings })
+    val profiles by remember(store) {
+        store.state.map { it.profiles }.distinctUntilChanged()
+    }.collectAsState(initial = remember(store) { store.state.value.profiles })
+    val activeProfileId by remember(store) {
+        store.state.map { it.activeProfileId }.distinctUntilChanged()
+    }.collectAsState(initial = remember(store) { store.state.value.activeProfileId })
+    // 全量快照只在操作发生时读取，避免未订阅字段更新后闭包仍持有旧值。
+    val scope = rememberCoroutineScope()
 
     var showAppPicker by remember { mutableStateOf(false) }
     var showCustomConfigEditor by remember { mutableStateOf(false) }
@@ -115,43 +138,68 @@ fun SettingsScreen() {
     // ---- 备份导入模式选择（merge / replace） ----
     var pendingImport by remember { mutableStateOf<AppState?>(null) }
 
-    val backupJson = Json { prettyPrint = true; encodeDefaults = true; ignoreUnknownKeys = true }
+    val backupJson = remember {
+        Json { prettyPrint = true; encodeDefaults = true; ignoreUnknownKeys = true }
+    }
+    val snapshotJson = remember { Json { encodeDefaults = true; ignoreUnknownKeys = true } }
 
     val exportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/json"),
     ) { uri: Uri? ->
         uri ?: return@rememberLauncherForActivityResult
-        runCatching {
-            context.contentResolver.openOutputStream(uri)?.use { out ->
-                out.write(backupJson.encodeToString(AppState.serializer(), state).toByteArray())
+        val snapshot = store.state.value
+        scope.launch {
+            try {
+                val bytes = withContext(Dispatchers.Default) {
+                    backupJson.encodeToString(AppState.serializer(), snapshot).toByteArray(Charsets.UTF_8)
+                }
+                withContext(Dispatchers.IO) {
+                    val output = context.contentResolver.openOutputStream(uri) ?: error("无法打开输出文件")
+                    output.use { it.write(bytes) }
+                }
+                backupMessage = "已导出配置"
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                backupMessage = "导出失败: ${error.message}"
             }
-            backupMessage = "已导出配置"
-        }.onFailure { backupMessage = "导出失败: ${it.message}" }
+        }
     }
 
     val importLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument(),
     ) { uri: Uri? ->
         uri ?: return@rememberLauncherForActivityResult
-        runCatching {
-            val text = context.contentResolver.openInputStream(uri)?.use { input ->
-                // 上限 8MB，防止超大/畸形文件撑爆内存
-                val buf = ByteArray(8192)
-                val sb = StringBuilder()
-                var total = 0
-                while (true) {
-                    val n = input.read(buf)
-                    if (n < 0) break
-                    total += n
-                    if (total > MAX_BACKUP_BYTES) error("备份文件超过 8MB，已中止")
-                    sb.append(String(buf, 0, n, Charsets.UTF_8))
+        scope.launch {
+            try {
+                val bytes = withContext(Dispatchers.IO) {
+                    val input = context.contentResolver.openInputStream(uri) ?: error("空文件")
+                    input.use {
+                        ByteArrayOutputStream().use { output ->
+                            val buffer = ByteArray(8192)
+                            var total = 0
+                            while (true) {
+                                currentCoroutineContext().ensureActive()
+                                val count = input.read(buffer)
+                                if (count < 0) break
+                                total += count
+                                if (total > MAX_BACKUP_BYTES) error("备份文件超过 8MB，已中止")
+                                output.write(buffer, 0, count)
+                            }
+                            output.toByteArray()
+                        }
+                    }
                 }
-                sb.toString()
-            } ?: error("空文件")
-            val imported = backupJson.decodeFromString(AppState.serializer(), text)
-            // 不立即应用，先弹窗让用户选「合并导入」还是「覆盖导入」
-            pendingImport = imported
-        }.onFailure { backupMessage = "导入失败: ${it.message}" }
+                pendingImport = withContext(Dispatchers.Default) {
+                    // 整体解码，避免 UTF-8 多字节字符在读块边界被截断。
+                    backupJson.decodeFromString(AppState.serializer(), bytes.toString(Charsets.UTF_8))
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                backupMessage = "导入失败: ${error.message}"
+            }
+        }
     }
 
     Scaffold { padding ->
@@ -378,17 +426,17 @@ fun SettingsScreen() {
 
             // ---- 资源管理（与路由规则/DNS 规则功能重叠，默认收起以精简设置页）----
             item {
-                var showResources by rememberSaveable { mutableStateOf(false) }
+                val showResources = remember { mutableStateOf(false) }
                 SbGroup(title = "资源管理（${settings.resources.size}）") {
                     item {
                         SbItem(
-                            title = if (showResources) "收起资源管理" else "展开资源管理",
+                            title = if (showResources.value) "收起资源管理" else "展开资源管理",
                             subtitle = "IP 列表 / GeoIP / 规则集；路由与 DNS 规则已覆盖大多数场景",
-                            icon = if (showResources) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                            onClick = { showResources = !showResources },
+                            icon = if (showResources.value) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                            onClick = { showResources.value = !showResources.value },
                         )
                     }
-                    if (!showResources) return@SbGroup
+                    if (!showResources.value) return@SbGroup
                     item {
                         SbItem(
                             title = "添加资源",
@@ -541,15 +589,27 @@ fun SettingsScreen() {
                             )
                         }
                         item {
-                            val jsonStr = settings.configOverride.json.trim()
-                            val isValid = runCatching { kotlinx.serialization.json.Json.parseToJsonElement(jsonStr) }.isSuccess
+                            val jsonStr = settings.configOverride.json
+                            var isValid by remember(jsonStr) { mutableStateOf<Boolean?>(null) }
+                            LaunchedEffect(jsonStr) {
+                                isValid = withContext(Dispatchers.Default) {
+                                    try {
+                                        Json.parseToJsonElement(jsonStr.trim())
+                                        true
+                                    } catch (cancelled: CancellationException) {
+                                        throw cancelled
+                                    } catch (_: Exception) {
+                                        false
+                                    }
+                                }
+                            }
                             SbItem(
                                 title = "JSON 校验",
-                                subtitle = if (isValid) "格式正确" else "格式错误",
-                                icon = if (isValid) Icons.Filled.CheckCircle else Icons.Filled.Error,
-                                iconTint = if (isValid) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                                subtitle = when (isValid) { true -> "格式正确"; false -> "格式错误"; null -> "校验中…" },
+                                icon = if (isValid == false) Icons.Filled.Error else Icons.Filled.CheckCircle,
+                                iconTint = if (isValid == false) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
                                 onClick = {
-                                    if (!isValid) editingText = Triple("JSON 格式错误", "请检查 JSON 格式后重新粘贴", {})
+                                    if (isValid == false) editingText = Triple("JSON 格式错误", "请检查 JSON 格式后重新粘贴", {})
                                 },
                             )
                         }
@@ -560,23 +620,24 @@ fun SettingsScreen() {
 
             // ---- 多配置 Profiles（多配置基准） ----
             item {
-                SbGroup(title = "配置快照（${state.profiles.size}）") {
+                SbGroup(title = "配置快照（${profiles.size}）") {
                     item {
                         SbItem(
                             title = "保存当前配置为快照",
-                            subtitle = if (state.activeProfileId.isEmpty()) "当前未处于快照模式" else "当前在快照: ${state.profiles.find { it.id == state.activeProfileId }?.name}",
+                            subtitle = if (activeProfileId.isEmpty()) "当前未处于快照模式" else "当前在快照: ${profiles.find { it.id == activeProfileId }?.name}",
                             icon = Icons.Filled.Save,
                             onClick = {
+                                editingProfile = null
                                 profileNameInput = ""
                                 showProfileDialog = true
                             },
                         )
                     }
-                    if (state.profiles.isNotEmpty()) {
+                    if (profiles.isNotEmpty()) {
                         item {
                             Column(Modifier.padding(horizontal = 8.dp)) {
-                                state.profiles.forEach { profile ->
-                                    val isActive = state.activeProfileId == profile.id
+                                profiles.forEach { profile ->
+                                    val isActive = activeProfileId == profile.id
                                     Row(
                                         modifier = Modifier
                                             .fillMaxWidth()
@@ -615,7 +676,23 @@ fun SettingsScreen() {
                                             }
                                             if (!isActive) {
                                                 androidx.compose.material3.OutlinedButton(
-                                                    onClick = { store.activateProfile(profile.id) },
+                                                    onClick = {
+                                                        val selected = store.state.value.profiles.find { it.id == profile.id }
+                                                        if (selected != null) scope.launch {
+                                                            try {
+                                                                val restored = withContext(Dispatchers.Default) {
+                                                                    snapshotJson.decodeFromString(AppState.serializer(), selected.snapshot)
+                                                                }
+                                                                store.update { current ->
+                                                                    BackupManager.restoreProfile(current, restored, selected.id)
+                                                                }
+                                                            } catch (cancelled: CancellationException) {
+                                                                throw cancelled
+                                                            } catch (error: Exception) {
+                                                                backupMessage = "加载快照失败: ${error.message}"
+                                                            }
+                                                        }
+                                                    },
                                                     contentPadding = androidx.compose.foundation.layout.PaddingValues(8.dp),
                                                 ) {
                                                     Text("加载", style = MaterialTheme.typography.labelSmall)
@@ -792,17 +869,29 @@ fun SettingsScreen() {
             initial = settings.configOverride.json.ifBlank { OVERRIDE_SAMPLE },
             onDismiss = { showCustomConfigEditor = false },
             onSave = { text ->
-                store.updateSettings(
-                    settings.copy(configOverride = settings.configOverride.copy(json = text)),
-                )
+                // 异步校验结束后，只修改当前设置中的 JSON，保留期间的其他设置更新。
+                store.update { current ->
+                    current.copy(settings = current.settings.copy(
+                        configOverride = current.settings.configOverride.copy(json = text),
+                    ))
+                }
                 showCustomConfigEditor = false
             },
         )
     }
 
     if (showOverridePreview) {
-        val merged = runCatching { SingBoxConfigGenerator.generate(state) }
-            .getOrElse { "合并失败: ${it.message}" }
+        var merged by remember { mutableStateOf("正在生成…") }
+        LaunchedEffect(store) {
+            val snapshot = store.state.value
+            merged = try {
+                withContext(Dispatchers.Default) { SingBoxConfigGenerator.generate(snapshot) }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                "合并失败: ${error.message}"
+            }
+        }
         AlertDialog(
             onDismissRequest = { showOverridePreview = false },
             title = { Text("合并后的 sing-box 配置") },
@@ -848,7 +937,25 @@ fun SettingsScreen() {
                             s.copy(profiles = s.profiles.map { p -> if (p.id == editingProfile!!.id) p.copy(name = name.trim()) else p })
                         }
                     } else {
-                        store.createProfile(name.trim(), state)
+                        val snapshot = store.state.value
+                        val profileName = name.trim()
+                        scope.launch {
+                            try {
+                                val profile = withContext(Dispatchers.Default) {
+                                    ConfigProfile(
+                                        name = profileName,
+                                        snapshot = snapshotJson.encodeToString(AppState.serializer(), snapshot),
+                                    )
+                                }
+                                store.update { current ->
+                                    current.copy(profiles = current.profiles + profile, activeProfileId = profile.id)
+                                }
+                            } catch (cancelled: CancellationException) {
+                                throw cancelled
+                            } catch (error: Exception) {
+                                backupMessage = "保存快照失败: ${error.message}"
+                            }
+                        }
                     }
                     showProfileDialog = false
                 }) { Text("确定") }
@@ -884,9 +991,33 @@ fun SettingsScreen() {
             },
             dismissButton = {
                 TextButton(onClick = {
-                    store.replaceAll(BackupManager.merge(state, imported))
-                    backupMessage = "已合并导入配置"
+                    val initialSnapshot = store.state.value
                     pendingImport = null
+                    scope.launch {
+                        try {
+                            var snapshot = initialSnapshot
+                            while (true) {
+                                val merged = withContext(Dispatchers.Default) {
+                                    BackupManager.merge(snapshot, imported)
+                                }
+                                // 计算期间可能收到节点/订阅更新；只提交匹配的版本，否则重算。
+                                var applied = false
+                                store.update { current ->
+                                    if (current === snapshot) {
+                                        applied = true
+                                        merged
+                                    } else current
+                                }
+                                if (applied) break
+                                snapshot = store.state.value
+                            }
+                            backupMessage = "已合并导入配置"
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (error: Exception) {
+                            backupMessage = "合并导入失败: ${error.message}"
+                        }
+                    }
                 }) { Text("合并导入") }
             },
         )
@@ -962,6 +1093,8 @@ private fun CustomConfigEditorDialog(
 ) {
     var text by remember { mutableStateOf(initial) }
     var error by remember { mutableStateOf<String?>(null) }
+    var saving by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("自定义 sing-box 配置") },
@@ -970,6 +1103,7 @@ private fun CustomConfigEditorDialog(
                 OutlinedTextField(
                     value = text,
                     onValueChange = { text = it; error = null },
+                    enabled = !saving,
                     modifier = Modifier
                         .fillMaxWidth()
                         .heightIn(min = 280.dp),
@@ -981,11 +1115,22 @@ private fun CustomConfigEditorDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = {
-                runCatching { Json.parseToJsonElement(text) }
-                    .onSuccess { onSave(text) }
-                    .onFailure { error = "JSON 无效: ${it.message}" }
-            }) { Text("保存") }
+            TextButton(enabled = !saving, onClick = {
+                val submitted = text
+                saving = true
+                scope.launch {
+                    try {
+                        withContext(Dispatchers.Default) { Json.parseToJsonElement(submitted) }
+                        onSave(submitted)
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (failure: Exception) {
+                        error = "JSON 无效: ${failure.message}"
+                    } finally {
+                        saving = false
+                    }
+                }
+            }) { Text(if (saving) "校验中…" else "保存") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
     )

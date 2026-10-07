@@ -16,6 +16,12 @@ import com.sbai.data.AppState
  */
 object BackupManager {
 
+    /** Restore configuration, not the historical snapshot catalogue stored inside it. */
+    fun restoreProfile(current: AppState, restored: AppState, profileId: String): AppState {
+        require(current.profiles.any { it.id == profileId }) { "快照已删除，请刷新后重试" }
+        return restored.copy(profiles = current.profiles, activeProfileId = profileId)
+    }
+
     /**
      * 把 [incoming] merge 进 [current]。
      * 列表按 id 追加去重；settings 字段级合并（非默认值才覆盖）。
@@ -39,8 +45,8 @@ object BackupManager {
 
     /** 按 id 去重合并：现有优先，导入中不存在的 id 追加到末尾 */
     private fun <T : Any> mergeById(current: List<T>, incoming: List<T>, idOf: (T) -> String): List<T> {
-        val existingIds = current.map(idOf).toSet()
-        val appended = incoming.filter { idOf(it) !in existingIds }
+        val existingIds = current.map(idOf).toMutableSet()
+        val appended = incoming.filter { existingIds.add(idOf(it)) }
         return current + appended
     }
 
@@ -50,7 +56,10 @@ object BackupManager {
      */
     private fun mergeSettings(current: com.sbai.data.AppSettings, incoming: com.sbai.data.AppSettings): com.sbai.data.AppSettings {
         val default = com.sbai.data.AppSettings()
-        return com.sbai.data.AppSettings(
+        return current.copy(
+            tlsFragment = if (incoming.tlsFragment != default.tlsFragment) incoming.tlsFragment else current.tlsFragment,
+            tlsRecordFragment = if (incoming.tlsRecordFragment != default.tlsRecordFragment) incoming.tlsRecordFragment else current.tlsRecordFragment,
+            tlsFragmentFallbackDelay = if (incoming.tlsFragmentFallbackDelay != default.tlsFragmentFallbackDelay) incoming.tlsFragmentFallbackDelay else current.tlsFragmentFallbackDelay,
             logLevel = if (incoming.logLevel != default.logLevel) incoming.logLevel else current.logLevel,
             mtu = if (incoming.mtu != default.mtu) incoming.mtu else current.mtu,
             ipv6Route = if (incoming.ipv6Route != default.ipv6Route) incoming.ipv6Route else current.ipv6Route,

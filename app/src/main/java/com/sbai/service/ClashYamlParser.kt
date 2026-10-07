@@ -73,7 +73,7 @@ object ClashYamlParser {
             "vless" -> "vless"
             "trojan" -> "trojan"
             "hysteria" -> "hysteria"
-            "hysteria2" -> "hysteria2"
+            "hysteria2", "hy2" -> "hysteria2"
             "http" -> "http"
             "socks", "socks5" -> "socks"
             "wireguard" -> "wireguard"
@@ -132,7 +132,7 @@ object ClashYamlParser {
 
                 "trojan" -> {
                     put("password", m.str("password").orEmpty())
-                    putTls(this, m)
+                    putTls(this, m, forceSni = true)
                     putTransport(this, m)
                     putMux(this, m)
                 }
@@ -147,7 +147,12 @@ object ClashYamlParser {
 
                 "hysteria2" -> {
                     put("password", m.str("password").orEmpty())
-                    m.str("obfs-password")?.takeIf { it.isNotBlank() }?.let { put("obfs_password", it) }
+                    m.str("obfs-password")?.takeIf { it.isNotBlank() }?.let { password ->
+                        putJsonObject("obfs") {
+                            put("type", m.str("obfs") ?: "salamander")
+                            put("password", password)
+                        }
+                    }
                     // 端口跳跃（port hopping）：Clash `ports`/`mport` → sing-box `server_ports`
                     // 格式：`20000-50000,60000` → `["20000:50000", "60000:60000"]`
                     val ports = m.str("ports") ?: m.str("mport")
@@ -186,10 +191,7 @@ object ClashYamlParser {
                     m.str("congestion-controller")?.takeIf { it.isNotBlank() }
                         ?.let { put("congestion_control", it) }
                     m.str("udp-relay-mode")?.takeIf { it.isNotBlank() }?.let { put("udp_relay_mode", it) }
-                    (m["alpn"] as? List<*>)?.let { alpn ->
-                        putJsonArray("tls") {}  // placeholder replaced below
-                    }
-                    putTls(this, m, alpnFrom = m["alpn"] as? List<*>)
+                    putTls(this, m, forceSni = true, alpnFrom = m["alpn"] as? List<*>)
                 }
             }
         }

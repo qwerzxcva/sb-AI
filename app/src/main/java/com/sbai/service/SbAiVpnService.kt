@@ -19,6 +19,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
 
 /**
  * sb-AI VPN 前台服务：
@@ -35,8 +36,36 @@ class SbAiVpnService : VpnService() {
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    // Native start/stop may synchronously call back into stopVpn: never hold requestLock
+    // across native calls. The mutex serializes resource ownership on IO instead.
+    private val lifecycleMutex = kotlinx.coroutines.sync.Mutex()
+    private val requestLock = Any()
+    private var startRequested = false
+    private var stopRequested = false
+    private var destroyed = false
     private var runtime: LibboxServiceRuntime? = null
     private var platformInterface: SbPlatformInterface? = null
+
+    private fun canStart(): Boolean = synchronized(requestLock) {
+        startRequested && !stopRequested && !destroyed
+    }
+
+    // Called only while holding lifecycleMutex, including partial-start failures.
+    private fun cleanup() {
+        val rt = runtime
+        val platform = platformInterface
+        runtime = null
+        platformInterface = null
+        runCatching { SbCommandClient.disconnect() }
+            .onFailure { Log.w(TAG, "command client cleanup failed", it) }
+        try {
+            runCatching { rt?.stop() }
+                .onFailure { Log.w(TAG, "runtime cleanup failed", it) }
+        } finally {
+            runCatching { platform?.close() }
+                .onFailure { Log.w(TAG, "platform cleanup failed", it) }
+        }
+    }
 
     override fun onBind(intent: Intent?): IBinder? =
         if (intent?.action == SERVICE_INTERFACE) super.onBind(intent) else null
@@ -51,91 +80,121 @@ class SbAiVpnService : VpnService() {
     }
 
     private fun startVpn() {
-        // 仅允许从 Stopped / Error 进入启动流程，防止重入创建第二个 CommandServer。
-        // 注意：_status 是本进程（:core）内的 StateFlow，不跨进程共享；
-        // 但同一个 :core 进程内多次 startService 仍会走到这里，因此这个守卫是必要的。
-        if (runtime != null) {
-            Log.i(TAG, "startVpn: runtime already exists, reloading config instead")
-            return
+        synchronized(requestLock) {
+            if (startRequested || stopRequested || destroyed) return
+            startRequested = true
+            _status.value = ServiceStatus.Starting
+            VpnRuntimeState.publish(this, VpnRuntimeState.Phase.Starting)
+            try {
+                startForegroundWithNotification()
+            } catch (t: Throwable) {
+                startRequested = false
+                stopRequested = true
+                _status.value = ServiceStatus.Error(t.message ?: "unknown")
+                persistError(t.message ?: t.javaClass.simpleName)
+                VpnRuntimeState.publish(this, VpnRuntimeState.Phase.Error, t.message ?: t.javaClass.simpleName)
+                stopSelf()
+                return
+            }
         }
-        when (_status.value) {
-            ServiceStatus.Running, ServiceStatus.Starting, ServiceStatus.Stopping -> return
-            else -> Unit
-        }
-        Log.i(TAG, "startVpn: current status=${_status.value}")
-        _status.value = ServiceStatus.Starting
-        startForegroundWithNotification()
 
         scope.launch {
-            try {
-                Log.i(TAG, "startVpn: calling LibboxRuntime.setup")
-                LibboxRuntime.setup(this@SbAiVpnService)
-                Log.i(TAG, "startVpn: LibboxRuntime.setup completed")
+            lifecycleMutex.withLock {
+                var running = false
+                var failed = false
+                try {
+                    if (!canStart()) return@withLock
+                    Log.i(TAG, "startVpn: calling LibboxRuntime.setup")
+                    LibboxRuntime.setup(this@SbAiVpnService)
+                    Log.i(TAG, "startVpn: LibboxRuntime.setup completed")
 
-                // :core 进程的 RuleStore 是首次构造时的磁盘快照，必须 reload 才能拿到 UI 刚改的配置
-                val store = RuleStore.get(this@SbAiVpnService)
-                var state = store.reload()
-                Log.i(TAG, "startVpn: state reloaded, subscriptions=${state.subscriptions.size}")
+                    // :core 进程的 RuleStore 是首次构造时的磁盘快照，必须 reload 才能拿到 UI 刚改的配置
+                    val store = RuleStore.get(this@SbAiVpnService)
+                    var state = store.reload()
+                    Log.i(TAG, "startVpn: state reloaded, subscriptions=${state.subscriptions.size}")
 
-                // 配置生成 + 校验 + 自动禁用坏节点重试（有限轮次）。
-                // 参考 LxBox 009：内核拒绝的节点自动禁用，用剩余好节点让 VPN 起来。
-                var config = SingBoxConfigGenerator.generate(state)
-                var disabledAny = false
-                repeat(NodeAutoDisabler.MAX_ROUNDS) { round ->
-                    val err = SingBoxConfigGenerator.validate(config)
-                    if (err == null) return@repeat  // 校验通过，跳出循环
-                    Log.w(TAG, "startVpn: round $round config invalid: $err")
-                    // 尝试从错误中定位坏节点并禁用
-                    val next = NodeAutoDisabler.disableRejectedNode(state, err)
-                    if (next == null) {
-                        // 错误无法归因到具体节点（可能是路由/DNS 配置错误），保留原始错误
-                        error("配置校验失败: $err")
+                    // 配置生成 + 校验 + 自动禁用坏节点重试（有限轮次）。
+                    // 参考 LxBox 009：内核拒绝的节点自动禁用，用剩余好节点让 VPN 起来。
+                    var config = SingBoxConfigGenerator.generate(state)
+                    var disabledAny = false
+                    for (round in 0 until NodeAutoDisabler.MAX_ROUNDS) {
+                        if (!canStart()) return@withLock
+                        val err = SingBoxConfigGenerator.validate(config)
+                        if (err == null) break
+                        Log.w(TAG, "startVpn: round $round config invalid: $err")
+                        // 尝试从错误中定位坏节点并禁用
+                        val next = NodeAutoDisabler.disableRejectedNode(state, err)
+                        if (next == null) {
+                            // 错误无法归因到具体节点（可能是路由/DNS 配置错误），保留原始错误
+                            error("配置校验失败: $err")
+                        }
+                        // 禁用成功后落盘并重新生成配置再校验
+                        store.updateCommitted { next }
+                        state = next
+                        disabledAny = true
+                        config = SingBoxConfigGenerator.generate(state)
                     }
-                    // 禁用成功后落盘并重新生成配置再校验
-                    store.updateCommitted { next }
-                    state = next
-                    disabledAny = true
-                    config = SingBoxConfigGenerator.generate(state)
+                    // 若耗尽修复轮次，最后生成的配置仍需校验；启动已被取消则不再继续。
+                    if (!canStart()) return@withLock
+                    SingBoxConfigGenerator.validate(config)?.let { msg ->
+                        Log.e(TAG, "startVpn: config still invalid after auto-disable: $msg")
+                        error("配置校验失败: $msg")
+                    }
+                    if (disabledAny) {
+                        Log.i(TAG, "startVpn: auto-disabled bad nodes, proceeding with remaining")
+                    }
+                    Log.i(TAG, "startVpn: config generated, length=${config.length}")
+
+                    val configFile = LibboxRuntime.configFile(this@SbAiVpnService)
+                    configFile.parentFile?.mkdirs()
+                    configFile.writeText(config)
+                    Log.i(TAG, "startVpn: config written to ${configFile.absolutePath}")
+
+                    if (!canStart()) return@withLock
+                    Log.i(TAG, "startVpn: creating platform interface")
+                    val platform = SbPlatformInterface(this@SbAiVpnService)
+                    platformInterface = platform
+                    Log.i(TAG, "startVpn: creating runtime")
+                    val rt = LibboxServiceRuntime(platform) { stopVpn() }
+                    runtime = rt // Own partially initialized resources before native start.
+                    Log.i(TAG, "startVpn: starting runtime")
+                    rt.start(config)
+                    Log.i(TAG, "startVpn: runtime started successfully")
+
+                    if (!canStart()) return@withLock
+                    runCatching { SbCommandClient.connect() }
+                        .onFailure { Log.w(TAG, "command client unavailable", it) }
+
+                    synchronized(requestLock) {
+                        // Stop invalidates publication immediately, even if native start blocks.
+                        if (startRequested && !stopRequested && !destroyed) {
+                            persistError(null)
+                            updateNotification(getString(R.string.vpn_notification_title))
+                            _status.value = ServiceStatus.Running
+                            VpnRuntimeState.publish(this@SbAiVpnService, VpnRuntimeState.Phase.Running)
+                            running = true
+                            Log.i(TAG, "startVpn: VPN running")
+                        }
+                    }
+                } catch (t: Throwable) {
+                    Log.e(TAG, "failed to start vpn", t)
+                    synchronized(requestLock) {
+                        if (!stopRequested && !destroyed) {
+                            startRequested = false
+                            stopRequested = true
+                            _status.value = ServiceStatus.Error(t.message ?: "unknown")
+                            persistError(t.message ?: t.javaClass.simpleName)
+                            VpnRuntimeState.publish(this@SbAiVpnService, VpnRuntimeState.Phase.Error, t.message ?: t.javaClass.simpleName)
+                            failed = true
+                        }
+                    }
+                } finally {
+                    if (!running) cleanup()
+                    if (failed) {
+                        stopForeground(STOP_FOREGROUND_REMOVE)
+                        stopSelf()
+                    }
                 }
-                // 循环结束后必须最终校验一次（repeat 里 return@repeat 跳过时已通过；
-                // 若跑满轮次仍有坏节点，最后一次生成的 config 可能是坏的，这里兜底拦截）
-                SingBoxConfigGenerator.validate(config)?.let { msg ->
-                    Log.e(TAG, "startVpn: config still invalid after auto-disable: $msg")
-                    error("配置校验失败: $msg")
-                }
-                if (disabledAny) {
-                    Log.i(TAG, "startVpn: auto-disabled bad nodes, proceeding with remaining")
-                }
-                Log.i(TAG, "startVpn: config generated, length=${config.length}")
-
-                val configFile = LibboxRuntime.configFile(this@SbAiVpnService)
-                configFile.parentFile?.mkdirs()
-                configFile.writeText(config)
-                Log.i(TAG, "startVpn: config written to ${configFile.absolutePath}")
-
-                Log.i(TAG, "startVpn: creating platform interface")
-                val platform = SbPlatformInterface(this@SbAiVpnService)
-                Log.i(TAG, "startVpn: creating runtime")
-                val rt = LibboxServiceRuntime(platform) { stopVpn() }
-                Log.i(TAG, "startVpn: starting runtime")
-                rt.start(config)
-                Log.i(TAG, "startVpn: runtime started successfully")
-
-                runCatching { SbCommandClient.connect() }
-                    .onFailure { Log.w(TAG, "command client unavailable", it) }
-
-                platformInterface = platform
-                runtime = rt
-                _status.value = ServiceStatus.Running
-                persistError(null)   // 启动成功，清除旧错误
-                updateNotification(getString(R.string.vpn_notification_title))
-                Log.i(TAG, "startVpn: VPN running")
-            } catch (t: Throwable) {
-                Log.e(TAG, "failed to start vpn", t)
-                _status.value = ServiceStatus.Error(t.message ?: "unknown")
-                persistError(t.message ?: t.javaClass.simpleName)   // 跨进程传给 UI 显示
-                stopForeground(STOP_FOREGROUND_REMOVE)
-                stopSelf()
             }
         }
     }
@@ -149,17 +208,42 @@ class SbAiVpnService : VpnService() {
         }
     }
 
-    private fun stopVpn() {
-        _status.value = ServiceStatus.Stopping
-        scope.launch {
-            SbCommandClient.disconnect()
-            runCatching { runtime?.stop() }
-            runtime = null
-            platformInterface = null
-            _status.value = ServiceStatus.Stopped
-            stopForeground(STOP_FOREGROUND_REMOVE)
-            stopSelf()
+    private fun stopVpn() = requestStop()
+
+    private fun requestStop(destroying: Boolean = false) {
+        synchronized(requestLock) {
+            if (destroying) destroyed = true
+            if (stopRequested && !destroying) return
+            stopRequested = true
+            startRequested = false
+            if (_status.value !is ServiceStatus.Error) {
+                _status.value = ServiceStatus.Stopping
+                VpnRuntimeState.publish(this, VpnRuntimeState.Phase.Stopping)
+            }
         }
+        scope.launch {
+            try {
+                lifecycleMutex.withLock {
+                    cleanup()
+                    synchronized(requestLock) {
+                        if (_status.value !is ServiceStatus.Error) {
+                            _status.value = ServiceStatus.Stopped
+                        }
+                        VpnRuntimeState.publish(this@SbAiVpnService, VpnRuntimeState.Phase.Stopped)
+                    }
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                    if (!destroying) stopSelf()
+                }
+            } finally {
+                // onDestroy must not cancel a queued cleanup behind native startup.
+                if (destroying) scope.cancel()
+            }
+        }
+    }
+
+    override fun onRevoke() {
+        stopVpn()
+        super.onRevoke()
     }
 
     private fun startForegroundWithNotification() {
@@ -226,14 +310,7 @@ class SbAiVpnService : VpnService() {
     }
 
     override fun onDestroy() {
-        // 服务被系统销毁/回收时，必须复位共享状态：
-        // 否则 _status 停留在 Running，重入守卫会让用户永远无法再次启动。
-        SbCommandClient.disconnect()
-        runCatching { runtime?.stop() }
-        runtime = null
-        platformInterface = null
-        _status.value = ServiceStatus.Stopped
-        scope.cancel()
+        requestStop(destroying = true)
         super.onDestroy()
     }
 

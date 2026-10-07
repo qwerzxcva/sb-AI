@@ -69,6 +69,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -89,6 +90,7 @@ import com.sbai.data.Subscription
 import com.sbai.data.UrltestMode
 import com.sbai.service.SbAiVpnService
 import com.sbai.service.SbCommandClient
+import com.sbai.service.VpnRuntimeState
 import com.sbai.service.NodeBatchTester
 import com.sbai.service.SingBoxConfigGenerator
 import com.sbai.service.SubscriptionManager
@@ -100,8 +102,13 @@ import com.sbai.ui.components.SbItem
 import com.sbai.ui.components.SbSpacer
 import com.sbai.ui.components.SbSwitchItem
 import com.sbai.ui.theme.LocalSbStyleTokens
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -114,7 +121,20 @@ import java.util.Locale
 fun HomeScreen() {
     val context = LocalContext.current
     val store = remember { RuleStore.get(context) }
-    val state by store.state.collectAsState()
+    // 关键性能优化：这里绝不能全量订阅 AppState（`state by store.state.collectAsState()`）。
+    // 那会导致任何节点/设置的任何字段变化都重组整个首页（含全部 SbGroup 与节点列表），
+    // 是「回首页卡顿」的另一半根因（另一半是节点 JSON 解析，已由上一批修复）。
+    // 首页只用到 3 个字段，改为字段级订阅 + distinctUntilChanged，只有相关字段真变化才重组。
+    val loadBalance by remember(store) {
+        store.state.map { it.loadBalance }.distinctUntilChanged()
+    }.collectAsState(initial = remember(store) { store.state.value.loadBalance })
+    val subscriptions by remember(store) {
+        store.state.map { it.subscriptions }.distinctUntilChanged()
+    }.collectAsState(initial = remember(store) { store.state.value.subscriptions })
+    val proxyNodes by remember(store) {
+        store.state.map { it.proxyNodes }.distinctUntilChanged()
+    }.collectAsState(initial = remember(store) { store.state.value.proxyNodes })
+
     val status by SbAiVpnService.status.collectAsState()
     val proxyGroups by SbCommandClient.groups.collectAsState()
     val coreConnected by SbCommandClient.connectedToService.collectAsState()
@@ -133,8 +153,6 @@ fun HomeScreen() {
     var importResult by remember { mutableStateOf<String?>(null) }
     // 批量测速进度：-1 = 未在测；0..100 = 已完成百分比
     var batchTestProgress by remember { mutableStateOf(-1) }
-    // 订阅展开状态：展开的订阅 id 集合（订阅卡片内联显示节点）
-    var expandedSubs by remember { mutableStateOf<Set<String>>(emptySet()) }
     // 正在单节点测速的节点 id（显示转圈）
     var testingNodeId by remember { mutableStateOf<String?>(null) }
     // WARP 注册对话框
@@ -219,96 +237,99 @@ fun HomeScreen() {
     var nodeFilterRegion by remember { mutableStateOf("") }
     var nodeFilterNoDelay by remember { mutableStateOf(false) }
     var nodeSortMode by remember { mutableStateOf<NodeSortMode>(NodeSortMode.NAME_ASC) }
-    // 订阅分组折叠状态：key = 订阅 id（或 "" 表示独立节点组），value = 是否展开
-    var collapsedGroups by remember { mutableStateOf<Set<String>>(emptySet()) }
-    // 是否启用订阅分组视图（默认关：保持现有平铺列表行为，用户可切换）
-    var groupBySubscription by remember { mutableStateOf(false) }
+    // 订阅展开状态（节点内嵌在订阅卡片中）
+    var expandedSubscriptionIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    val lb = loadBalance
 
-    val running = status is SbAiVpnService.ServiceStatus.Running
-    val lb = state.loadBalance
-
-    // 节点过滤结果缓存：避免在 LazyListScope 里每次重组都重新解析全部节点 JSON（卡顿主因）
-    // 同时缓存「订阅→节点」分组，避免每次重组都 O(订阅数 × 节点数) 全量 filter
-    val nodesBySubscription by remember(state.proxyNodes) {
-        derivedStateOf {
-            state.proxyNodes.groupBy { it.subscriptionId }
-        }
+    // 节点过滤结果缓存：避免在 LazyListScope 里每次重组都重新解析节点 JSON。
+    // 订阅 id → 订阅名（纯内存映射，不订阅完整 AppState）
+    val subscriptionNames = remember(subscriptions) {
+        subscriptions.associate { it.id to it.name.ifBlank { "未命名订阅" } }
     }
-    // 订阅 id → 订阅名（用于分组 header 显示）
-    val subscriptionNames by remember(state.subscriptions) {
-        derivedStateOf {
-            state.subscriptions.associate { it.id to it.name.ifBlank { "未命名订阅" } }
-        }
-    }
-    val filteredNodes by remember(
-        state.proxyNodes, nodeFilterQuery, nodeFilterProtocol, nodeFilterRegion, nodeFilterNoDelay, nodeSortMode,
+    // 过滤和排序可能遍历大量订阅节点；放到 Default，避免返回首页时占用主线程。
+    val filteredNodes by produceState<List<NodeRow>>(
+        initialValue = emptyList(),
+        proxyNodes,
+        nodeFilterQuery,
+        nodeFilterProtocol,
+        nodeFilterRegion,
+        nodeFilterNoDelay,
+        nodeSortMode,
     ) {
-        derivedStateOf {
-            val q = nodeFilterQuery.trim()
-            val proto = nodeFilterProtocol.trim()
-            val region = nodeFilterRegion.trim()
-            val noDelay = nodeFilterNoDelay
-            val sortMode = nodeSortMode
-            state.proxyNodes
-                .asSequence()
+        val q = nodeFilterQuery.trim()
+        val proto = nodeFilterProtocol.trim()
+        val region = nodeFilterRegion.trim()
+        val noDelay = nodeFilterNoDelay
+        val sortMode = nodeSortMode
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+            proxyNodes.asSequence()
                 .filter { node ->
-                    val nameHit = q.isEmpty() || node.name.contains(q, ignoreCase = true)
-                    val protoHit = proto.isEmpty() || node.outboundJson.contains(proto, ignoreCase = true)
-                    val regionHit = region.isEmpty() || node.name.contains(region, ignoreCase = true)
-                    // 直接用 urlTestDelay 字段，避免对每个节点反复 parseToJsonElement(outboundJson)（回首页卡顿主因）
-                    val delayOk = !noDelay || node.urlTestDelay > 0
-                    nameHit && protoHit && regionHit && delayOk
+                    (q.isEmpty() || node.name.contains(q, ignoreCase = true)) &&
+                        (proto.isEmpty() || node.outboundJson.contains(proto, ignoreCase = true)) &&
+                        (region.isEmpty() || node.name.contains(region, ignoreCase = true)) &&
+                        (!noDelay || node.urlTestDelay > 0)
                 }
                 .sortedWith(
-                    compareBy(
-                        { if (sortMode == NodeSortMode.NAME_ASC) 0 else 1 },
-                        { it.name.lowercase() },
-                        { it.urlTestDelay },  // 直接用字段，不再解析 JSON
-                    )
+                    if (sortMode == NodeSortMode.LATENCY_ASC) {
+                        compareBy<ProxyNode> { it.urlTestDelay.takeIf { d -> d > 0 } ?: Int.MAX_VALUE }
+                            .thenBy { it.name.lowercase() }
+                    } else compareBy { it.name.lowercase() },
                 )
-                .take(30)
+                .map { node ->
+                    val summary = node.outboundJson.nodeSummary()
+                    val delayText = node.urlTestDelay.takeIf { it > 0 }?.let { "${it}ms" }
+                    NodeRow(node, buildString {
+                        append(summary)
+                        delayText?.let { append(" · ").append(it) }
+                        when {
+                            node.disabledReason != null -> append(" · 已自动禁用（${node.disabledReason}）")
+                            !node.enabled -> append(" · 已禁用")
+                        }
+                    })
+                }
                 .toList()
         }
     }
     // 独立节点（非订阅来源）：节点卡片已并入订阅卡片，此组只列手动/剪贴板导入的节点
     val filteredStandaloneNodes by remember(filteredNodes) {
-        derivedStateOf { filteredNodes.filter { it.subscriptionId == null } }
+        derivedStateOf { filteredNodes.filter { it.node.subscriptionId == null } }
     }
-    val standaloneNodes = state.proxyNodes.count { it.subscriptionId == null }
-    // :core 进程启动错误（跨进程持久化），未连接时展示给用户
-    val persistedError = remember {
-        runCatching {
-            context.getSharedPreferences("sbai_vpn", Context.MODE_PRIVATE)
-                .getString("last_error", null)
-        }.getOrNull()
-    }
+    val standaloneNodes = proxyNodes.count { it.subscriptionId == null }
+    // :core 进程启动错误已由 VpnRuntimeState.message 跨进程刷新（每 2s），
+    // 旧「读一次 SharedPreferences」的 persistedError 已废弃（只读一次，服务启动后崩溃的错误 UI 不刷新——P0 服务错误跨进程丢失 bug 已通过 VpnRuntimeState 根治）。
+    // 注：VpnRuntimeState 已改用文件通道（跨进程永远最新），UI 轮询 refreshFromDisk 即可。
 
-    // 进程隔离后：UI 进程自建 CommandClient 连接 :core 进程的 CommandServer（unix socket 跨进程），
-    // 以 connectedToService 作为「内核是否在跑」的真源（StateFlow 不跨进程共享）。
-    // 关键：CommandClient 的 socket 路径由 Go 侧 basePath（Libbox.setup 设置）决定，
-    // UI 进程必须先调 setup（幂等）才能连到 :core 的 socket，否则 connect 失败、状态恒为停止。
-    // connect() 是阻塞 socket 连接，必须在 IO 线程，否则进首页卡 UI
+    // 连接在 MainScaffold 级别只启动一次；首页只消费状态，避免返回首页重复建连。
+    // 状态真源：:core 进程发布的真实运行阶段（不用遥测连接冒充 VPN 状态）
+    val vpnPhase by VpnRuntimeState.phase.collectAsState()
+    // VPN 错误消息订阅提升到顶层（避免在 LazyColumn item 内联 collectAsState().value）
+    val vpnMessage by VpnRuntimeState.message.collectAsState()
     LaunchedEffect(Unit) {
-        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            runCatching { com.sbai.service.LibboxRuntime.setup(context.applicationContext) }
-        }
-        // 延迟连接，避免阻塞首页渲染
-        kotlinx.coroutines.delay(500L)
-        SbCommandClient.connectWithRetry(attempts = 5, delayMs = 1000L)
-    }
-    val coreRunning = running || coreConnected
-    // 低频重试：每 10s 尝试重连，防止 :core 启动慢导致 UI 一直卡在「已停止」
-    // 注意：不在 LaunchedEffect 中使用 while(true)，而是用 repeat 控制重试次数
-    LaunchedEffect(coreRunning) {
-        if (coreRunning) return@LaunchedEffect  // 已连接，不需要重试
-        repeat(3) {  // 最多重试 3 次
-            kotlinx.coroutines.delay(10_000L)
-            if (!coreRunning) {
-                android.util.Log.i("SbAI_VPN", "retrying command client connect (attempt ${it + 1}/3)")
-                SbCommandClient.connectWithRetry(attempts = 3, delayMs = 500L)
+        while (true) {
+            withContext(Dispatchers.IO) {
+                VpnRuntimeState.refreshFromDisk(context)
             }
+            delay(2000L)
         }
     }
+    // 卡死检测：Starting/Stopping 超过 90s 视为已回退 Stopped（服务崩溃/被杀场景）
+    var lastPublishedAt by remember { mutableStateOf(0L) }
+    LaunchedEffect(Unit) {
+        withContext(Dispatchers.IO) {
+            lastPublishedAt = VpnRuntimeState.lastPublishedAt(context)
+        }
+    }
+    val effectivePhase = when (vpnPhase) {
+        VpnRuntimeState.Phase.Starting, VpnRuntimeState.Phase.Stopping ->
+            if (lastPublishedAt > 0 &&
+                System.currentTimeMillis() - lastPublishedAt > VpnRuntimeState.STUCK_TIMEOUT_MS
+            ) VpnRuntimeState.Phase.Stopped else vpnPhase
+        else -> vpnPhase
+    }
+    val running = effectivePhase == VpnRuntimeState.Phase.Running ||
+        effectivePhase == VpnRuntimeState.Phase.Starting
+    val coreRunning = running || coreConnected
 
     // 节点编辑器：整页（二级页面），不是弹窗
     editingNode?.let { node ->
@@ -331,16 +352,24 @@ fun HomeScreen() {
             onSave = { saved ->
                 store.upsertSubscription(saved)
                 editingSub = null
-                // 保存后立即触发刷新
-                scope.launch {
-                    refreshingId = saved.id
-                    subManager.refresh(saved)
-                    refreshingId = null
+                // 保存后立即触发刷新，并把结果反馈给用户（否则失败只在卡片内不可见）
+                if (refreshingId == null) {
+                    scope.launch {
+                        refreshingId = saved.id
+                        try {
+                            when (val result = subManager.refresh(saved)) {
+                                is com.sbai.service.SubscriptionManager.Result.Success ->
+                                    importResult = "订阅已保存并导入 ${result.nodeCount} 个节点"
+                                is com.sbai.service.SubscriptionManager.Result.Failure ->
+                                    importResult = "订阅已保存，但更新失败：${result.message}"
+                            }
+                        } finally {
+                            refreshingId = null
+                        }
+                    }
                 }
             },
-            onDelete = if (sub.url.isNotBlank()) {
-                { store.deleteSubscription(sub.id); editingSub = null }
-            } else null,
+            onDelete = { store.deleteSubscription(sub.id); editingSub = null },
         )
         return
     }
@@ -360,18 +389,19 @@ fun HomeScreen() {
                     Column(Modifier.weight(1f)) {
                         Text("sb-AI", style = MaterialTheme.typography.headlineLarge)
                         Text(
-                            // 跨进程真源：:core 进程的服务状态 UI 进程读不到，
-                            // 以 CommandClient 是否连上 CommandServer（coreConnected）为准
-                            displayStatus(coreConnected, status),
+                            // 跨进程真源：:core 进程把运行阶段写盘，UI 进程读取；
+                            // 不再用 CommandClient 连接状态冒充 VPN 状态。
+                            displayVpnPhase(effectivePhase) +
+                                (vpnMessage?.let { " · $it" } ?: ""),
                             style = MaterialTheme.typography.bodyMedium,
                             color = when {
-                                status is SbAiVpnService.ServiceStatus.Error -> MaterialTheme.colorScheme.error
-                                coreConnected -> MaterialTheme.colorScheme.primary
+                                effectivePhase == VpnRuntimeState.Phase.Error -> MaterialTheme.colorScheme.error
+                                running -> MaterialTheme.colorScheme.primary
                                 else -> MaterialTheme.colorScheme.onSurfaceVariant
                             },
                         )
                     }
-                    // 右上角启动按钮已删除：底栏旁 VpnToggleButton 承担启停（避免双入口状态不一致）
+                    // 启动控制已收敛到底栏常驻 VPN 控件（导航栏旁），此处不再重复提供按钮。
                 }
                 SbSpacer()
             }
@@ -608,49 +638,63 @@ fun HomeScreen() {
             // ---- 订阅源 ----
             item {
                 SbGroup(title = "订阅源") {
-                    state.subscriptions.forEach { sub ->
-                        val subNodes = nodesBySubscription[sub.id].orEmpty()
-                        val subExpanded = sub.id in expandedSubs
-                        item(key = "sub-${sub.id}") {
+                    subscriptions.forEach { sub ->
+                        item {
+                            val subNodes = filteredNodes.filter { it.node.subscriptionId == sub.id }
                             SubscriptionCard(
                                 sub = sub,
+                                nodes = subNodes,
+                                expanded = sub.id in expandedSubscriptionIds,
                                 refreshing = refreshingId == sub.id,
+                                onToggleExpand = {
+                                    expandedSubscriptionIds = if (sub.id in expandedSubscriptionIds) {
+                                        expandedSubscriptionIds - sub.id
+                                    } else expandedSubscriptionIds + sub.id
+                                },
                                 onRefresh = {
-                                    refreshingId = sub.id
-                                    scope.launch {
-                                        subManager.refresh(sub)
-                                        refreshingId = null
+                                    if (refreshingId == null) {
+                                        refreshingId = sub.id
+                                        scope.launch {
+                                            try {
+                                                subManager.refresh(sub)
+                                            } finally {
+                                                refreshingId = null
+                                            }
+                                        }
                                     }
                                 },
-                                onClick = { editingSub = sub },
-                                onToggleEnabled = {
-                                    store.upsertSubscription(sub.copy(enabled = !sub.enabled))
+                                onToggleEnabled = { enabled ->
+                                    store.upsertSubscription(sub.copy(enabled = enabled))
                                 },
-                                onToggleExpand = {
-                                    expandedSubs = if (subExpanded) expandedSubs - sub.id else expandedSubs + sub.id
+                                onTestNodes = {
+                                    if (batchTestProgress == -1 && subNodes.isNotEmpty()) {
+                                        scope.launch {
+                                            batchTestProgress = 0
+                                            try {
+                                                val groupTag = proxyGroups
+                                                    .firstOrNull { it.type == "urltest" }?.tag
+                                                    ?: proxyGroups.firstOrNull { it.type == "selector" }?.tag
+                                                    ?: "lb"
+                                                val results = NodeBatchTester.testNodes(
+                                                    nodes = subNodes.map { it.node },
+                                                    groupTag = groupTag,
+                                                    onProgress = { done, total ->
+                                                        batchTestProgress = if (total == 0) 100 else done * 100 / total
+                                                    },
+                                                )
+                                                NodeBatchTester.applyResults(store, results)
+                                            } finally {
+                                                batchTestProgress = -1
+                                            }
+                                        }
+                                    }
                                 },
-                                expanded = subExpanded,
-                                nodeCount = subNodes.size,
+                                onEditNode = { editingNode = it },
+                                onDeleteNode = { store.deleteProxyNode(it) },
+                                onToggleNode = { node, enabled ->
+                                    store.upsertProxyNode(node.copy(enabled = enabled, disabledReason = null))
+                                },
                             )
-                        }
-                        // 订阅展开 → 内联显示该订阅的节点（每节点带启停开关 + 单节点测速）
-                        if (subExpanded) {
-                            for (node in subNodes) {
-                                item(key = "sub-${sub.id}-node-${node.id}") {
-                                    NodeRow(
-                                        node = node,
-                                        testing = testingNodeId == node.id,
-                                        onToggle = {
-                                            store.upsertProxyNode(
-                                                node.copy(enabled = !node.enabled, disabledReason = null),
-                                            )
-                                        },
-                                        onTest = { testSingleNode(node) },
-                                        onClick = { editingNode = node },
-                                        onDelete = { store.deleteProxyNode(node.id) },
-                                    )
-                                }
-                            }
                         }
                     }
                     item {
@@ -661,19 +705,24 @@ fun HomeScreen() {
                             onClick = { editingSub = Subscription() },
                         )
                     }
-                    if (state.subscriptions.size > 1) {
+                    if (subscriptions.size > 1) {
                         item {
                             SbItem(
                                 title = "全部更新",
                                 subtitle = "触发所有启用订阅的拉取 + L7Filter + 测速回填",
                                 icon = Icons.Filled.Refresh,
                                 onClick = {
-                                    scope.launch {
-                                        state.subscriptions.filter { it.enabled }.forEach { sub ->
-                                            refreshingId = sub.id
-                                            subManager.refresh(sub)
+                                    if (refreshingId == null) {
+                                        scope.launch {
+                                            try {
+                                                subscriptions.filter { it.enabled }.forEach { sub ->
+                                                    refreshingId = sub.id
+                                                    subManager.refresh(sub)
+                                                }
+                                            } finally {
+                                                refreshingId = null
+                                            }
                                         }
-                                        refreshingId = null
                                     }
                                 },
                             )
@@ -704,7 +753,7 @@ fun HomeScreen() {
 
             // ---- 节点 ----
             // 批量测速面板：对所有启用节点逐个 URLTest，结果回填（参考 LxBox 009 列表测速）
-            if (coreConnected && state.proxyNodes.any { it.enabled }) {
+            if (coreConnected && proxyNodes.any { it.enabled }) {
                 item {
                     SbItem(
                         title = if (batchTestProgress in 0..99) "批量测速中… ${batchTestProgress}%" else "批量测速（所有节点）",
@@ -714,20 +763,22 @@ fun HomeScreen() {
                             if (batchTestProgress == -1) {
                                 scope.launch {
                                     batchTestProgress = 0
-                                    // 确定测速组：优先 urltest 组，否则 selector 组
-                                    val groupTag = proxyGroups
-                                        .firstOrNull { it.type == "urltest" }?.tag
-                                        ?: proxyGroups.firstOrNull { it.type == "selector" }?.tag
-                                        ?: "lb"
-                                    val results = NodeBatchTester.testNodes(
-                                        nodes = state.proxyNodes,
-                                        groupTag = groupTag,
-                                        onProgress = { done, total ->
-                                            batchTestProgress = if (total == 0) 100 else done * 100 / total
-                                        },
-                                    )
-                                    NodeBatchTester.applyResults(store, results)
-                                    batchTestProgress = -1
+                                    try {
+                                        val groupTag = proxyGroups
+                                            .firstOrNull { it.type == "urltest" }?.tag
+                                            ?: proxyGroups.firstOrNull { it.type == "selector" }?.tag
+                                            ?: "lb"
+                                        val results = NodeBatchTester.testNodes(
+                                            nodes = proxyNodes,
+                                            groupTag = groupTag,
+                                            onProgress = { done, total ->
+                                                batchTestProgress = if (total == 0) 100 else done * 100 / total
+                                            },
+                                        )
+                                        NodeBatchTester.applyResults(store, results)
+                                    } finally {
+                                        batchTestProgress = -1
+                                    }
                                 }
                             }
                         },
@@ -777,21 +828,23 @@ fun HomeScreen() {
                             }
                         }
                     }
-                    for (node in filteredStandaloneNodes) {
-                        item(key = "node-${node.id}") {
-                            NodeRow(
-                                node = node,
-                                testing = testingNodeId == node.id,
-                                onToggle = {
-                                    store.upsertProxyNode(
-                                        node.copy(enabled = !node.enabled, disabledReason = null),
-                                    )
-                                },
-                                onTest = { testSingleNode(node) },
-                                onClick = { editingNode = node },
-                                onDelete = { store.deleteProxyNode(node.id) },
-                            )
-                        }
+                    // 独立节点（subscriptionId==null，即 WARP / 手动添加 / 剪贴板导入）：
+                    // review-fix 的框架把节点渲染移到订阅卡片展开区，导致独立节点在 UI 里完全不可见——
+                    // 这是 P0 回归：WARP 节点创建后无法启停/删除/测速。补回独立节点区并复用过滤栏结果。
+                    for (row in filteredStandaloneNodes) {
+                                        item(key = "standalone-${row.node.id}") {
+                                            StandaloneNodeRow(
+                                                node = row.node,
+                                                subtitle = row.subtitle,
+                                                testing = testingNodeId == row.node.id,
+                                                onToggle = {
+                                                    store.upsertProxyNode(row.node.copy(enabled = !row.node.enabled, disabledReason = null))
+                                                },
+                                                onTest = { testSingleNode(row.node) },
+                                                onClick = { editingNode = row.node },
+                                                onDelete = { store.deleteProxyNode(row.node.id) },
+                                            )
+                                        }
                     }
                     item {
                         SbItem(
@@ -844,8 +897,22 @@ fun HomeScreen() {
 
     // ---- 对话框 ----
     if (showConfigPreview) {
+        // 进入预览时取完整快照，后台生成；关闭对话框会取消结果发布。
+        var previewConfig by remember { mutableStateOf("正在生成配置…") }
+        LaunchedEffect(Unit) {
+            val snapshot = store.state.value
+            previewConfig = try {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                    SingBoxConfigGenerator.generate(snapshot)
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                "生成失败: ${e.message}"
+            }
+        }
         ConfigPreviewDialog(
-            config = runCatching { SingBoxConfigGenerator.generate(state) }.getOrElse { "生成失败: ${it.message}" },
+            config = previewConfig,
             onDismiss = { showConfigPreview = false },
         )
     }
@@ -945,7 +1012,7 @@ fun HomeScreen() {
 
     if (showNodesPicker) {
         // 与生成器同口径解析节点 tag（避免显示名与配置 tag 不一致导致勾选无效）
-        val nodeTags = state.proxyNodes.filter { it.enabled }
+        val nodeTags = proxyNodes.filter { it.enabled }
             .map { SingBoxConfigGenerator.nodeTagOf(it) }.distinct()
         AlertDialog(
             onDismissRequest = { showNodesPicker = false },
@@ -1002,14 +1069,12 @@ private fun statusText(status: SbAiVpnService.ServiceStatus): String = when (sta
  * 以 CommandClient 是否连上 CommandServer（unix socket）为运行真源；
  * 仅在 UI 进程捕获到 Starting/Stopping/Error 瞬时态时优先显示它们。
  */
-private fun displayStatus(
-    coreConnected: Boolean,
-    status: SbAiVpnService.ServiceStatus,
-): String = when (status) {
-    is SbAiVpnService.ServiceStatus.Starting -> "启动中…"
-    is SbAiVpnService.ServiceStatus.Stopping -> "停止中…"
-    is SbAiVpnService.ServiceStatus.Error -> "错误: ${status.message}"
-    else -> if (coreConnected) "运行中" else "已停止"
+private fun displayVpnPhase(phase: VpnRuntimeState.Phase): String = when (phase) {
+    VpnRuntimeState.Phase.Starting -> "启动中…"
+    VpnRuntimeState.Phase.Running -> "运行中"
+    VpnRuntimeState.Phase.Stopping -> "停止中…"
+    VpnRuntimeState.Phase.Error -> "启动失败"
+    VpnRuntimeState.Phase.Stopped -> "已停止"
 }
 
 private fun formatTime(epoch: Long): String =
@@ -1072,18 +1137,20 @@ private fun HomeTrafficCard() {
 @Composable
 private fun SubscriptionCard(
     sub: Subscription,
-    refreshing: Boolean,
-    onRefresh: () -> Unit,
-    onClick: () -> Unit,
-    onToggleEnabled: () -> Unit,
-    onToggleExpand: () -> Unit,
+    nodes: List<NodeRow>,
     expanded: Boolean,
-    nodeCount: Int,
+    refreshing: Boolean,
+    onToggleExpand: () -> Unit,
+    onRefresh: () -> Unit,
+    onToggleEnabled: (Boolean) -> Unit,
+    onTestNodes: () -> Unit,
+    onEditNode: (com.sbai.data.ProxyNode) -> Unit,
+    onDeleteNode: (String) -> Unit,
+    onToggleNode: (com.sbai.data.ProxyNode, Boolean) -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
     val used = sub.trafficUpload + sub.trafficDownload
     val hasTraffic = sub.trafficTotal > 0
-
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -1091,7 +1158,7 @@ private fun SubscriptionCard(
     ) {
         // 卡片主体
         Surface(
-            onClick = onClick,
+            onClick = onToggleExpand,
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(12.dp),
             color = if (sub.enabled) colors.surfaceContainer else colors.surfaceContainer.copy(alpha = 0.5f),
@@ -1102,17 +1169,27 @@ private fun SubscriptionCard(
                         Text(sub.name.ifBlank { sub.url }, style = MaterialTheme.typography.titleSmall, maxLines = 1)
                         Text(
                             sub.lastError?.let { "错误: $it" }
-                                ?: "$nodeCount 节点 · ${formatTime(sub.lastUpdatedAt)}",
+                                ?: "${nodes.size} 节点 · ${formatTime(sub.lastUpdatedAt)}",
                             style = MaterialTheme.typography.bodySmall,
                             color = colors.onSurfaceVariant,
                         )
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        // 展开/收起节点列表
+                        // 订阅启用/禁用（右侧 on/off）——master 的样式参考：on/off 文字标签 + Switch
+                        Text(
+                            text = if (sub.enabled) "on" else "off",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = if (sub.enabled) colors.primary else colors.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 2.dp),
+                        )
+                        Switch(
+                            checked = sub.enabled,
+                            onCheckedChange = onToggleEnabled,
+                        )
                         IconButton(onClick = onToggleExpand) {
                             Icon(
                                 imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                                contentDescription = if (expanded) "收起" else "展开",
+                                contentDescription = if (expanded) "收起节点" else "展开节点",
                             )
                         }
                         if (refreshing) {
@@ -1122,17 +1199,6 @@ private fun SubscriptionCard(
                                 Icon(Icons.Filled.Refresh, contentDescription = "更新")
                             }
                         }
-                        // 订阅启停 on/off 开关：off 后该订阅所有节点退出内核配置（真实生效）
-                        Text(
-                            text = if (sub.enabled) "on" else "off",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = if (sub.enabled) colors.primary else colors.onSurfaceVariant,
-                            modifier = Modifier.padding(horizontal = 2.dp),
-                        )
-                        Switch(
-                            checked = sub.enabled,
-                            onCheckedChange = { onToggleEnabled() },
-                        )
                     }
                 }
 
@@ -1156,14 +1222,69 @@ private fun SubscriptionCard(
                 }
             }
         }
-        // 展开的节点列表在调用处（LazyColumn item）渲染，保持列表懒加载
+        
+        // 展开后显示该订阅的节点：节点启用开关 + 测速
+        if (expanded) {
+            Spacer(Modifier.height(6.dp))
+            if (nodes.isEmpty()) {
+                Text(
+                    "该订阅暂无节点；可点击上方更新按钮拉取。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp),
+                )
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    TextButton(onClick = onTestNodes) { Text("测速本订阅节点") }
+                }
+                nodes.forEach { row ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 4.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                row.node.name.ifBlank { "未命名节点" },
+                                style = MaterialTheme.typography.bodyMedium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                row.subtitle,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colors.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        // 节点启用/禁用
+                        Switch(
+                            checked = row.node.enabled,
+                            onCheckedChange = { onToggleNode(row.node, it) },
+                        )
+                        IconButton(onClick = { onDeleteNode(row.node.id) }) {
+                            Icon(Icons.Filled.Delete, contentDescription = "删除节点")
+                        }
+                        IconButton(onClick = { onEditNode(row.node) }) {
+                            Icon(Icons.Filled.Edit, contentDescription = "编辑节点")
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
-/** 订阅展开后的节点行：on/off 启停 + 单节点测速 + 点击编辑 + 删除 */
+/** 独立节点行（WARP / 手动添加 / 剪贴板导入，subscriptionId == null）：on/off 启停 + 单节点测速 + 点击编辑 + 删除 */
 @Composable
-private fun NodeRow(
+private fun StandaloneNodeRow(
     node: ProxyNode,
+    subtitle: String,
     testing: Boolean,
     onToggle: () -> Unit,
     onTest: () -> Unit,
@@ -1196,20 +1317,13 @@ private fun NodeRow(
                     style = MaterialTheme.typography.bodyMedium,
                     maxLines = 1,
                 )
-                val delay = if (node.urlTestDelay > 0) " · ${node.urlTestDelay}ms" else ""
-                val state = when {
-                    node.disabledReason != null -> " · 已自动禁用（${node.disabledReason}）"
-                    !node.enabled -> " · 已禁用"
-                    else -> ""
-                }
                 Text(
-                    node.outboundJson.nodeSummary() + delay + state,
+                    subtitle,
                     style = MaterialTheme.typography.bodySmall,
                     color = colors.onSurfaceVariant,
                     maxLines = 1,
                 )
             }
-            // 单节点测速按钮
             if (testing) {
                 CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
             } else {
@@ -1222,7 +1336,6 @@ private fun NodeRow(
                     )
                 }
             }
-            // 节点启停 on/off 开关
             Text(
                 text = if (node.enabled) "on" else "off",
                 style = MaterialTheme.typography.labelSmall,
@@ -1318,8 +1431,10 @@ private fun SubscriptionEditorDialog(
 
     fun doSave() {
         val u = url.trim()
-        if (!u.startsWith("https://") && !u.startsWith("http://")) {
-            error = "请输入 http/https 订阅地址"; return
+        // 允许空 URL 的本地订阅（WARP/分享链接/手动创建的订阅无源地址），但非空时必须为合法 http(s) 地址
+        if (u.isNotEmpty() && !u.startsWith("https://") && !u.startsWith("http://")) {
+            error = "请输入 http/https 订阅地址"
+            return
         }
         onSave(
             initial.copy(
@@ -1495,6 +1610,9 @@ private fun TextEditDialog(title: String, initial: String, onDismiss: () -> Unit
 // ---------------------------------------------------------------------------
 // 节点列表过滤器枚举
 // ---------------------------------------------------------------------------
+
+/** 预计算好的节点行：subtitle 在缓存阶段算好，composable 内不再解析 JSON */
+private data class NodeRow(val node: ProxyNode, val subtitle: String)
 
 enum class NodeSortMode { NAME_ASC, LATENCY_ASC }
 

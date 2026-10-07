@@ -89,6 +89,7 @@
         <receiver
             android:name=".service.VpnControlReceiver"
             android:enabled="true"
+            android:permission="android.permission.DUMP"
             android:exported="true">
             <intent-filter>
                 <action android:name="com.sbai.action.START_VPN" />

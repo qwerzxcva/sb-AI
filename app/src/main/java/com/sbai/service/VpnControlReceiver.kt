@@ -6,7 +6,6 @@ import android.content.Intent
 import android.net.VpnService
 import android.util.Log
 import androidx.core.content.ContextCompat
-import com.sbai.data.RuleStore
 
 /**
  * ADB/广播控制入口（参考 sb-AI 广播控制）。
@@ -88,65 +87,7 @@ class VpnControlReceiver : BroadcastReceiver() {
 
     private fun triggerResourceUpdate(context: Context) {
         Log.i(TAG, "RESOURCE_UPDATE")
-        val store = RuleStore.get(context)
-        val resources = store.state.value.settings.resources.filter { it.enabled && it.url.isNotEmpty() }
-        if (resources.isEmpty()) return
-        val now = System.currentTimeMillis()
-        val eligible = resources
-            .filter { r ->
-                val gap = now - r.lastUpdatedAt
-                r.lastUpdatedAt == 0L || gap >= (r.updateIntervalHours.coerceAtLeast(1) * 3600_000L)
-            }
-            .take(10)
-        if (eligible.isEmpty()) return
-        val settings = store.state.value.settings
-        val ua = settings.subscriptionUserAgent ?: "sb-AI/1.0 (sing-box)"
-        @Suppress("UNCHECKED_CAST")
-        val trustAll: javax.net.ssl.SSLSocketFactory = run {
-            val trustAllTm = arrayOf(
-                object : javax.net.ssl.X509TrustManager {
-                    override fun getAcceptedIssuers(): Array<java.security.cert.X509Certificate> = emptyArray()
-                    override fun checkClientTrusted(chain: Array<java.security.cert.X509Certificate>?, authType: String?) {}
-                    override fun checkServerTrusted(chain: Array<java.security.cert.X509Certificate>?, authType: String?) {}
-                }
-            ) as Array<javax.net.ssl.X509TrustManager>
-            javax.net.ssl.SSLContext.getInstance("TLS").apply { init(null, trustAllTm, java.security.SecureRandom()) }.socketFactory
-        }
-        eligible.forEach { res ->
-            try {
-                val conn = java.net.URL(res.url).openConnection() as java.net.HttpURLConnection
-                conn.instanceFollowRedirects = false
-                conn.connectTimeout = 15_000
-                conn.readTimeout = 15_000
-                conn.setRequestProperty("User-Agent", ua)
-                if (conn is javax.net.ssl.HttpsURLConnection) {
-                    conn.sslSocketFactory = trustAll
-                    conn.hostnameVerifier = javax.net.ssl.HostnameVerifier { _, _ -> true }
-                }
-                conn.requestMethod = "GET"
-                val code = conn.responseCode
-                if (code !in 200..299) throw IllegalStateException("HTTP $code")
-                val body = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
-                if (body.isBlank()) throw IllegalStateException("空响应")
-                store.update { s ->
-                    s.copy(settings = s.settings.copy(
-                        resources = s.settings.resources.map { r ->
-                            if (r.id == res.id) r.copy(content = body, lastUpdatedAt = System.currentTimeMillis(), lastError = null) else r
-                        }
-                    ))
-                }
-                Log.i(TAG, "resource ${res.name}: updated (${body.length} chars)")
-            } catch (e: Exception) {
-                Log.w(TAG, "resource ${res.name} failed", e)
-                store.update { s ->
-                    s.copy(settings = s.settings.copy(
-                        resources = s.settings.resources.map { r ->
-                            if (r.id == res.id) r.copy(lastError = e.message) else r
-                        }
-                    ))
-                }
-            }
-        }
+        UpdateWorkScheduler.enqueueResourceUpdate(context)
     }
 
     private fun startVpn(context: Context, intent: Intent) {
@@ -165,14 +106,12 @@ class VpnControlReceiver : BroadcastReceiver() {
 
     private fun stopVpn(context: Context) {
         Log.i(TAG, "STOP_VPN")
-        val service = Intent(context, SbAiVpnService::class.java).setAction(SbAiVpnService.ACTION_STOP)
-        ContextCompat.startForegroundService(context, service)
+        // Stop an existing instance without creating a new foreground service.
+        context.stopService(Intent(context, SbAiVpnService::class.java))
     }
 
     private fun triggerSubUpdate(context: Context) {
         Log.i(TAG, "SUB_UPDATE")
-        // 委托给 WorkManager 异步执行，避免阻塞主线程
-        val work = androidx.work.OneTimeWorkRequest.Builder(SubUpdateWork::class.java).build()
-        androidx.work.WorkManager.getInstance(context).enqueue(work)
+        UpdateWorkScheduler.enqueueSubscriptionUpdate(context)
     }
 }

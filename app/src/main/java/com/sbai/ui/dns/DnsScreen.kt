@@ -51,11 +51,14 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -85,22 +88,42 @@ private val IP_STRATEGIES = listOf("", "prefer_ipv4", "prefer_ipv6", "ipv4_only"
 fun DnsScreen() {
     val context = LocalContext.current
     val store = remember { RuleStore.get(context) }
-    val state by store.state.collectAsState()
     val tokens = LocalSbStyleTokens.current
+
+    // 字段级订阅：DNS 页只用到 5 个字段，全量订阅会因节点等无关变化重组本页。
+    val dnsServers by remember(store) {
+        store.state.map { it.dnsServers }.distinctUntilChanged()
+    }.collectAsState(initial = remember(store) { store.state.value.dnsServers })
+    val dnsGroups by remember(store) {
+        store.state.map { it.dnsGroups }.distinctUntilChanged()
+    }.collectAsState(initial = remember(store) { store.state.value.dnsGroups })
+    val dnsRules by remember(store) {
+        store.state.map { it.dnsRules }.distinctUntilChanged()
+    }.collectAsState(initial = remember(store) { store.state.value.dnsRules })
+    val routeRuleSets by remember(store) {
+        store.state.map { it.routeRuleSets }.distinctUntilChanged()
+    }.collectAsState(initial = remember(store) { store.state.value.routeRuleSets })
+    val routeRules by remember(store) {
+        store.state.map { it.routeRules }.distinctUntilChanged()
+    }.collectAsState(initial = remember(store) { store.state.value.routeRules })
 
     var tab by remember { mutableIntStateOf(0) }
     var editingServer by remember { mutableStateOf<DnsServer?>(null) }
     var editingGroup by remember { mutableStateOf<DnsGroup?>(null) }
     var editingRule by remember { mutableStateOf<DnsRule?>(null) }
-    // 路由规则自动推导的 DNS 规则（只读展示）
-    val autoRules = SingBoxConfigGenerator.autoDnsRules(state)
+    // 路由规则自动推导的 DNS 规则（只读展示）——缓存，避免每次重组重算
+    val autoRules by remember(dnsServers, dnsGroups, routeRules) {
+        derivedStateOf {
+            SingBoxConfigGenerator.autoDnsRulesFromRouteRules(dnsServers, dnsGroups, routeRules)
+        }
+    }
 
     // 编辑器全部为整页（二级页面），提前 return 覆盖列表页
     editingServer?.let { server ->
         DnsServerEditorDialog(
             initial = server,
-            existingServers = state.dnsServers.map { it.tag },
-            existingFakeipTag = state.dnsServers
+            existingServers = dnsServers.map { it.tag },
+            existingFakeipTag = dnsServers
                 .firstOrNull { it.type == DnsServerType.FAKEIP && it.id != server.id }?.tag,
             onDismiss = { editingServer = null },
             onSave = { store.upsertDnsServer(it); editingServer = null },
@@ -114,7 +137,7 @@ fun DnsScreen() {
     editingGroup?.let { group ->
         DnsGroupEditorDialog(
             initial = group,
-            serverTags = state.dnsServers.filter { it.enabled }.map { it.tag },
+            serverTags = dnsServers.filter { it.enabled }.map { it.tag },
             onDismiss = { editingGroup = null },
             onSave = { store.upsertDnsGroup(it); editingGroup = null },
             onDelete = if (group.name.isNotBlank()) {
@@ -127,9 +150,9 @@ fun DnsScreen() {
     editingRule?.let { rule ->
         DnsRuleEditorDialog(
             initial = rule,
-            serverOptions = state.dnsServers.filter { it.enabled }.map { it.tag } +
-                    state.dnsGroups.map { it.name },
-            ruleSetTags = state.routeRuleSets.filter { it.enabled }.map { it.tag },
+            serverOptions = dnsServers.filter { it.enabled }.map { it.tag } +
+                    dnsGroups.map { it.name },
+            ruleSetTags = routeRuleSets.filter { it.enabled }.map { it.tag },
             onDismiss = { editingRule = null },
             onSave = { store.upsertDnsRule(it); editingRule = null },
             onDelete = if (rule.autoFromRouteRuleId == null && rule.name.isNotBlank()) {
@@ -168,24 +191,24 @@ fun DnsScreen() {
                 .padding(padding),
         ) {
             TabRow(selectedTabIndex = tab) {
-                Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("DNS（${state.dnsServers.size}）") })
+                Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("DNS（${dnsServers.size}）") })
                 Tab(
                     selected = tab == 1,
                     onClick = { tab = 1 },
-                    text = { Text("规则（${state.dnsRules.size}+${autoRules.size}）") },
+                    text = { Text("规则（${dnsRules.size}+${autoRules.size}）") },
                 )
-                Tab(selected = tab == 2, onClick = { tab = 2 }, text = { Text("group（${state.dnsGroups.size}）") })
+                Tab(selected = tab == 2, onClick = { tab = 2 }, text = { Text("group（${dnsGroups.size}）") })
             }
 
             when (tab) {
                 0 -> DnsServersTab(
-                    servers = state.dnsServers,
+                    servers = dnsServers,
                     onToggle = { store.upsertDnsServer(it.copy(enabled = !it.enabled)) },
                     onEdit = { editingServer = it },
                     modifier = Modifier.padding(horizontal = tokens.screenHorizontalPadding),
                 )
                 1 -> DnsRulesTab(
-                    manualRules = state.dnsRules,
+                    manualRules = dnsRules,
                     autoRules = autoRules,
                     onToggle = { store.upsertDnsRule(it.copy(enabled = !it.enabled)) },
                     onEdit = { editingRule = it },
@@ -194,7 +217,7 @@ fun DnsScreen() {
                     modifier = Modifier.padding(horizontal = tokens.screenHorizontalPadding),
                 )
                 else -> DnsGroupsTab(
-                    groups = state.dnsGroups,
+                    groups = dnsGroups,
                     onEdit = { editingGroup = it },
                     modifier = Modifier.padding(horizontal = tokens.screenHorizontalPadding),
                 )

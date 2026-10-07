@@ -46,6 +46,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -56,6 +57,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.sbai.ui.components.BottomBarController
+import com.sbai.data.AppState
 import com.sbai.data.RouteRule
 import com.sbai.data.RouteRuleSet
 import com.sbai.data.RuleAction
@@ -73,6 +75,8 @@ import com.sbai.ui.components.RestoreBottomBarOnDispose
 import com.sbai.ui.components.SbGroup
 import com.sbai.ui.components.SbItem
 import com.sbai.ui.theme.LocalSbStyleTokens
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 
@@ -89,8 +93,21 @@ private val PROTOCOL_OPTIONS = listOf(
 fun RouteRulesScreen() {
     val context = LocalContext.current
     val store = remember { RuleStore.get(context) }
-    val state by store.state.collectAsState()
     val tokens = LocalSbStyleTokens.current
+
+    // 字段级订阅：路由页只用 4 个字段，全量订阅会因节点等无关变化重组本页
+    val routeRules by remember(store) {
+        store.state.map { it.routeRules }.distinctUntilChanged()
+    }.collectAsState(initial = remember(store) { store.state.value.routeRules })
+    val routeRuleSets by remember(store) {
+        store.state.map { it.routeRuleSets }.distinctUntilChanged()
+    }.collectAsState(initial = remember(store) { store.state.value.routeRuleSets })
+    val dnsServers by remember(store) {
+        store.state.map { it.dnsServers }.distinctUntilChanged()
+    }.collectAsState(initial = remember(store) { store.state.value.dnsServers })
+    val dnsGroups by remember(store) {
+        store.state.map { it.dnsGroups }.distinctUntilChanged()
+    }.collectAsState(initial = remember(store) { store.state.value.dnsGroups })
 
     var editingRule by remember { mutableStateOf<RouteRule?>(null) }
     var editingRuleSet by remember { mutableStateOf<RouteRuleSet?>(null) }
@@ -100,9 +117,9 @@ fun RouteRulesScreen() {
     editingRule?.let { rule ->
         RouteRuleEditorDialog(
             initial = rule,
-            dnsOptions = state.dnsServers.filter { it.enabled }.map { it.tag } +
-                    state.dnsGroups.map { it.name },
-            ruleSetTags = state.routeRuleSets.filter { it.enabled }.map { it.tag },
+            dnsOptions = dnsServers.filter { it.enabled }.map { it.tag } +
+                    dnsGroups.map { it.name },
+            ruleSetTags = routeRuleSets.filter { it.enabled }.map { it.tag },
             onDismiss = { editingRule = null },
             onSave = { store.upsertRouteRule(it); editingRule = null },
             onCreateRuleSet = { editingRuleSet = RouteRuleSet() },
@@ -135,10 +152,10 @@ fun RouteRulesScreen() {
         },
     ) { padding ->
         DragDropLazyColumn(
-            items = state.routeRules,
+            items = routeRules,
             keyOf = { it.id },
             onMove = { from, to ->
-                val ids = state.routeRules.map { it.id }.toMutableList()
+                val ids = routeRules.map { it.id }.toMutableList()
                 if (from in ids.indices && to in ids.indices) {
                     val moved = ids.removeAt(from)
                     ids.add(to, moved)
@@ -157,7 +174,7 @@ fun RouteRulesScreen() {
                 SbGroup(title = "") {
                     item {
                         SbItem(
-                            title = "规则集（${state.routeRuleSets.size}）",
+                            title = "规则集（${routeRuleSets.size}）",
                             subtitle = "被路由规则按 tag 引用；本身不参与匹配顺序",
                             icon = Icons.Filled.Dataset,
                             onClick = { showRuleSetManager = true },
@@ -173,7 +190,7 @@ fun RouteRulesScreen() {
                 )
             },
             footer = {
-                if (state.routeRules.isEmpty()) {
+                if (routeRules.isEmpty()) {
                     SbGroup(title = "") {
                         item {
                             SbItem(
@@ -184,7 +201,9 @@ fun RouteRulesScreen() {
                     }
                 }
                 // fakeIP 联动：DNS 服务器创建 fakeIP 时，路由页显示自动生成的 fakeIP 段规则
-                val autoRules = SingBoxConfigGenerator.autoRouteRules(state)
+                val autoRules by remember(dnsServers) {
+                    derivedStateOf { SingBoxConfigGenerator.autoRouteRules(AppState(dnsServers = dnsServers)) }
+                }
                 if (autoRules.isNotEmpty()) {
                     Spacer(Modifier.height(16.dp))
                     Text(
@@ -222,7 +241,7 @@ fun RouteRulesScreen() {
 
     if (showRuleSetManager) {
         RuleSetManagerDialog(
-            ruleSets = state.routeRuleSets,
+            ruleSets = routeRuleSets,
             onDismiss = { showRuleSetManager = false },
             onAdd = { editingRuleSet = RouteRuleSet() },
             onEdit = { editingRuleSet = it },

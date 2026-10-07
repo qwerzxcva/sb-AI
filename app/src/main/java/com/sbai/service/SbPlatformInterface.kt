@@ -59,12 +59,33 @@ class SbPlatformInterface(
     private val connectivityManager =
         service.getSystemService(ConnectivityManager::class.java)
 
+    private val resourceLock = Any()
+    private var closed = false
     private var tunFileDescriptor: ParcelFileDescriptor? = null
     private var defaultNetworkCallback: ConnectivityManager.NetworkCallback? = null
 
-    fun closeTun() {
-        runCatching { tunFileDescriptor?.close() }
+    fun closeTun() = synchronized(resourceLock) {
+        val fd = tunFileDescriptor
         tunFileDescriptor = null
+        runCatching { fd?.close() }
+            .onFailure { Log.w(TAG, "TUN cleanup failed", it) }
+        Unit
+    }
+
+    /** Terminal, idempotent cleanup; also covers a native start that throws. */
+    fun close() = synchronized(resourceLock) {
+        closed = true
+        closeDefaultInterfaceMonitorLocked()
+        closeTun()
+    }
+
+    private fun closeDefaultInterfaceMonitorLocked() {
+        val callback = defaultNetworkCallback
+        defaultNetworkCallback = null
+        if (callback != null) {
+            runCatching { connectivityManager.unregisterNetworkCallback(callback) }
+                .onFailure { Log.w(TAG, "network callback cleanup failed", it) }
+        }
     }
 
     // ---- Socket 保护 ----
@@ -77,7 +98,8 @@ class SbPlatformInterface(
 
     // ---- TUN ----
 
-    override fun openTun(options: TunOptions): Int {
+    override fun openTun(options: TunOptions): Int = synchronized(resourceLock) {
+        check(!closed) { "android: platform interface is closed" }
         check(VpnService.prepare(service) == null) { "android: missing VPN permission" }
 
         val inet4 = options.inet4Address.toList()
@@ -108,7 +130,7 @@ class SbPlatformInterface(
         val fd = builder.establish()
             ?: error("android: failed to establish VPN interface")
         tunFileDescriptor = fd
-        return fd.fd
+        fd.fd
     }
 
     private fun applyRoutes(
@@ -177,24 +199,40 @@ class SbPlatformInterface(
     // ---- 默认网卡监控 ----
 
     override fun startDefaultInterfaceMonitor(listener: InterfaceUpdateListener) {
-        closeDefaultInterfaceMonitor(listener)
         val callback = object : ConnectivityManager.NetworkCallback() {
-            override fun onAvailable(network: Network) = updateDefaultInterface(listener, network)
+            private fun update(network: Network?) {
+                val active = synchronized(resourceLock) {
+                    !closed && defaultNetworkCallback === this
+                }
+                // Never hold resourceLock while calling back into native code.
+                if (active) updateDefaultInterface(listener, network)
+            }
+
+            override fun onAvailable(network: Network) = update(network)
             override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) =
-                updateDefaultInterface(listener, network)
+                update(network)
             override fun onLinkPropertiesChanged(network: Network, linkProperties: LinkProperties) =
-                updateDefaultInterface(listener, network)
-            override fun onLost(network: Network) =
-                updateDefaultInterface(listener, connectivityManager.activeNetwork)
+                update(network)
+            override fun onLost(network: Network) = update(connectivityManager.activeNetwork)
+
+            fun updateCurrent() = update(connectivityManager.activeNetwork)
         }
-        defaultNetworkCallback = callback
-        connectivityManager.registerDefaultNetworkCallback(callback)
-        updateDefaultInterface(listener, connectivityManager.activeNetwork)
+        synchronized(resourceLock) {
+            check(!closed) { "android: platform interface is closed" }
+            closeDefaultInterfaceMonitorLocked()
+            defaultNetworkCallback = callback
+            try {
+                connectivityManager.registerDefaultNetworkCallback(callback)
+            } catch (t: Throwable) {
+                closeDefaultInterfaceMonitorLocked()
+                throw t
+            }
+        }
+        callback.updateCurrent()
     }
 
     override fun closeDefaultInterfaceMonitor(listener: InterfaceUpdateListener) {
-        defaultNetworkCallback?.let { runCatching { connectivityManager.unregisterNetworkCallback(it) } }
-        defaultNetworkCallback = null
+        synchronized(resourceLock) { closeDefaultInterfaceMonitorLocked() }
     }
 
     private fun updateDefaultInterface(listener: InterfaceUpdateListener, network: Network?) {
