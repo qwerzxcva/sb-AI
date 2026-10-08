@@ -92,6 +92,7 @@ fun VpnToggleButton(
     ) { result ->
         if (result.resultCode == android.app.Activity.RESULT_OK) {
             startVpn(context)
+            SbCommandClient.configureRemote(context)
             scope.launch(Dispatchers.IO) { SbCommandClient.connectWithRetry() }
         }
     }

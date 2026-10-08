@@ -1,5 +1,6 @@
 package com.sbai.service
 
+import android.content.Context
 import android.util.Log
 import io.nekohasekai.libbox.CommandClient
 import io.nekohasekai.libbox.CommandClientHandler
@@ -11,6 +12,7 @@ import io.nekohasekai.libbox.OutboundGroup
 import io.nekohasekai.libbox.OutboundGroupItem
 import io.nekohasekai.libbox.OutboundGroupItemIterator
 import io.nekohasekai.libbox.OutboundGroupIterator
+import io.nekohasekai.libbox.RemoteConnectionOptions
 import io.nekohasekai.libbox.StatusMessage
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -110,6 +112,14 @@ object SbCommandClient : CommandClientHandler {
     private val generation = java.util.concurrent.atomic.AtomicLong(0)
     /** Lazy: merely observing a flow must not allocate native objects on the UI thread. */
     private var connectionState: Connections? = null
+    // 主进程调用 configureRemote(context) 后，connectNow 会优先尝试远程连接（跨进程连 :core）。
+    // :core 进程不调 configureRemote → 走本地 newCommandClient（in-process），行为不变。
+    private var remoteContext: Context? = null
+
+    /** 主进程入口：声明本进程应以跨进程 remote 方式连接 :core 内核。幂等，disconnect 不清除。 */
+    fun configureRemote(context: Context) {
+        remoteContext = context.applicationContext
+    }
 
     // Native callbacks can occur on another thread before connect/disconnect returns.
     // Never hold a JVM monitor around native calls; stale handlers cannot publish state.
@@ -155,7 +165,24 @@ object SbCommandClient : CommandClientHandler {
                 addCommand(Libbox.CommandClashMode)
                 statusInterval = StatusIntervalNanos
             }
-            val c = Libbox.newCommandClient(handler(epoch), options)
+            // 主进程若配置了 remoteContext，尝试跨进程远程连接；:core 进程留用本地连接。
+            // :core 不调 configureRemote，所以 remoteContext==null → 始终走 local。
+            val c = if (remoteContext != null) {
+                val config = LibboxRuntime.readCommandServerConfig(remoteContext!!)
+                if (config != null) {
+                    val rco = RemoteConnectionOptions().apply {
+                        setURL("127.0.0.1:${config.first}")
+                        setSecret(config.second)
+                    }
+                    Log.i(TAG, "using remote command client to 127.0.0.1:${config.first}")
+                    Libbox.newRemoteCommandClient(handler(epoch), options, rco)
+                } else {
+                    Log.w(TAG, "remote context configured but no command server config found; falling back to local")
+                    Libbox.newCommandClient(handler(epoch), options)
+                }
+            } else {
+                Libbox.newCommandClient(handler(epoch), options)
+            }
             client = c // Own partial connections so failures can always release resources.
             c.connect()
         } catch (t: Exception) {

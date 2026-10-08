@@ -44,8 +44,8 @@ class VpnControlReceiver : BroadcastReceiver() {
             ACTION_STOP_VPN -> stopVpn(context)
             ACTION_SUB_UPDATE -> triggerSubUpdate(context)
             ACTION_RESOURCE_UPDATE -> triggerResourceUpdate(context)
-            ACTION_NEXT_NODE -> switchNode(forward = true)
-            ACTION_PREV_NODE -> switchNode(forward = false)
+            ACTION_NEXT_NODE -> switchNode(forward = true, context = context)
+            ACTION_PREV_NODE -> switchNode(forward = false, context = context)
             ACTION_STATUS -> Log.i(TAG, "status query: running=${SbAiVpnService.status.value is SbAiVpnService.ServiceStatus.Running}")
             else -> Log.w(TAG, "unknown action: ${intent.action}")
         }
@@ -55,7 +55,9 @@ class VpnControlReceiver : BroadcastReceiver() {
      * 通知栏切换节点：找到可切换的代理组（selector/urltest），切换到下一个/上一个节点。
      * 走 SbCommandClient（命令客户端已连接内核时），不影响服务生命周期。
      */
-    private fun switchNode(forward: Boolean) {
+    private fun switchNode(forward: Boolean, context: android.content.Context) {
+        // 通知栏/快捷设置触发时，若主进程尚未进入配置流程（如应用刚冷启动），兜底确保 remote 连接可用。
+        SbCommandClient.configureRemote(context.applicationContext)
         val groups = SbCommandClient.groups.value
         if (groups.isEmpty()) {
             Log.w(TAG, "switchNode: no groups available (core not connected?)")

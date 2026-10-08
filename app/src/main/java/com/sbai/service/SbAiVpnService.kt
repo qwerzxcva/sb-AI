@@ -142,8 +142,8 @@ class SbAiVpnService : VpnService() {
                         return@withLock
                     }
                     Log.i(TAG, "startVpn: calling LibboxRuntime.setup")
-                    LibboxRuntime.setup(this@SbAiVpnService)
-                    Log.i(TAG, "startVpn: LibboxRuntime.setup completed")
+                    LibboxRuntime.setup(this@SbAiVpnService, LibboxRuntime.COMMAND_SERVER_PORT)
+                    Log.i(TAG, "startVpn: LibboxRuntime.setup completed (port=${LibboxRuntime.COMMAND_SERVER_PORT})")
 
                     // :core 进程的 RuleStore 是首次构造时的磁盘快照，必须 reload 才能拿到 UI 刚改的配置
                     val store = RuleStore.get(this@SbAiVpnService)

@@ -110,6 +110,10 @@ private fun MainScaffold() {
         while (true) {
             if (!com.sbai.service.SbCommandClient.connectedToService.value) {
                 kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    // 主进程跨进程连 :core 内核：设置 remoteContext 后 connectNow 会读 :core 写下的
+                    // port+secret 文件，用 newRemoteCommandClient 连上去。:core 刚起来写 config
+                    // 后，本 15s 轮询下一次重试就能连上并拿到真实 groups/status/连接。
+                    com.sbai.service.SbCommandClient.configureRemote(context.applicationContext)
                     runCatching { com.sbai.service.LibboxRuntime.setup(context.applicationContext) }
                         .onFailure {
                             android.util.Log.e("SbAI_Scaffold", "libbox native setup failed; command channel unavailable", it)
