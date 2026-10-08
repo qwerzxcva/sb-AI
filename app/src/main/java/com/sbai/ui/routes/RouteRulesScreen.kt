@@ -29,6 +29,7 @@ import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.DragIndicator
 import androidx.compose.material.icons.filled.GroupWork
 import androidx.compose.material.icons.filled.Rule
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
@@ -139,6 +140,9 @@ fun RouteRulesScreen() {
     val dnsRules by remember(store) {
         store.state.map { it.dnsRules }.distinctUntilChanged()
     }.collectAsState(initial = remember(store) { store.state.value.dnsRules })
+    val resources by remember(store) {
+        store.state.map { it.settings.resources }.distinctUntilChanged()
+    }.collectAsState(initial = remember(store) { store.state.value.settings.resources })
 
     var tab by remember { mutableIntStateOf(0) }
     val pagerState = rememberPagerState(pageCount = { 2 })
@@ -151,6 +155,7 @@ fun RouteRulesScreen() {
     var editingDnsServer by remember { mutableStateOf<DnsServer?>(null) }
     var editingDnsGroup by remember { mutableStateOf<DnsGroup?>(null) }
     var editingDnsRule by remember { mutableStateOf<DnsRule?>(null) }
+    var showResourcesManager by remember { mutableStateOf(false) }
 
     // 路由规则自动推导的 DNS 规则（只读展示）——缓存，避免每次重组重算
     val autoDnsRules by remember(dnsServers, dnsGroups, routeRules) {
@@ -229,6 +234,10 @@ fun RouteRulesScreen() {
         )
         return
     }
+    if (showResourcesManager) {
+        ResourcesManagerScreen(onBack = { showResourcesManager = false })
+        return
+    }
 
     Scaffold(
         topBar = {
@@ -270,6 +279,8 @@ fun RouteRulesScreen() {
                         onDeleteDns = { store.deleteDnsRule(it.id) },
                         onReorderDns = { ids -> store.reorderDnsRules(ids) },
                         onOpenRuleSetManager = { showRouteRuleSetManager = true },
+                        stateResources = resources,
+                        onOpenResourcesManager = { showResourcesManager = true },
                         tokens = tokens,
                     )
                     else -> PageDnsSettings(
@@ -319,6 +330,8 @@ private fun PageRouteAndDnsRules(
     onDeleteDns: (DnsRule) -> Unit,
     onReorderDns: (List<String>) -> Unit,
     onOpenRuleSetManager: () -> Unit,
+    stateResources: List<com.sbai.data.Resource>,
+    onOpenResourcesManager: () -> Unit,
     tokens: com.sbai.ui.theme.SbStyleTokens,
 ) {
     Column(
@@ -355,6 +368,14 @@ private fun PageRouteAndDnsRules(
                             subtitle = "被路由规则按 tag 引用；本身不参与匹配顺序",
                             icon = Icons.Filled.Dataset,
                             onClick = onOpenRuleSetManager,
+                        )
+                    }
+                    item {
+                        SbItem(
+                            title = "IP 列表资源（${stateResources.size}）",
+                            subtitle = "CHINA_IP 等资源自动注入路由；管理更新源",
+                            icon = Icons.Filled.Settings,
+                            onClick = onOpenResourcesManager,
                         )
                     }
                     if (routeRules.isEmpty()) {
