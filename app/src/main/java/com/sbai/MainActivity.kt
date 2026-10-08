@@ -19,7 +19,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.MonitorHeart
 import androidx.compose.material.icons.filled.Settings
@@ -52,17 +51,21 @@ import com.sbai.ui.components.BottomBarController
 import com.sbai.ui.components.SbGlassBottomBar
 import com.sbai.ui.components.SbNavItem
 import com.sbai.ui.components.VpnToggleButton
-import com.sbai.ui.dns.DnsScreen
 import com.sbai.ui.home.HomeScreen
 import com.sbai.ui.monitor.MonitorScreen
 import com.sbai.ui.routes.RouteRulesScreen
+import com.sbai.ui.settings.SettingsAppearanceScreen
+import com.sbai.ui.settings.SettingsAboutScreen
+import com.sbai.ui.settings.SettingsAppProxyScreen
+import com.sbai.ui.settings.SettingsBackupScreen
+import com.sbai.ui.settings.SettingsKernelScreen
 import com.sbai.ui.settings.SettingsScreen
+import com.sbai.ui.settings.SettingsSubscriptionScreen
 import com.sbai.ui.theme.SbAiTheme
 
 sealed class Screen(val route: String, val title: String, val icon: ImageVector) {
     data object Home : Screen("home", "首页", Icons.Filled.Home)
     data object Routes : Screen("routes", "路由", Icons.Filled.SwapHoriz)
-    data object Dns : Screen("dns", "DNS", Icons.Filled.Dns)
     data object Monitor : Screen("monitor", "监控", Icons.Filled.MonitorHeart)
     data object Settings : Screen("settings", "设置", Icons.Filled.Settings)
 }
@@ -117,7 +120,7 @@ private fun MainScaffold() {
             kotlinx.coroutines.delay(15_000L)
         }
     }
-    val items = listOf(Screen.Home, Screen.Routes, Screen.Dns, Screen.Monitor, Screen.Settings)
+    val items = listOf(Screen.Home, Screen.Routes, Screen.Monitor, Screen.Settings)
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
 
@@ -163,9 +166,15 @@ private fun MainScaffold() {
         ) {
             composable(Screen.Home.route) { HomeScreen() }
             composable(Screen.Routes.route) { RouteRulesScreen() }
-            composable(Screen.Dns.route) { DnsScreen() }
             composable(Screen.Monitor.route) { MonitorScreen() }
-            composable(Screen.Settings.route) { SettingsScreen() }
+            composable(Screen.Settings.route) { SettingsScreen(navController = navController) }
+            // 二级设置子页面
+            composable("settings_kernel") { SettingsKernelScreen(navController) }
+            composable("settings_app_proxy") { SettingsAppProxyScreen(navController) }
+            composable("settings_subscription") { SettingsSubscriptionScreen(navController) }
+            composable("settings_appearance") { SettingsAppearanceScreen(navController) }
+            composable("settings_backup") { SettingsBackupScreen(navController) }
+            composable("settings_about") { SettingsAboutScreen(navController) }
         }
 
         // 按可用宽度而非设备型号适配；VPN 保持独立，底栏与按钮共用高度。
