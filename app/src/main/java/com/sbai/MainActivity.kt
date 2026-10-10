@@ -132,7 +132,6 @@ private fun MainScaffold() {
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
 
-    // 实时磨砂玻璃底栏：使用 RenderEffect 硬件加速模糊
     // 下滑隐藏 / 上滑显示底栏；BottomBarController 为跨组件真源，
     // 编辑器关闭时显式恢复（修复「二级页上滑隐藏后返回列表唤不出底栏」bug）
     val barVisible by BottomBarController.visible.collectAsState()
