@@ -131,7 +131,7 @@ class RuleStore private constructor(
         val f = stateFile
         if (f.exists() && f.lastModified() > lastSeenUpdatedAt) {
             val env = readEnvelope()
-            if (env != null) {
+            if (env != null && env.updatedAt > lastSeenUpdatedAt) {
                 _state.value = env.data
                 lastSeenUpdatedAt = env.updatedAt
                 android.util.Log.i("RuleStore", "rebased on external write (writer=${env.writer}, ts=${env.updatedAt})")
@@ -160,10 +160,14 @@ class RuleStore private constructor(
      */
     fun refreshFromDisk(): Boolean {
         val f = stateFile
+        // mtime 只是快路径。文件系统时间精度低于信封 updatedAt，不能单独当“新写入”的证据。
         if (!f.exists() || f.lastModified() <= lastSeenUpdatedAt) return false
         val env = readEnvelope() ?: return false
         return synchronized(this) {
-            if (env.updatedAt <= lastSeenUpdatedAt) return@synchronized false
+            if (env.updatedAt <= lastSeenUpdatedAt) {
+                lastSeenUpdatedAt = maxOf(lastSeenUpdatedAt, f.lastModified())
+                return@synchronized false
+            }
             _state.value = env.data
             lastSeenUpdatedAt = env.updatedAt
             true

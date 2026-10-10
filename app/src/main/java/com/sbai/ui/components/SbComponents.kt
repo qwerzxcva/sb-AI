@@ -5,6 +5,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -35,12 +36,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.BlurEffect
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asComposeRenderEffect
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.TileMode
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.render.AndroidRenderEffect
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.sbai.ui.theme.LocalSbStyleTokens
@@ -119,37 +120,29 @@ fun GlassChoiceCard(
     modifier: Modifier = Modifier,
 ) {
     val colors = MaterialTheme.colorScheme
-    val density = LocalDensity.current
     val backgroundColor = if (selected) {
         colors.primaryContainer.copy(alpha = 0.85f)
     } else {
         colors.surfaceContainer.copy(alpha = 0.75f)
     }
-    val blurRadius = with(density) { 16.dp.toPx() }
-    
+    val shape = RoundedCornerShape(16.dp)
+
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
+            .clip(shape)
             .clickable(onClick = onClick)
             .then(
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    Modifier
-                        .background(backgroundColor)
+                    Modifier.graphicsLayer {
+                        val px = 16.dp.toPx()
+                        renderEffect = BlurEffect(px, px, TileMode.Clamp)
+                    }.background(backgroundColor)
                         .border(
                             width = 1.dp,
                             color = if (selected) colors.primary.copy(alpha = 0.5f) else colors.outline.copy(alpha = 0.3f),
-                            shape = RoundedCornerShape(16.dp)
+                            shape = shape,
                         )
-                        .graphicsLayer {
-                            renderEffect = AndroidRenderEffect
-                                .createBlurEffect(
-                                    radiusX = blurRadius,
-                                    radiusY = blurRadius,
-                                    edgeTreatment = AndroidRenderEffect.EdgeTreatment.CLAMP,
-                                )
-                                .asComposeRenderEffect()
-                        }
                 } else {
                     Modifier.background(backgroundColor)
                 }

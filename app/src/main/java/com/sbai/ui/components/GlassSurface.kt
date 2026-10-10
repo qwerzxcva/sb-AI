@@ -10,10 +10,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asComposeRenderEffect
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.render.AndroidRenderEffect
+import androidx.compose.ui.graphics.BlurEffect
+import androidx.compose.ui.graphics.TileMode
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
@@ -41,31 +40,18 @@ fun GlassSurface(
     content: @Composable BoxScope.() -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
-    val density = LocalDensity.current
-    val blurRadiusPx = with(density) { blurRadius.toPx() }
-    
+    val shape = RoundedCornerShape(cornerRadius)
+
     Box(
         modifier = modifier
-            .clip(RoundedCornerShape(cornerRadius))
+            .clip(shape)
             .then(
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    // 使用硬件加速的 RenderEffect 进行实时模糊
-                    Modifier
-                        .background(colors.surfaceContainer.copy(alpha = alpha))
-                        .border(
-                            width = borderStroke,
-                            color = colors.outline.copy(alpha = borderAlpha),
-                            shape = RoundedCornerShape(cornerRadius)
-                        )
-                        .graphicsLayer {
-                            renderEffect = AndroidRenderEffect
-                                .createBlurEffect(
-                                    radiusX = blurRadiusPx,
-                                    radiusY = blurRadiusPx,
-                                    edgeTreatment = AndroidRenderEffect.EdgeTreatment.CLAMP,
-                                )
-                                .asComposeRenderEffect()
-                        }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && blurRadius > 0.dp) {
+                    // BlurEffect 只模糊本层已绘制内容。先铺半透明底色，再模糊，边框留在模糊之外。
+                    Modifier.graphicsLayer {
+                        val px = blurRadius.toPx()
+                        renderEffect = BlurEffect(px, px, TileMode.Clamp)
+                    }.background(colors.surfaceContainer.copy(alpha = alpha))
                 } else {
                     // Android 12 以下使用静态半透明作为降级
                     Modifier

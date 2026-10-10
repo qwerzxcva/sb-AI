@@ -82,6 +82,7 @@ object SingBoxConfigGenerator {
         val lb = state.loadBalance
 
         val finalProxyTag = when {
+            lb.enabled && lb.mode == LoadBalanceMode.MANUAL -> "lb-selector"
             lb.enabled -> "lb"
             nodeTags.size > 1 -> "proxy"
             nodeTags.size == 1 -> nodeTags[0]
@@ -108,13 +109,20 @@ object SingBoxConfigGenerator {
         val outbounds = buildJsonArray {
             if (lb.enabled) {
                 val lbOutbounds = lb.outbounds.filter { it in nodeTags }.ifEmpty { nodeTags }
-                add(buildJsonObject {
+                if (lb.mode == LoadBalanceMode.MANUAL) {
+                    add(buildJsonObject {
+                        put("type", "selector")
+                        put("tag", "lb-selector")
+                        putJsonArray("outbounds") { lbOutbounds.forEach(::add) }
+                        put("interrupt_exist_connections", lb.interruptExistConnections)
+                    })
+                } else add(buildJsonObject {
                         put("type", "urltest")
                         put("tag", "lb")
                         putJsonArray("outbounds") { lbOutbounds.forEach(::add) }
                         put("url", lb.checkUrl)
                         put("interval", lb.interval)
-                        put("tolerance", lb.toleranceMs)
+                        put("tolerance", if (lb.mode == LoadBalanceMode.LATENCY) 0 else lb.toleranceMs)
                         put("idle_timeout", lb.idleTimeout)
                         put("interrupt_exist_connections", lb.interruptExistConnections)
                         // fork 扩展：round_robin + balancer{pool,...} = 仅使用 N 个节点

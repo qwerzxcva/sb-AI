@@ -1,6 +1,5 @@
 package com.sbai.ui.components
 
-import android.graphics.RenderNode
 import android.os.Build
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
@@ -22,29 +21,21 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.BlurEffect
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asComposeRenderEffect
+import androidx.compose.ui.graphics.TileMode
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalView
-import androidx.compose.ui.render.AndroidRenderEffect
-import androidx.compose.ui.render.asAndroidRenderEffect
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.delay
 
 /**
  * 实时磨砂玻璃底栏。使用 Android RenderEffect 进行硬件加速模糊，
@@ -68,41 +59,17 @@ fun SbGlassBottomBar(
     val colors = MaterialTheme.colorScheme
     val fontScale = LocalDensity.current.fontScale
     val resolvedHeight = barHeight.coerceAtLeast(48.dp)
-    val view = LocalView.current
-
-    // 动态模糊质量：滑动时降低质量以保持流畅
-    var isScrolling by remember { mutableStateOf(false) }
-    var blurRadius by remember { mutableStateOf(20f) }
-
-    // 监听滚动状态，动态调整模糊质量
-    LaunchedEffect(isScrolling) {
-        if (isScrolling) {
-            // 滑动时降低模糊半径，保持流畅
-            blurRadius = 8f
-        } else {
-            // 停止后恢复高质量模糊
-            delay(300) // 等待滚动完全停止
-            blurRadius = 20f
-        }
-    }
 
     Surface(
         modifier = modifier
             .clip(CircleShape)
             .then(
                 if (useGlassBackdrop && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    // 使用硬件加速的 RenderEffect 进行实时模糊
-                    Modifier
-                        .background(colors.surfaceContainer.copy(alpha = 0.6f))
-                        .graphicsLayer {
-                            renderEffect = AndroidRenderEffect
-                                .createBlurEffect(
-                                    radiusX = blurRadius,
-                                    radiusY = blurRadius,
-                                    edgeTreatment = AndroidRenderEffect.EdgeTreatment.CLAMP,
-                                )
-                                .asComposeRenderEffect()
-                        }
+                    // BlurEffect 模糊的是本层已绘制内容，所以模糊必须在底色之前。
+                    Modifier.graphicsLayer {
+                        val px = 12.dp.toPx()
+                        renderEffect = BlurEffect(px, px, TileMode.Clamp)
+                    }.background(colors.surfaceContainer.copy(alpha = 0.55f))
                 } else if (useGlassBackdrop) {
                     // Android 12 以下使用静态半透明作为降级
                     Modifier.background(colors.surfaceContainer.copy(alpha = 0.85f))
@@ -142,11 +109,7 @@ fun SbGlassBottomBar(
                             .selectable(
                                 selected = selected,
                                 role = Role.Tab,
-                                onClick = {
-                                    onSelect(item.route)
-                                    // 切换页面时触发滚动效果
-                                    isScrolling = true
-                                },
+                                onClick = { onSelect(item.route) },
                             )
                             .semantics(mergeDescendants = true) {
                                 contentDescription = item.label
