@@ -160,6 +160,9 @@ private fun MainScaffold() {
     Box(
         modifier = Modifier
             .fillMaxSize()
+            // 根容器背景：设置页等用 containerColor=Transparent 的 Scaffold 透到这里。
+            // 之前无背景 → 透出窗口底色（enableEdgeToEdge 下常为黑），是「设置页黑」的根因。
+            .background(androidx.compose.material3.MaterialTheme.colorScheme.background)
             .nestedScroll(nestedScrollConnection),
     ) {
         NavHost(

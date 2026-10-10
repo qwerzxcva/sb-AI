@@ -64,11 +64,12 @@ fun SbGlassBottomBar(
                         backdrop = pageBackdrop,
                         shape = { CircleShape },
                         effects = {
-                            blur(radius = 8f)
+                            blur(radius = 6f)
                         },
                         highlight = null,
                         shadow = null,
-                    ).background(colors.surfaceContainer.copy(alpha = 0.42f))
+                        // 提高底色不透明度（0.42→0.78）：底栏文字/图标可读性优先，磨砂感仍保留。
+                    ).background(colors.surfaceContainer.copy(alpha = 0.78f))
                 } else {
                     Modifier.background(colors.surfaceContainer.copy(alpha = 0.96f))
                 }
