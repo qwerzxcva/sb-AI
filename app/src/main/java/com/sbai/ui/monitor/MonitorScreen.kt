@@ -16,6 +16,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
@@ -126,7 +127,7 @@ fun MonitorScreen() {
             Text("监控", style = MaterialTheme.typography.headlineLarge)
             Text(
                 if (connected) "sing-box 内核实时状态" else "启动 VPN 后显示内核数据",
-                style = MaterialTheme.typography.bodyMedium,
+                style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.height(12.dp))
@@ -225,7 +226,7 @@ fun MonitorScreen() {
                         Spacer(Modifier.height(16.dp))
                         Text(
                             "服务未运行时此处无数据。启动 VPN 后自动连接内核。",
-                            style = MaterialTheme.typography.bodyMedium,
+                            style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
@@ -285,14 +286,14 @@ fun MonitorScreen() {
                     } else {
                         Text(
                             "服务未运行，无连接数据。",
-                            style = MaterialTheme.typography.bodyMedium,
+                            style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                 } else if (filtered.isEmpty()) {
                     Text(
                         if (connections.isEmpty()) "当前无活跃连接。" else "无匹配连接。",
-                        style = MaterialTheme.typography.bodyMedium,
+                        style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 } else {
@@ -326,7 +327,7 @@ fun MonitorScreen() {
                             effLogCount > 0 -> "跨进程遥测日志（最近 ${effLogCount} 条）"
                             else -> "服务未运行，无内核日志"
                         },
-                        style = MaterialTheme.typography.bodyMedium,
+                        style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.weight(1f),
                     )
@@ -386,7 +387,7 @@ private fun ConnectionCard(entry: SbCommandClient.ConnectionEntry, onClose: () -
             .fillMaxWidth()
             .background(
                 MaterialTheme.colorScheme.surfaceContainer,
-                MaterialTheme.shapes.small,
+                RoundedCornerShape(16.dp),
             )
             .clickable { expanded = !expanded }
             .padding(horizontal = 14.dp, vertical = 10.dp),
@@ -474,7 +475,7 @@ private fun TelemetryConnectionCard(entry: VpnRuntimeState.ConnBrief) {
             .fillMaxWidth()
             .background(
                 MaterialTheme.colorScheme.surfaceContainer,
-                MaterialTheme.shapes.small,
+                RoundedCornerShape(16.dp),
             )
             .padding(horizontal = 14.dp, vertical = 10.dp),
     ) {
@@ -626,23 +627,23 @@ private fun AggregationCard(
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.large,
-        color = colors.surfaceContainerLow,
-        tonalElevation = 2.dp,
+        color = colors.surfaceContainer,
+        tonalElevation = 0.dp,
     ) {
-        Column(Modifier.padding(18.dp)) {
-            Text(title, style = MaterialTheme.typography.titleMedium, color = colors.onSurface)
+        Column(Modifier.padding(16.dp)) {
+            Text(title, style = MaterialTheme.typography.titleSmall, color = colors.onSurface)
             Text(subtitle, style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
             Spacer(Modifier.height(14.dp))
 
             if (rows.isEmpty()) {
-                Text(emptyText, style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant)
+                Text(emptyText, style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
             } else {
                 rows.take(8).forEach { row ->
                     Column(Modifier.padding(vertical = 6.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
                                 row.key,
-                                style = MaterialTheme.typography.bodyMedium,
+                                style = MaterialTheme.typography.titleSmall,
                                 color = colors.onSurface,
                                 modifier = Modifier.weight(1f),
                                 maxLines = 1,
@@ -739,8 +740,8 @@ private fun StatusHeroCard(
                         if (publicIp?.isNotBlank() == true) append(" · IP: $publicIp")
                         if (loadingHint) append("（共享数据加载中…）")
                     },
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = fg.copy(alpha = 0.8f),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.onSurfaceVariant,
                 )
             }
             Box(

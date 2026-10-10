@@ -752,7 +752,7 @@ private fun RouteRuleCard(index: Int, rule: RouteRule, isDragging: Boolean,
                     Spacer(Modifier.size(8.dp))
                     ActionBadge(rule.action)
                     Spacer(Modifier.size(8.dp))
-                    Text(rule.name.ifBlank { ruleSummary(rule) }, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f), maxLines = 1)
+                    Text(rule.name.ifBlank { ruleSummary(rule) }, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f), maxLines = 1)
                     Switch(checked = rule.enabled, onCheckedChange = { onToggle() })
                 }
                 Text(ruleSummary(rule), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 3, modifier = Modifier.padding(start = 36.dp))
@@ -1282,12 +1282,12 @@ private fun DnsServerEditorDialog(initial: DnsServer, existingServers: List<Stri
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Switch(checked = echEnabled, onCheckedChange = { echEnabled = it })
                     Spacer(Modifier.size(8.dp))
-                    Column { Text("ECH（Encrypted Client Hello）", style = MaterialTheme.typography.bodyLarge); Text("仅 tls/https/quic/h3 支持", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                    Column { Text("ECH（Encrypted Client Hello）", style = MaterialTheme.typography.titleSmall); Text("仅 tls/https/quic/h3 支持", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 }
                 if (echEnabled) OutlinedTextField(value = echConfig, onValueChange = { echConfig = it }, label = { Text("ECH config（可选，PEM / echconfiglist）") }, modifier = Modifier.fillMaxWidth(), minLines = 2)
             }
             if (type == DnsServerType.FAKEIP) {
-                if (hasOtherFakeip) Text("已存在 fakeIP「$existingFakeipTag」，sing-box 只允许一个 fakeIP。请先删除或改为编辑它。", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
+                if (hasOtherFakeip) Text("已存在 fakeIP「$existingFakeipTag」，sing-box 只允许一个 fakeIP。请先删除或改为编辑它。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
                 OutlinedTextField(value = inet4Range, onValueChange = { inet4Range = it }, label = { Text("IPv4 段（可选，默认 10.0.0.0/8）") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(value = inet6Range, onValueChange = { inet6Range = it }, label = { Text("IPv6 段（可选，默认 fc00::/18）") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             }

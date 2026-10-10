@@ -120,7 +120,7 @@ fun AppPickerDialog(
                                 Spacer(Modifier.size(42.dp))
                             }
                             Column {
-                                Text(app.label, style = MaterialTheme.typography.bodyLarge, maxLines = 1)
+                                Text(app.label, style = MaterialTheme.typography.titleSmall, maxLines = 1)
                                 Text(
                                     app.packageName,
                                     style = MaterialTheme.typography.bodySmall,

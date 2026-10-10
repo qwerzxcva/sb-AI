@@ -735,9 +735,9 @@ fun SettingsBackupScreen(navController: NavHostController) {
                                             .fillMaxWidth()
                                             .padding(vertical = 6.dp)
                                             .background(
-                                                if (isActive) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
-                                                else MaterialTheme.colorScheme.surfaceContainerHighest,
-                                                RoundedCornerShape(8.dp),
+                                                if (isActive) MaterialTheme.colorScheme.primaryContainer
+                                                else MaterialTheme.colorScheme.surfaceContainer,
+                                                RoundedCornerShape(16.dp),
                                             )
                                             .padding(horizontal = 12.dp, vertical = 8.dp),
                                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -746,14 +746,14 @@ fun SettingsBackupScreen(navController: NavHostController) {
                                         Column(Modifier.weight(1f)) {
                                             Text(
                                                 profile.name,
-                                                style = MaterialTheme.typography.bodyMedium,
-                                                color = if (isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                                                style = MaterialTheme.typography.titleSmall,
+                                                color = if (isActive) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
                                             )
                                             Text(
                                                 java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.getDefault())
                                                     .format(java.util.Date(profile.createdAt)),
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = if (isActive) MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.75f) else MaterialTheme.colorScheme.onSurfaceVariant,
                                             )
                                         }
                                         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {

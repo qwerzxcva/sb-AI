@@ -482,7 +482,7 @@ fun HomeScreen() {
                         // 不再用 CommandClient 连接状态冒充 VPN 状态。
                         displayVpnPhase(effectivePhase, vpnMessage) +
                             (vpnMessage?.let { " · $it" } ?: ""),
-                        style = MaterialTheme.typography.bodyMedium,
+                        style = MaterialTheme.typography.bodySmall,
                         color = when {
                             effectivePhase == VpnRuntimeState.Phase.Error -> MaterialTheme.colorScheme.error
                             running -> MaterialTheme.colorScheme.primary
@@ -647,7 +647,7 @@ fun HomeScreen() {
             }
 
             // ---- 订阅源（每张卡片、每个节点都是独立懒加载行，避免整组一起重绘） ----
-            item { Text("订阅源", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) }
+            item { Text("订阅源", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) }
             run {
                     // 测速/切换反馈只显示一次（在订阅列表顶部），不在每个卡片上方重复
                     if (testFeedback != null) {
@@ -981,7 +981,7 @@ fun HomeScreen() {
                     Text(
                         "在设备上生成 WireGuard 密钥并注册 Cloudflare WARP，" +
                             "注册成功后自动添加一个免费 WireGuard 节点。私钥不会离开设备。",
-                        style = MaterialTheme.typography.bodyMedium,
+                        style = MaterialTheme.typography.bodySmall,
                     )
                     if (warpBusy) {
                         Text("注册中…（需联网，约数秒）", color = MaterialTheme.colorScheme.primary)
@@ -1141,7 +1141,7 @@ private fun SubscriptionCard(
         Surface(
             onClick = onToggleExpand,
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(12.dp),
+            shape = RoundedCornerShape(16.dp),
             color = if (sub.enabled) colors.surfaceContainer else colors.surfaceContainer.copy(alpha = 0.5f),
         ) {
             Column(modifier = Modifier.padding(12.dp)) {
@@ -1226,7 +1226,7 @@ private fun SelectableNodeRow(
         modifier = modifier
             .fillMaxWidth()
             .padding(vertical = 2.dp),
-        shape = RoundedCornerShape(10.dp),
+        shape = RoundedCornerShape(16.dp),
         color = when {
             selected -> colors.primaryContainer
             row.node.enabled -> colors.surfaceContainerHigh
@@ -1294,8 +1294,8 @@ private fun StandaloneNodeRow(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 28.dp, vertical = 2.dp),
-        shape = RoundedCornerShape(10.dp),
-        color = if (node.enabled) colors.surfaceContainerHigh else colors.surfaceContainerHigh.copy(alpha = 0.5f),
+        shape = RoundedCornerShape(16.dp),
+        color = if (node.enabled) colors.surfaceContainer else colors.surfaceContainer.copy(alpha = 0.5f),
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
@@ -1311,7 +1311,7 @@ private fun StandaloneNodeRow(
             Column(Modifier.weight(1f)) {
                 Text(
                     node.name.ifBlank { "未命名节点" },
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.titleSmall,
                     maxLines = 1,
                 )
                 Text(

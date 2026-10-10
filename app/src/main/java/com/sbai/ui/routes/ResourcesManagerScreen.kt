@@ -136,7 +136,7 @@ fun ResourcesManagerScreen(onBack: () -> Unit) {
                 item {
                     Text(
                         "暂无资源。点击右下角「添加资源」新增 IP 列表等。",
-                        style = MaterialTheme.typography.bodyLarge,
+                        style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(24.dp),
                     )
@@ -150,9 +150,9 @@ fun ResourcesManagerScreen(onBack: () -> Unit) {
                             .fillMaxWidth()
                             .padding(horizontal = 8.dp, vertical = 6.dp)
                             .background(
-                                if (res.enabled) MaterialTheme.colorScheme.surfaceContainerHighest
-                                else MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.5f),
-                                RoundedCornerShape(8.dp),
+                                if (res.enabled) MaterialTheme.colorScheme.surfaceContainer
+                                else MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.5f),
+                                RoundedCornerShape(16.dp),
                             )
                             .padding(horizontal = 12.dp, vertical = 8.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -161,14 +161,14 @@ fun ResourcesManagerScreen(onBack: () -> Unit) {
                         Column(Modifier.weight(1f)) {
                             Text(
                                 res.name.ifBlank { "（未命名）" },
-                                style = MaterialTheme.typography.bodyMedium,
+                                style = MaterialTheme.typography.titleSmall,
                                 color = if (res.enabled) MaterialTheme.colorScheme.onSurface
                                 else MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                             Text(
                                 res.resType.displayName + " · " + ageStr +
                                     (res.lastError?.let { " · 错误: $it" }.orEmpty()),
-                                style = MaterialTheme.typography.labelSmall,
+                                style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
