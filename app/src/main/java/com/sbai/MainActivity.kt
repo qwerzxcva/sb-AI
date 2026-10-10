@@ -145,14 +145,23 @@ private fun MainScaffold() {
         animationSpec = androidx.compose.animation.core.tween(250),
         label = "bottomBarSlide",
     )
+    // 累计同方向滚动量，超过阈值才切换底栏显隐：逐帧 delta 直接触发 hide/show
+    // 会让 250ms 位移动画在滚动抖动时反复启停（底栏每帧重组），是上下滑卡顿主因。
     val nestedScrollConnection = remember {
+        var accumulated = 0f
         object : androidx.compose.ui.input.nestedscroll.NestedScrollConnection {
             override fun onPreScroll(
                 available: androidx.compose.ui.geometry.Offset,
                 source: androidx.compose.ui.input.nestedscroll.NestedScrollSource,
             ): androidx.compose.ui.geometry.Offset {
-                if (available.y < -1f) BottomBarController.hide()
-                else if (available.y > 1f) BottomBarController.show()
+                val y = available.y
+                // 方向反转时重置累计量
+                if ((y > 0 && accumulated < 0) || (y < 0 && accumulated > 0)) accumulated = 0f
+                accumulated += y
+                when {
+                    accumulated < -24f -> { BottomBarController.hide(); accumulated = 0f }
+                    accumulated > 24f -> { BottomBarController.show(); accumulated = 0f }
+                }
                 return androidx.compose.ui.geometry.Offset.Zero
             }
         }

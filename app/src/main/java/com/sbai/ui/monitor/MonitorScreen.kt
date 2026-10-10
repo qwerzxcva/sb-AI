@@ -100,29 +100,12 @@ fun MonitorScreen() {
     }
     @Suppress("UNUSED_EXPRESSION") clockTick
 
-    Box(modifier = Modifier.fillMaxSize()) {
-        // 背景渐变，避免一片死黑
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(260.dp)
-                .background(
-                    androidx.compose.ui.graphics.Brush.verticalGradient(
-                        listOf(
-                            MaterialTheme.colorScheme.surfaceContainerHigh,
-                            MaterialTheme.colorScheme.surface.copy(alpha = 0f),
-                        ),
-                    ),
-                ),
-        )
-
-        // 全白色背景（用户要求）
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(MaterialTheme.colorScheme.surface)
-                .padding(horizontal = tokens.screenHorizontalPadding),
-        ) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.surface)
+            .padding(horizontal = tokens.screenHorizontalPadding),
+    ) {
             Spacer(Modifier.height(16.dp))
             Text("监控", style = MaterialTheme.typography.headlineLarge)
             Text(
@@ -366,7 +349,6 @@ fun MonitorScreen() {
                 }
             }
         }
-    }
     }
 }
 
