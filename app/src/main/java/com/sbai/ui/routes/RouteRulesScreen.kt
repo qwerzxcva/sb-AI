@@ -173,6 +173,7 @@ fun RouteRulesScreen() {
     var editingDnsRule by remember { mutableStateOf<DnsRule?>(null) }
     var editingHostsEntry by remember { mutableStateOf<com.sbai.data.HostsEntry?>(null) }
     var showResourcesManager by remember { mutableStateOf(false) }
+    var showDnsQuickPolicy by remember { mutableStateOf(false) }
 
     // 路由规则自动推导的 DNS 规则（只读展示）——缓存，避免每次重组重算
     val autoDnsRules by remember(dnsServers, dnsGroups, routeRules) {
@@ -255,6 +256,18 @@ fun RouteRulesScreen() {
         ResourcesManagerScreen(onBack = { showResourcesManager = false })
         return
     }
+    if (showDnsQuickPolicy) {
+        DnsQuickPolicyDialog(
+            dnsServers = dnsServers,
+            dnsGroups = dnsGroups,
+            onDismiss = { showDnsQuickPolicy = false },
+            onApply = { templates ->
+                templates.forEach { store.upsertDnsRule(it) }
+                showDnsQuickPolicy = false
+            },
+        )
+        return
+    }
     editingHostsEntry?.let { entry ->
         HostsEntryEditorDialog(
             initial = entry,
@@ -285,11 +298,18 @@ fun RouteRulesScreen() {
                                 text = { Text("添加路由规则") },
                             )
                         } else {
-                            ExtendedFloatingActionButton(
-                                onClick = { editingDnsRule = DnsRule() },
-                                icon = { Icon(Icons.Filled.Add, contentDescription = null) },
-                                text = { Text("添加 DNS 规则") },
-                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                ExtendedFloatingActionButton(
+                                    onClick = { showDnsQuickPolicy = true },
+                                    icon = { Icon(Icons.Filled.Settings, contentDescription = null) },
+                                    text = { Text("快速策略") },
+                                )
+                                ExtendedFloatingActionButton(
+                                    onClick = { editingDnsRule = DnsRule() },
+                                    icon = { Icon(Icons.Filled.Add, contentDescription = null) },
+                                    text = { Text("添加 DNS 规则") },
+                                )
+                            }
                         }
                     }
                     else -> ExtendedFloatingActionButton(
@@ -1271,11 +1291,14 @@ private fun DnsServerEditorDialog(initial: DnsServer, existingServers: List<Stri
             if (needsAddress) OutlinedTextField(value = address, onValueChange = { address = it }, label = { Text("地址（如 223.5.5.5 / tls://1.1.1.1 / https://dns.google/dns-query）") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(value = detour, onValueChange = { detour = it }, label = { Text("出口（可选，留空 = 不指定）") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             ExposedDropdownMenuBox(expanded = resolverExpanded, onExpandedChange = { resolverExpanded = it }) {
-                OutlinedTextField(value = resolver.ifBlank { "（不使用）" }, onValueChange = {}, readOnly = true, label = { Text("address_resolver（可选）") }, trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(resolverExpanded) }, modifier = Modifier.menuAnchor().fillMaxWidth())
+                OutlinedTextField(value = resolver.ifBlank { "（不使用）" }, onValueChange = {}, readOnly = true, label = { Text("address_resolver（可选，解析 DoH 域名）") }, trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(resolverExpanded) }, modifier = Modifier.menuAnchor().fillMaxWidth())
                 ExposedDropdownMenu(expanded = resolverExpanded, onDismissRequest = { resolverExpanded = false }) {
                     DropdownMenuItem(text = { Text("（不使用）") }, onClick = { resolver = ""; resolverExpanded = false })
                     existingServers.filter { it != tag }.forEach { s -> DropdownMenuItem(text = { Text(s) }, onClick = { resolver = s; resolverExpanded = false }) }
                 }
+            }
+            if (resolver.isNotBlank()) {
+                Text("address_resolver 用于 bootstrap DoH/DoT 域名（如 dns.google），避免循环依赖。通常指向一个 UDP/local DNS。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary)
             }
             OutlinedTextField(value = clientSubnet, onValueChange = { clientSubnet = it }, label = { Text("ECS client_subnet（可选，如 1.0.1.0/24 或 auto）") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             if (supportsEch) {
@@ -1382,7 +1405,7 @@ private fun DnsRuleEditorDialog(initial: DnsRule, serverOptions: List<String>, r
     RestoreBottomBarOnDispose()
 
     fun doSave() {
-        if (ruleAction == "route" && server.isBlank()) { error = "route 动作必须选择目标 DNS / group"; return }
+        if ((ruleAction == "route" || ruleAction == "evaluate") && server.isBlank()) { error = "${ruleAction} 动作必须选择目标 DNS / group"; return }
         onSave(initial.copy(name = name.trim(), domains = domains.toLines(), domainSuffixes = suffixes.toLines(),
             domainKeywords = keywords.toLines(), domainRegexes = regexes.toLines(),
             ipCidrs = ipCidrs.toLines(), ruleSetTags = sets.toLines(),
@@ -1422,10 +1445,13 @@ private fun DnsRuleEditorDialog(initial: DnsRule, serverOptions: List<String>, r
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { DNS_QUERY_TYPES.forEach { qt -> FilterChip(selected = qt in queryTypes, onClick = { queryTypes = if (qt in queryTypes) queryTypes - qt else queryTypes + qt }, label = { Text(qt) }) } }
             Text("动作", style = MaterialTheme.typography.labelLarge)
             SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                listOf("route" to "路由", "route-options" to "改写应答", "reject" to "拒绝", "pre-defined" to "预定义")
-                    .forEachIndexed { i, (v, label) -> SegmentedButton(selected = ruleAction == v, onClick = { ruleAction = v }, shape = SegmentedButtonDefaults.itemShape(index = i, count = 4)) { Text(label) } }
+                listOf("route" to "路由", "evaluate" to "评估", "route-options" to "改写应答", "reject" to "拒绝", "pre-defined" to "预定义")
+                    .forEachIndexed { i, (v, label) -> SegmentedButton(selected = ruleAction == v, onClick = { ruleAction = v }, shape = SegmentedButtonDefaults.itemShape(index = i, count = 5)) { Text(label) } }
             }
-            if (ruleAction == "route") {
+            if (ruleAction == "evaluate") {
+                Text("评估（Evaluate）：先用指定 DNS 解析，再根据解析出的 IP 匹配后续 DNS 规则（需配合 match_response 规则使用，实现 mihomo fallback-filter 效果）", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary)
+            }
+            if (ruleAction == "route" || ruleAction == "evaluate") {
                 ExposedDropdownMenuBox(expanded = serverExpanded, onExpandedChange = { serverExpanded = it }) {
                     OutlinedTextField(value = server.ifBlank { "（必选）" }, onValueChange = {}, readOnly = true, label = { Text("目标 DNS / group") }, trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(serverExpanded) }, modifier = Modifier.menuAnchor().fillMaxWidth())
                     ExposedDropdownMenu(expanded = serverExpanded, onDismissRequest = { serverExpanded = false }) { serverOptions.forEach { opt -> DropdownMenuItem(text = { Text(opt) }, onClick = { server = opt; serverExpanded = false }) } }
@@ -1440,7 +1466,7 @@ private fun DnsRuleEditorDialog(initial: DnsRule, serverOptions: List<String>, r
                 MultiLineField("覆盖应答 NS 记录（一行一条）", ns) { ns = it }
                 MultiLineField("覆盖应答 EXTRA 记录（一行一条）", extra) { extra = it }
             }
-            if (ruleAction == "route" || ruleAction == "route-options") {
+            if (ruleAction == "route" || ruleAction == "evaluate" || ruleAction == "route-options") {
                 ExposedDropdownMenuBox(expanded = strategyExpanded, onExpandedChange = { strategyExpanded = it }) {
                     OutlinedTextField(value = ipStrategy.ifBlank { "（不设置）" }, onValueChange = {}, readOnly = true, label = { Text("IP 解析策略（可选）") }, trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(strategyExpanded) }, modifier = Modifier.menuAnchor().fillMaxWidth())
                     ExposedDropdownMenu(expanded = strategyExpanded, onDismissRequest = { strategyExpanded = false }) { IP_STRATEGIES.forEach { s -> DropdownMenuItem(text = { Text(if (s.isBlank()) "（不设置）" else s) }, onClick = { ipStrategy = s; strategyExpanded = false }) } }

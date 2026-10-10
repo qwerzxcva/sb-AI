@@ -329,21 +329,11 @@ fun HomeScreen() {
                 .toList()
         }
     }
-    // 本地订阅（手动添加/剪贴板/WARP）：虚拟订阅卡片，与远程订阅并列展示
-    val localSubscription = remember {
-        Subscription(
-            id = "local",
-            name = "本地节点",
-            url = "",  // 无 URL 表示本地订阅
-            enabled = true,
-        )
+    // 独立节点（非订阅来源）：节点卡片已并入订阅卡片，此组只列手动/剪贴板导入的节点
+    val filteredStandaloneNodes by remember(filteredNodes) {
+        derivedStateOf { filteredNodes.filter { it.node.subscriptionId == null } }
     }
-    // 确保本地订阅始终存在于列表首位
-    val allSubscriptionsWithLocal = remember(subscriptions) {
-        listOf(localSubscription) + subscriptions
-    }
-    // 本地节点：subscriptionId == "local" 或 null（兼容旧数据）
-    val localNodes = proxyNodes.filter { it.subscriptionId == "local" || it.subscriptionId == null }
+    val standaloneNodes = proxyNodes.count { it.subscriptionId == null }
     // :core 进程启动错误已由 VpnRuntimeState.message 跨进程刷新（每 2s），
     // 旧「读一次 SharedPreferences」的 persistedError 已废弃（只读一次，服务启动后崩溃的错误 UI 不刷新——P0 服务错误跨进程丢失 bug 已通过 VpnRuntimeState 根治）。
     // 注：VpnRuntimeState 已改用文件通道（跨进程永远最新），UI 轮询 refreshFromDisk 即可。
@@ -356,38 +346,40 @@ fun HomeScreen() {
     val vpnMessage by VpnRuntimeState.message.collectAsState()
     // 跨进程遥测快照（连接时长/出口IP/流量），由 :core 周期发布、上方轮询刷新
     val telemetry by VpnRuntimeState.telemetry.collectAsState()
+    // 时钟只在状态可能随时间过期时才需要（Starting/Stopping/Running）；
+    // Stopped/Error 每秒触发整页重组是卡顿来源，此时间隔放宽到 15s。
+    val needClock = vpnPhase == VpnRuntimeState.Phase.Starting ||
+        vpnPhase == VpnRuntimeState.Phase.Stopping ||
+        vpnPhase == VpnRuntimeState.Phase.Running
     // 时钟心跳与 effectivePhase 计算封装到独立 produceState，避免整页重组。
     // 只有 effectivePhase 真正变化（Starting → Stopped、Running → Error）时才通知订阅者。
-    // 注意：不能把 vpnPhase 放 keys 里，否则每次阶段切换都重启协程、丢失 lastPublishedAt 历史。
-    val effectivePhase by produceState(initialValue = vpnPhase) {
+    val effectivePhase by produceState(
+        initialValue = vpnPhase,
+        vpnPhase,
+        needClock,
+    ) {
         var lastPublishedAt = 0L
         while (true) {
-            // 每轮刷新最新阶段（vpnPhase 由外层 collectAsState 订阅）
-            val currentPhase = vpnPhase
-            val needClock = currentPhase == VpnRuntimeState.Phase.Starting ||
-                currentPhase == VpnRuntimeState.Phase.Stopping ||
-                currentPhase == VpnRuntimeState.Phase.Running
             withContext(Dispatchers.IO) {
                 VpnRuntimeState.refreshFromDisk(context)
                 VpnRuntimeState.refreshTelemetry(context)
                 RuleStore.get(context).refreshFromDisk()
                 lastPublishedAt = VpnRuntimeState.lastPublishedAt(context)
             }
-            val newPhase = when (currentPhase) {
+            val newPhase = when (vpnPhase) {
                 VpnRuntimeState.Phase.Starting, VpnRuntimeState.Phase.Stopping ->
                     if (lastPublishedAt > 0 &&
                         System.currentTimeMillis() - lastPublishedAt > VpnRuntimeState.STUCK_TIMEOUT_MS
-                    ) VpnRuntimeState.Phase.Stopped else currentPhase
+                    ) VpnRuntimeState.Phase.Stopped else vpnPhase
                 VpnRuntimeState.Phase.Running ->
                     if (lastPublishedAt > 0 &&
                         System.currentTimeMillis() - lastPublishedAt > VpnRuntimeState.RUNNING_LEASE_TIMEOUT_MS
-                    ) VpnRuntimeState.Phase.Error else currentPhase
-                else -> currentPhase
+                    ) VpnRuntimeState.Phase.Error else vpnPhase
+                else -> vpnPhase
             }
             if (newPhase != value) {
                 value = newPhase
             }
-            // Stopped/Error 每秒触发整页重组是卡顿来源，此时间隔放宽到 15s。
             delay(if (needClock) 1000L else 15_000L)
         }
     }
@@ -674,13 +666,8 @@ fun HomeScreen() {
                             )
                         }
                     }
-                    allSubscriptionsWithLocal.forEach { sub ->
-                        val subNodes = if (sub.id == "local") {
-                            // 本地订阅：显示 subscriptionId == "local" 或 null 的节点
-                            filteredNodes.filter { it.node.subscriptionId == "local" || it.node.subscriptionId == null }
-                        } else {
-                            filteredNodes.filter { it.node.subscriptionId == sub.id }
-                        }
+                    subscriptions.forEach { sub ->
+                        val subNodes = filteredNodes.filter { it.node.subscriptionId == sub.id }
                         item(key = "sub-${sub.id}") {
                             SubscriptionCard(
                                 sub = sub,
@@ -693,11 +680,6 @@ fun HomeScreen() {
                                     } else expandedSubscriptionIds + sub.id
                                 },
                                 onRefresh = {
-                                    // 本地订阅不支持刷新
-                                    if (sub.id == "local") {
-                                        testFeedback = "本地节点无需刷新（手动添加或从剪贴板导入）"
-                                        return@SubscriptionCard
-                                    }
                                     if (refreshingId == null) {
                                         refreshingId = sub.id
                                         scope.launch {
@@ -716,17 +698,9 @@ fun HomeScreen() {
                                     }
                                 },
                                 onToggleEnabled = { enabled ->
-                                    // 本地订阅不支持禁用
-                                    if (sub.id != "local") {
-                                        store.upsertSubscription(sub.copy(enabled = enabled))
-                                    }
+                                    store.upsertSubscription(sub.copy(enabled = enabled))
                                 },
-                                onEditSubscription = {
-                                    // 本地订阅不支持编辑
-                                    if (sub.id != "local") {
-                                        editingSub = sub
-                                    }
-                                },
+                                onEditSubscription = { editingSub = sub },
                             )
                         }
                         if (sub.id in expandedSubscriptionIds) {
@@ -785,53 +759,6 @@ fun HomeScreen() {
                                         onEdit = { editingNode = row.node },
                                         modifier = Modifier.padding(horizontal = 16.dp),
                                     )
-                                }
-                                // 本地订阅卡片末尾：手动添加/剪贴板导入/WARP 按钮
-                                if (sub.id == "local") {
-                                    item(key = "local-warp-btn") {
-                                        SbItem(
-                                            title = "获取 WARP（免费隧道）",
-                                            subtitle = "一键注册 Cloudflare WARP，生成 WireGuard 节点",
-                                            icon = Icons.Filled.CloudDownload,
-                                            onClick = { showWarpDialog = true },
-                                        )
-                                    }
-                                    item(key = "local-manual-btn") {
-                                        SbItem(
-                                            title = "手动添加节点",
-                                            subtitle = "粘贴 sing-box outbound JSON",
-                                            icon = Icons.Filled.Add,
-                                            onClick = { editingNode = ProxyNode(subscriptionId = "local") },
-                                        )
-                                    }
-                                    item(key = "local-clipboard-btn") {
-                                        SbItem(
-                                            title = "从剪贴板导入",
-                                            subtitle = "解析分享链接（vless/vmess/trojan/ss/hysteria2/wireguard）",
-                                            icon = Icons.Filled.ContentPaste,
-                                            onClick = {
-                                                val clip = clipboardText(context)
-                                                if (clip.isNullOrBlank()) {
-                                                    importResult = "剪贴板为空"
-                                                } else {
-                                                    val parsed = com.sbai.service.ShareLinkParser.parseSubscription(clip)
-                                                    if (parsed.isEmpty()) {
-                                                        importResult = "未识别到可解析的节点链接"
-                                                    } else {
-                                                        parsed.forEach { p ->
-                                                            store.upsertProxyNode(ProxyNode(name = p.name, outboundJson = p.outboundJson, subscriptionId = "local"))
-                                                        }
-                                                        importResult = "已导入 ${parsed.size} 个节点"
-                                                    }
-                                                }
-                                            },
-                                        )
-                                    }
-                                    importResult?.let { msg ->
-                                        item(key = "local-import-result") {
-                                            SbItem(title = "导入结果", subtitle = msg)
-                                        }
-                                    }
                                 }
                             }
                         }
@@ -941,7 +868,110 @@ fun HomeScreen() {
                     Spacer(Modifier.height(8.dp))
                 }
             }
-
+            item {
+                SbGroup(title = "本地源（${standaloneNodes}）") {
+                    // 搜索过滤（订阅节点在订阅卡片内展开，这里只列手动/剪贴板导入的独立节点）
+                    item {
+                        Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
+                            OutlinedTextField(
+                                value = nodeFilterQuery,
+                                onValueChange = { nodeFilterQuery = it },
+                                label = { Text("搜索（名称/地区）") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth(),
+                                trailingIcon = {
+                                    if (nodeFilterQuery.isNotBlank()) {
+                                        IconButton(onClick = { nodeFilterQuery = "" }) {
+                                            Icon(Icons.Filled.Close, contentDescription = "清除", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
+                item { Spacer(Modifier.height(120.dp)) }
+                                    }
+                                },
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                FilterChip(
+                                    selected = nodeFilterNoDelay,
+                                    onClick = { nodeFilterNoDelay = !nodeFilterNoDelay },
+                                    label = { Text("无延迟") },
+                                )
+                                SingleChoiceSegmentedButtonRow {
+                                    SegmentedButton(
+                                        selected = nodeSortMode == NodeSortMode.NAME_ASC,
+                                        onClick = { nodeSortMode = if (nodeSortMode == NodeSortMode.NAME_ASC) NodeSortMode.LATENCY_ASC else NodeSortMode.NAME_ASC },
+                                        shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
+                                    ) { Text("名称↑") }
+                                    SegmentedButton(
+                                        selected = nodeSortMode == NodeSortMode.LATENCY_ASC,
+                                        onClick = { nodeSortMode = if (nodeSortMode == NodeSortMode.LATENCY_ASC) NodeSortMode.NAME_ASC else NodeSortMode.LATENCY_ASC },
+                                        shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
+                                    ) { Text("延迟↑") }
+                                }
+                            }
+                        }
+                    }
+                    // 独立节点（subscriptionId==null，即 WARP / 手动添加 / 剪贴板导入）：
+                    for (row in filteredStandaloneNodes) {
+                        item(key = "standalone-${row.node.id}") {
+                            StandaloneNodeRow(
+                                node = row.node,
+                                subtitle = row.subtitle,
+                                testing = testingNodeId == row.node.id,
+                                onToggle = {
+                                    store.upsertProxyNode(row.node.copy(enabled = !row.node.enabled, disabledReason = null))
+                                },
+                                onTest = { testSingleNode(row.node) },
+                                onClick = { editingNode = row.node },
+                                onDelete = { store.deleteProxyNode(row.node.id) },
+                            )
+                        }
+                    }
+                    item {
+                        SbItem(
+                            title = "获取 WARP（免费隧道）",
+                            subtitle = "一键注册 Cloudflare WARP，生成 WireGuard 节点",
+                            icon = Icons.Filled.CloudDownload,
+                            onClick = { showWarpDialog = true },
+                        )
+                    }
+                    item {
+                        SbItem(
+                            title = "手动添加节点",
+                            subtitle = "粘贴 sing-box outbound JSON",
+                            icon = Icons.Filled.Add,
+                            onClick = { editingNode = ProxyNode() },
+                        )
+                    }
+                    item {
+                        SbItem(
+                            title = "从剪贴板导入",
+                            subtitle = "解析分享链接（vless/vmess/trojan/ss/hysteria2/wireguard）",
+                            icon = Icons.Filled.ContentPaste,
+                            onClick = {
+                                val clip = clipboardText(context)
+                                if (clip.isNullOrBlank()) {
+                                    importResult = "剪贴板为空"
+                                } else {
+                                    val parsed = com.sbai.service.ShareLinkParser.parseSubscription(clip)
+                                    if (parsed.isEmpty()) {
+                                        importResult = "未识别到可解析的节点链接"
+                                    } else {
+                                        parsed.forEach { p ->
+                                            store.upsertProxyNode(ProxyNode(name = p.name, outboundJson = p.outboundJson))
+                                        }
+                                        importResult = "已导入 ${parsed.size} 个节点"
+                                    }
+                                }
+                            },
+                        )
+                    }
+                    importResult?.let { msg ->
+                        item {
+                            SbItem(title = "导入结果", subtitle = msg)
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -982,7 +1012,7 @@ fun HomeScreen() {
                                     warpError = "生成节点失败：wireguard 解析失败"
                                 } else {
                                     store.upsertProxyNode(
-                                        ProxyNode(name = "WARP", outboundJson = parsed.outboundJson, subscriptionId = "local"),
+                                        ProxyNode(name = "WARP", outboundJson = parsed.outboundJson),
                                     )
                                     kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
                                         showWarpDialog = false
@@ -1132,37 +1162,33 @@ private fun SubscriptionCard(
                         )
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        // 本地订阅不显示 on/off 开关（本地节点始终可用）
-                        if (sub.id != "local") {
-                            Text(
-                                text = if (sub.enabled) "on" else "off",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = if (sub.enabled) colors.primary else colors.onSurfaceVariant,
-                                modifier = Modifier.padding(horizontal = 2.dp),
-                            )
-                            Switch(
-                                checked = sub.enabled,
-                                onCheckedChange = onToggleEnabled,
-                            )
-                        }
+                        // 订阅启用/禁用（右侧 on/off）——master 的样式参考：on/off 文字标签 + Switch
+                        Text(
+                            text = if (sub.enabled) "on" else "off",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = if (sub.enabled) colors.primary else colors.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 2.dp),
+                        )
+                        Switch(
+                            checked = sub.enabled,
+                            onCheckedChange = onToggleEnabled,
+                        )
                         IconButton(onClick = onToggleExpand) {
                             Icon(
                                 imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
                                 contentDescription = if (expanded) "收起节点" else "展开节点",
                             )
                         }
-                        // 本地订阅不显示刷新和设置按钮
-                        if (sub.id != "local") {
-                            if (refreshing) {
-                                CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
-                            } else {
-                                IconButton(onClick = onRefresh) {
-                                    Icon(Icons.Filled.Refresh, contentDescription = "更新")
-                                }
+                        if (refreshing) {
+                            CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
+                        } else {
+                            IconButton(onClick = onRefresh) {
+                                Icon(Icons.Filled.Refresh, contentDescription = "更新")
                             }
-                            IconButton(onClick = onEditSubscription) {
-                                Icon(Icons.Filled.Settings, contentDescription = "订阅设置")
-                            }
+                        }
+                        // 订阅设置入口：之前只有开关/展开/刷新，没有编辑入口（用户反馈无法编辑订阅）
+                        IconButton(onClick = onEditSubscription) {
+                            Icon(Icons.Filled.Settings, contentDescription = "订阅设置")
                         }
                     }
                 }

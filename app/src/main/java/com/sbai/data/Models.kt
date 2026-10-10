@@ -224,7 +224,7 @@ data class DnsRule(
     val rewriteTtl: Int? = null,
     /** 本条规则级别的 ECS 覆盖 */
     val clientSubnet: String? = null,
-    /** 规则动作：route=路由到 server / route-options=改写应答 / reject=拒绝 / pre-defined=预定义 */
+    /** 规则动作：route=路由到 server / route-options=改写应答 / reject=拒绝 / evaluate=先解析再二次匹配 / pre-defined=预定义 */
     val action: String = "route",
     /** reject 方式的 rcode（route-options / reject 时用）：success / refused / formerror / notimp / nxdomain */
     val rcode: String = "",
