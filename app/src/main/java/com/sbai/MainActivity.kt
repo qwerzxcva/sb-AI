@@ -49,8 +49,6 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
-import com.kyant.backdrop.backdrops.layerBackdrop
-import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import com.sbai.data.RuleStore
 import com.sbai.ui.components.BottomBarController
 import com.sbai.ui.components.SbGlassBottomBar
@@ -134,9 +132,7 @@ private fun MainScaffold() {
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
 
-    // 磨砂采样已关（每帧模糊着色器+离屏纹理是卡顿来源）：底栏用静态半透明。
-    val pageBackdrop = rememberLayerBackdrop()
-
+    // 实时磨砂玻璃底栏：使用 RenderEffect 硬件加速模糊
     // 下滑隐藏 / 上滑显示底栏；BottomBarController 为跨组件真源，
     // 编辑器关闭时显式恢复（修复「二级页上滑隐藏后返回列表唤不出底栏」bug）
     val barVisible by BottomBarController.visible.collectAsState()
@@ -235,7 +231,6 @@ private fun MainScaffold() {
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 SbGlassBottomBar(
-                    pageBackdrop = pageBackdrop,
                     items = items.map { SbNavItem(it.route, it.title, it.icon) },
                     currentRoute = mainCurrentRoute,
                     onSelect = { route ->
@@ -250,7 +245,7 @@ private fun MainScaffold() {
                     },
                     modifier = Modifier.weight(1f),
                     barHeight = controlHeight,
-                    useGlassBackdrop = false,
+                    useGlassBackdrop = true,
                 )
                 Spacer(modifier = Modifier.size(gap))
                 // 保留原权限请求、连接状态与启停行为；窄屏仍有 56dp 独立触摸区。

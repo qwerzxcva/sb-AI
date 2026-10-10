@@ -1,5 +1,6 @@
 package com.sbai.ui.components
 
+import android.os.Build
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
@@ -35,8 +36,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asComposeRenderEffect
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.render.AndroidRenderEffect
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.sbai.ui.theme.LocalSbStyleTokens
 
@@ -88,6 +92,68 @@ fun SbChoiceCard(
         color = if (selected) colors.primaryContainer else colors.surfaceContainer,
     ) {
         Column(Modifier.padding(16.dp)) {
+            Text(
+                title,
+                style = MaterialTheme.typography.titleSmall,
+                color = if (selected) colors.onPrimaryContainer else colors.onSurface,
+            )
+            Text(
+                subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = if (selected) colors.onPrimaryContainer.copy(alpha = 0.75f) else colors.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+/**
+ * 液态玻璃选择卡片：标题 + 说明，选中用主色容器。使用玻璃磨砂效果。
+ */
+@Composable
+fun GlassChoiceCard(
+    title: String,
+    subtitle: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val colors = MaterialTheme.colorScheme
+    val backgroundColor = if (selected) {
+        colors.primaryContainer.copy(alpha = 0.85f)
+    } else {
+        colors.surfaceContainer.copy(alpha = 0.75f)
+    }
+    
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .clickable(onClick = onClick)
+            .then(
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    Modifier
+                        .background(backgroundColor)
+                        .border(
+                            width = 1.dp,
+                            color = if (selected) colors.primary.copy(alpha = 0.5f) else colors.outline.copy(alpha = 0.3f),
+                            shape = RoundedCornerShape(16.dp)
+                        )
+                        .graphicsLayer {
+                            renderEffect = AndroidRenderEffect
+                                .createBlurEffect(
+                                    radiusX = 16.dp.toPx(),
+                                    radiusY = 16.dp.toPx(),
+                                    edgeTreatment = AndroidRenderEffect.EdgeTreatment.CLAMP,
+                                )
+                                .asComposeRenderEffect()
+                        }
+                } else {
+                    Modifier.background(backgroundColor)
+                }
+            )
+            .padding(16.dp),
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(
                 title,
                 style = MaterialTheme.typography.titleSmall,
@@ -323,6 +389,50 @@ fun SbBadge(text: String, color: Color) {
             .padding(horizontal = 8.dp, vertical = 3.dp),
     ) {
         Text(text, style = MaterialTheme.typography.labelSmall, color = color)
+    }
+}
+
+/**
+ * 液态玻璃分组容器：使用玻璃磨砂效果。
+ */
+@Composable
+fun GlassGroup(
+    title: String,
+    modifier: Modifier = Modifier,
+    content: SbGroupScope.() -> Unit,
+) {
+    val scope = SbGroupScope().apply(content)
+    Column(modifier = modifier.fillMaxWidth()) {
+        if (title.isNotBlank()) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            )
+        }
+        val tokens = LocalSbStyleTokens.current
+        
+        GlassSurface(
+            modifier = Modifier.fillMaxWidth(),
+            cornerRadius = tokens.settingsGroupOuterCornerRadius,
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(tokens.settingsItemGap),
+            ) {
+                scope.items.forEachIndexed { index, (itemKey, itemContent) ->
+                    val actualKey = itemKey ?: index
+                    androidx.compose.runtime.key(actualKey) {
+                        Box(
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            itemContent()
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
