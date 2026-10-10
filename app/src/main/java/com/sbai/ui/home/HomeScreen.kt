@@ -94,6 +94,7 @@ import com.sbai.service.NodeBatchTester
 import com.sbai.service.SingBoxConfigGenerator
 import com.sbai.service.SubscriptionManager
 import com.sbai.ui.components.SbBadge
+import com.sbai.ui.components.SbChoiceCard
 import com.sbai.ui.components.RestoreBottomBarOnDispose
 import com.sbai.ui.components.SbGroup
 import com.sbai.ui.components.SbItem
@@ -531,28 +532,27 @@ fun HomeScreen() {
                             shape = MaterialTheme.shapes.large,
                             color = MaterialTheme.colorScheme.surfaceContainer,
                         ) {
-                            Column(Modifier.padding(14.dp)) {
+                            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                 Text("系统模式", style = MaterialTheme.typography.labelMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                Spacer(Modifier.height(8.dp))
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    FilterChip(
-                                        selected = !globalMode,
-                                        onClick = {
-                                            store.updateSettings(store.state.value.settings.copy(globalMode = false))
-                                            testFeedback = if (coreRunning) "已切换为规则模式，重启 VPN 后生效" else null
-                                        },
-                                        label = { Text("规则") },
-                                    )
-                                    FilterChip(
-                                        selected = globalMode,
-                                        onClick = {
-                                            store.updateSettings(store.state.value.settings.copy(globalMode = true))
-                                            testFeedback = if (coreRunning) "已切换为全局模式，重启 VPN 后生效" else null
-                                        },
-                                        label = { Text("全局") },
-                                    )
-                                }
+                                SbChoiceCard(
+                                    title = "规则",
+                                    subtitle = "按路由规则决定直连、代理或拦截",
+                                    selected = !globalMode,
+                                    onClick = {
+                                        store.updateSettings(store.state.value.settings.copy(globalMode = false))
+                                        testFeedback = if (coreRunning) "已切换为规则模式，重启 VPN 后生效" else null
+                                    },
+                                )
+                                SbChoiceCard(
+                                    title = "全局",
+                                    subtitle = "所有流量都走当前出口",
+                                    selected = globalMode,
+                                    onClick = {
+                                        store.updateSettings(store.state.value.settings.copy(globalMode = true))
+                                        testFeedback = if (coreRunning) "已切换为全局模式，重启 VPN 后生效" else null
+                                    },
+                                )
                             }
                         }
                     }
@@ -568,18 +568,16 @@ fun HomeScreen() {
                 SbGroup(title = "全局出口") {
                     item {
                         Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            OutboundSelectCard(
-                                label = "自动",
+                            SbChoiceCard(
+                                title = "自动",
                                 subtitle = "在全部节点里选延迟最低的",
                                 selected = effectiveSelected == "auto",
-                                enabled = true,
                                 onClick = { selectGlobalOutbound("auto") },
                             )
-                            OutboundSelectCard(
-                                label = "直连",
+                            SbChoiceCard(
+                                title = "直连",
                                 subtitle = "不走代理",
                                 selected = effectiveSelected == "direct",
-                                enabled = true,
                                 onClick = { selectGlobalOutbound("direct") },
                             )
                             if (!coreConnected) {
@@ -648,9 +646,9 @@ fun HomeScreen() {
                 }
             }
 
-            // ---- 订阅源 ----
-            item {
-                SbGroup(title = "订阅源") {
+            // ---- 订阅源（每张卡片、每个节点都是独立懒加载行，避免整组一起重绘） ----
+            item { Text("订阅源", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) }
+            run {
                     // 测速/切换反馈只显示一次（在订阅列表顶部），不在每个卡片上方重复
                     if (testFeedback != null) {
                         item {
@@ -663,8 +661,8 @@ fun HomeScreen() {
                         }
                     }
                     subscriptions.forEach { sub ->
-                        item {
-                            val subNodes = filteredNodes.filter { it.node.subscriptionId == sub.id }
+                        val subNodes = filteredNodes.filter { it.node.subscriptionId == sub.id }
+                        item(key = "sub-${sub.id}") {
                             SubscriptionCard(
                                 sub = sub,
                                 nodes = subNodes,
@@ -696,49 +694,67 @@ fun HomeScreen() {
                                 onToggleEnabled = { enabled ->
                                     store.upsertSubscription(sub.copy(enabled = enabled))
                                 },
-                                onTestNodes = {
-                                    if (batchTestProgress == -1 && subNodes.isNotEmpty()) {
-                                        if (!coreConnected) {
-                                            testFeedback = "需先启动 VPN 才能测速"
-                                        } else {
-                                            testFeedback = null
-                                            scope.launch {
-                                                batchTestProgress = 0
-                                                try {
-                                                    val groupTag = proxyGroups
-                                                        .firstOrNull { it.type == "urltest" }?.tag
-                                                        ?: proxyGroups.firstOrNull { it.type == "selector" }?.tag
-                                                        ?: "lb"
-                                                    val results = NodeBatchTester.testNodes(
-                                                        nodes = subNodes.map { it.node },
-                                                        groupTag = groupTag,
-                                                        onProgress = { done, total ->
-                                                            batchTestProgress = if (total == 0) 100 else done * 100 / total
-                                                        },
-                                                    )
-                                                    NodeBatchTester.applyResults(store, results)
-                                                    testFeedback = "测速完成 ${results.size} 节点"
-                                                } finally {
-                                                    batchTestProgress = -1
+                                onEditSubscription = { editingSub = sub },
+                            )
+                        }
+                        if (sub.id in expandedSubscriptionIds) {
+                            val selectedTag = proxyGroups.firstOrNull { it.tag == "proxy" }?.selected
+                                ?.takeIf { it.isNotBlank() }
+                                ?: selectedOutbound
+                            if (subNodes.isEmpty()) {
+                                item(key = "sub-${sub.id}-empty") {
+                                    Text(
+                                        "该订阅暂无节点；可点击上方更新按钮拉取。",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp),
+                                    )
+                                }
+                            } else {
+                                item(key = "sub-${sub.id}-test") {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+                                        horizontalArrangement = Arrangement.End,
+                                    ) {
+                                        TextButton(onClick = {
+                                            if (batchTestProgress == -1) {
+                                                if (!coreConnected) testFeedback = "需先启动 VPN 才能测速"
+                                                else {
+                                                    testFeedback = null
+                                                    scope.launch {
+                                                        batchTestProgress = 0
+                                                        try {
+                                                            val groupTag = proxyGroups.firstOrNull { it.type == "urltest" }?.tag
+                                                                ?: proxyGroups.firstOrNull { it.type == "selector" }?.tag ?: "lb"
+                                                            val results = NodeBatchTester.testNodes(
+                                                                nodes = subNodes.map { it.node }, groupTag = groupTag,
+                                                                onProgress = { done, total -> batchTestProgress = if (total == 0) 100 else done * 100 / total },
+                                                            )
+                                                            NodeBatchTester.applyResults(store, results)
+                                                            testFeedback = "测速完成 ${results.size} 节点"
+                                                        } finally { batchTestProgress = -1 }
+                                                    }
                                                 }
                                             }
-                                        }
+                                        }) { Text("测速本订阅节点") }
                                     }
-                                },
-                                onEditNode = { editingNode = it },
-                                onDeleteNode = { store.deleteProxyNode(it) },
-                                onToggleNode = { node, enabled ->
-                                    store.upsertProxyNode(node.copy(enabled = enabled, disabledReason = null))
-                                },
-                                onEditSubscription = { editingSub = sub },
-                                // 选中态：内核已回写用内核，否则用本地记下的选择（点了立刻变色）
-                                selectedTag = proxyGroups.firstOrNull { it.tag == "proxy" }?.selected
-                                    ?.takeIf { it.isNotBlank() }
-                                    ?: selectedOutbound,
-                                onSelectNode = { node ->
-                                    selectGlobalOutbound(SingBoxConfigGenerator.nodeTagOf(node))
-                                },
-                            )
+                                }
+                                items(
+                                    count = subNodes.size,
+                                    key = { index -> "node-${subNodes[index].node.id}" },
+                                ) { index ->
+                                    val row = subNodes[index]
+                                    SelectableNodeRow(
+                                        row = row,
+                                        selected = selectedTag == SingBoxConfigGenerator.nodeTagOf(row.node),
+                                        onSelect = { selectGlobalOutbound(SingBoxConfigGenerator.nodeTagOf(row.node)) },
+                                        onToggle = { enabled -> store.upsertProxyNode(row.node.copy(enabled = enabled, disabledReason = null)) },
+                                        onDelete = { store.deleteProxyNode(row.node.id) },
+                                        onEdit = { editingNode = row.node },
+                                        modifier = Modifier.padding(horizontal = 16.dp),
+                                    )
+                                }
+                            }
                         }
                     }
                     item {
@@ -808,9 +824,8 @@ fun HomeScreen() {
                             }
                         }
                 }
-                }
-                SbSpacer()
             }
+            item { SbSpacer() }
 
             // ---- 节点 ----
             // 批量测速面板：对所有启用节点逐个 URLTest，结果回填（参考 LxBox 009 列表测速）
@@ -1084,19 +1099,19 @@ private fun HomeTrafficCard() {
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
             Column {
-                Text("实时流量", style = MaterialTheme.typography.labelMedium, color = colors.onPrimaryContainer.copy(alpha = 0.75f))
+                Text("实时流量", style = MaterialTheme.typography.titleSmall)
                 Text(
                     "↑ ${com.sbai.ui.monitor.formatSpeed(effStatus.uplink)}   ↓ ${com.sbai.ui.monitor.formatSpeed(effStatus.downlink)}",
-                    style = MaterialTheme.typography.titleLarge,
-                    color = colors.onPrimaryContainer,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.onSurfaceVariant,
                 )
             }
             Column(horizontalAlignment = Alignment.End) {
-                Text("累计", style = MaterialTheme.typography.labelMedium, color = colors.onPrimaryContainer.copy(alpha = 0.75f))
+                Text("累计", style = MaterialTheme.typography.titleSmall)
                 Text(
                     "↑ ${com.sbai.ui.monitor.formatBytes(effStatus.uplinkTotal)}   ↓ ${com.sbai.ui.monitor.formatBytes(effStatus.downlinkTotal)}",
-                    style = MaterialTheme.typography.titleSmall,
-                    color = colors.onPrimaryContainer,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.onSurfaceVariant,
                 )
             }
         }
@@ -1112,14 +1127,7 @@ private fun SubscriptionCard(
     onToggleExpand: () -> Unit,
     onRefresh: () -> Unit,
     onToggleEnabled: (Boolean) -> Unit,
-    onTestNodes: () -> Unit,
-    onEditNode: (com.sbai.data.ProxyNode) -> Unit,
-    onDeleteNode: (String) -> Unit,
-    onToggleNode: (com.sbai.data.ProxyNode, Boolean) -> Unit,
     onEditSubscription: () -> Unit,
-    // 当前全局选中的节点 tag（直连/自动在订阅外单独显示）
-    selectedTag: String,
-    onSelectNode: (com.sbai.data.ProxyNode) -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
     val used = sub.trafficUpload + sub.trafficDownload
@@ -1199,39 +1207,6 @@ private fun SubscriptionCard(
                 }
             }
         }
-        
-        // 展开后：节点卡片列表（点选即全局选中；直连/自动在订阅外单独显示）
-        if (expanded) {
-            Spacer(Modifier.height(6.dp))
-            if (nodes.isEmpty()) {
-                Text(
-                    "该订阅暂无节点；可点击上方更新按钮拉取。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = colors.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp),
-                )
-            } else {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
-                    horizontalArrangement = Arrangement.End,
-                ) {
-                    TextButton(onClick = onTestNodes) { Text("测速本订阅节点") }
-                }
-                nodes.forEach { row ->
-                    val nodeTag = com.sbai.service.SingBoxConfigGenerator.nodeTagOf(row.node)
-                    key(row.node.id) {
-                        SelectableNodeRow(
-                            row = row,
-                            selected = selectedTag == nodeTag,
-                            onSelect = { onSelectNode(row.node) },
-                            onToggle = { onToggleNode(row.node, it) },
-                            onDelete = { onDeleteNode(row.node.id) },
-                            onEdit = { onEditNode(row.node) },
-                        )
-                    }
-                }
-            }
-        }
     }
 }
 
@@ -1243,11 +1218,12 @@ private fun SelectableNodeRow(
     onToggle: (Boolean) -> Unit,
     onDelete: () -> Unit,
     onEdit: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val colors = MaterialTheme.colorScheme
     androidx.compose.material3.Surface(
         onClick = { if (row.node.enabled) onSelect() },
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .padding(vertical = 2.dp),
         shape = RoundedCornerShape(10.dp),
@@ -1266,7 +1242,7 @@ private fun SelectableNodeRow(
             Column(Modifier.weight(1f)) {
                 Text(
                     row.node.name.ifBlank { "未命名节点" },
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.titleSmall,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     color = if (selected) colors.onPrimaryContainer else colors.onSurface,
@@ -1296,54 +1272,6 @@ private fun SelectableNodeRow(
             }
             IconButton(onClick = onEdit) {
                 Icon(Icons.Filled.Edit, contentDescription = "编辑节点")
-            }
-        }
-    }
-}
-
-/** 全局出口选择卡片：点选选中加深。 */
-@Composable
-private fun OutboundSelectCard(
-    label: String,
-    subtitle: String,
-    selected: Boolean,
-    enabled: Boolean,
-    onClick: () -> Unit,
-) {
-    val colors = MaterialTheme.colorScheme
-    androidx.compose.material3.Surface(
-        onClick = { if (enabled) onClick() },
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(10.dp),
-        color = when {
-            selected -> colors.primaryContainer
-            enabled -> colors.surfaceContainer
-            else -> colors.surfaceContainer.copy(alpha = 0.5f)
-        },
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text(
-                    label,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = if (selected) colors.onPrimaryContainer else colors.onSurface,
-                )
-                Text(
-                    subtitle,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = if (selected) colors.onPrimaryContainer.copy(alpha = 0.75f) else colors.onSurfaceVariant,
-                )
-            }
-            if (selected) {
-                Icon(
-                    Icons.Filled.Check,
-                    contentDescription = "已选中",
-                    tint = colors.primary,
-                    modifier = Modifier.size(20.dp),
-                )
             }
         }
     }

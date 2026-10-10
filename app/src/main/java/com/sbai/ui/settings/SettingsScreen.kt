@@ -76,7 +76,6 @@ fun SettingsScreen(navController: NavHostController) {
     }.collectAsState(initial = remember(store) { store.state.value.loadBalance })
     // 一级页对话框：配置预览 / 负载均衡模式（从二级页上移，用户要求放一级页）
     var showConfigPreview by remember { mutableStateOf(false) }
-    var showModeDialog by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -107,17 +106,9 @@ fun SettingsScreen(navController: NavHostController) {
                     item {
                         SbItem(
                             title = "负载均衡",
-                            subtitle = "总开关 / 参与节点 / 高级参数",
+                            subtitle = if (loadBalance.enabled) "已开启，流量在参与节点间分摊" else "关闭",
                             icon = Icons.Filled.Balance,
                             onClick = { navController.navigate("settings_loadbalance") },
-                        )
-                    }
-                    item {
-                        SbItem(
-                            title = "负载均衡模式",
-                            subtitle = loadBalance.mode.displayName,
-                            icon = Icons.Filled.Router,
-                            onClick = { showModeDialog = true },
                         )
                     }
                     item {
@@ -184,47 +175,6 @@ fun SettingsScreen(navController: NavHostController) {
             }
             item { Spacer(Modifier.height(80.dp)) }
         }
-    }
-
-    // ---- 一级页对话框：负载均衡模式 ----
-    if (showModeDialog) {
-        AlertDialog(
-            onDismissRequest = { showModeDialog = false },
-            title = { Text("负载均衡模式") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    // 延迟最优与首页「自动」是同一行为，负载均衡只保留真正分摊/手动的两种。
-                    listOf(
-                        com.sbai.data.LoadBalanceMode.BALANCED,
-                        com.sbai.data.LoadBalanceMode.MANUAL,
-                    ).forEach { mode ->
-                        Surface(
-                            onClick = {
-                                store.updateLoadBalance(loadBalance.copy(mode = mode))
-                                showModeDialog = false
-                            },
-                            shape = RoundedCornerShape(16.dp),
-                            color = if (loadBalance.mode == mode) MaterialTheme.colorScheme.primaryContainer
-                            else MaterialTheme.colorScheme.surfaceContainer,
-                        ) {
-                            Column(Modifier.padding(16.dp).fillMaxWidth()) {
-                                Text(mode.displayName, style = MaterialTheme.typography.titleSmall)
-                                Text(
-                                    when (mode) {
-                                        com.sbai.data.LoadBalanceMode.LATENCY -> "与首页「自动」相同，已不再放在这里"
-                                        com.sbai.data.LoadBalanceMode.BALANCED -> "在可接受的延迟差内分摊到多个节点"
-                                        com.sbai.data.LoadBalanceMode.MANUAL -> "自己在代理组里切换出口"
-                                    },
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                        }
-                    }
-                }
-            },
-            confirmButton = { TextButton(onClick = { showModeDialog = false }) { Text("关闭") } },
-        )
     }
 
     // ---- 一级页对话框：配置预览 ----

@@ -98,7 +98,7 @@ fun SettingsLoadBalanceScreen(navController: NavHostController) {
                     item {
                         SbSwitchItem(
                             title = "负载均衡",
-                            subtitle = if (lb.enabled) lb.mode.displayName else "关闭",
+                            subtitle = if (lb.enabled) "流量在参与节点间分摊" else "关闭",
                             icon = Icons.Filled.Balance,
                             checked = lb.enabled,
                             onCheckedChange = { store.updateLoadBalance(lb.copy(enabled = it)) },

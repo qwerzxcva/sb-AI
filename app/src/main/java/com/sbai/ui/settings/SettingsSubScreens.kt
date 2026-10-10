@@ -160,29 +160,18 @@ fun SettingsKernelScreen(navController: NavHostController) {
                             Text("TUN 网络栈", style = MaterialTheme.typography.labelLarge)
                             Spacer(Modifier.height(8.dp))
                             val stacks = listOf(
-                                "system" to "system · 系统协议栈",
-                                "gvisor" to "gVisor · 用户态协议栈",
-                                "mixed" to "mixed · 系统 TCP + gVisor UDP",
+                                Triple("system", "system", "系统协议栈"),
+                                Triple("gvisor", "gVisor", "用户态协议栈，兼容性最好"),
+                                Triple("mixed", "mixed", "系统 TCP + gVisor UDP"),
                             )
-                            stacks.forEach { (stack, label) ->
-                                Surface(
+                            stacks.forEach { (stack, title, subtitle) ->
+                                com.sbai.ui.components.SbChoiceCard(
+                                    title = title,
+                                    subtitle = subtitle,
+                                    selected = settings.tunStack == stack,
                                     onClick = { store.updateSettings(settings.copy(tunStack = stack)) },
-                                    shape = RoundedCornerShape(12.dp),
-                                    color = if (settings.tunStack == stack) {
-                                        MaterialTheme.colorScheme.primaryContainer
-                                    } else {
-                                        MaterialTheme.colorScheme.surfaceContainer
-                                    },
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(vertical = 3.dp),
-                                ) {
-                                    Text(
-                                        label,
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
-                                    )
-                                }
+                                    modifier = Modifier.padding(vertical = 3.dp),
+                                )
                             }
                         }
                     }

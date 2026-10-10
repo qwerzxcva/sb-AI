@@ -69,6 +69,39 @@ class SbGroupScope internal constructor() {
     fun item(key: Any?, content: @Composable () -> Unit) { items += key to content }
 }
 
+/**
+ * 选择卡片：标题 + 说明，选中用主色容器。负载均衡模式卡的样式，供全站点选复用。
+ */
+@Composable
+fun SbChoiceCard(
+    title: String,
+    subtitle: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val colors = MaterialTheme.colorScheme
+    Surface(
+        onClick = onClick,
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        color = if (selected) colors.primaryContainer else colors.surfaceContainer,
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Text(
+                title,
+                style = MaterialTheme.typography.titleSmall,
+                color = if (selected) colors.onPrimaryContainer else colors.onSurface,
+            )
+            Text(
+                subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = if (selected) colors.onPrimaryContainer.copy(alpha = 0.75f) else colors.onSurfaceVariant,
+            )
+        }
+    }
+}
+
 /** 分节标签 + 分组卡片列表（Kototoro SettingsPreferenceGroup 的移植） */
 @Composable
 fun SbGroup(

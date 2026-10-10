@@ -139,7 +139,9 @@ private fun MainScaffold() {
     // 首页长列表曾因此卡顿，故 barGlass 的模糊半径压小、且不额外加 highlight/lens，
     // 让底栏有真实的透光磨砂质感又不过度拖累滚动帧率。
     val barGlass = true
-    val pageGlass = true
+    // 整页 layerBackdrop 会把首页节点列表每帧抓成纹理，节点一多就卡。
+    // 底栏磨砂改由底栏自身采样，不再给整页内容加捕获层。
+    val pageGlass = false
     val pageBackdrop = rememberLayerBackdrop()
 
     // 下滑隐藏 / 上滑显示底栏；BottomBarController 为跨组件真源，

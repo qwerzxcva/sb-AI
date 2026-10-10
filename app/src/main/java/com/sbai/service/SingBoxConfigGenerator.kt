@@ -82,7 +82,6 @@ object SingBoxConfigGenerator {
         val lb = state.loadBalance
 
         val finalProxyTag = when {
-            lb.enabled && lb.mode == LoadBalanceMode.MANUAL -> "lb-selector"
             lb.enabled -> "lb"
             nodeTags.size > 1 -> "proxy"
             nodeTags.size == 1 -> nodeTags[0]
@@ -109,23 +108,13 @@ object SingBoxConfigGenerator {
         val outbounds = buildJsonArray {
             if (lb.enabled) {
                 val lbOutbounds = lb.outbounds.filter { it in nodeTags }.ifEmpty { nodeTags }
-                if (lb.mode == LoadBalanceMode.MANUAL) {
-                    add(buildJsonObject {
-                        put("type", "selector")
-                        put("tag", "lb-selector")
-                        putJsonArray("outbounds") { lbOutbounds.forEach(::add) }
-                    })
-                } else {
-                    add(buildJsonObject {
+                add(buildJsonObject {
                         put("type", "urltest")
                         put("tag", "lb")
                         putJsonArray("outbounds") { lbOutbounds.forEach(::add) }
                         put("url", lb.checkUrl)
                         put("interval", lb.interval)
-                        put(
-                            "tolerance",
-                            if (lb.mode == LoadBalanceMode.LATENCY) 0 else lb.toleranceMs,
-                        )
+                        put("tolerance", lb.toleranceMs)
                         put("idle_timeout", lb.idleTimeout)
                         put("interrupt_exist_connections", lb.interruptExistConnections)
                         // fork 扩展：round_robin + balancer{pool,...} = 仅使用 N 个节点
@@ -140,8 +129,7 @@ object SingBoxConfigGenerator {
                                 }
                             }
                         }
-                    })
-                }
+                })
             } else if (nodeTags.size > 1) {
                 // 统一选择器：direct + auto + 全部节点，首页 direct/auto/节点卡片点选都改这个组的 selected。
                 add(buildJsonObject {
