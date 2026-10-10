@@ -59,6 +59,7 @@ import com.sbai.ui.settings.SettingsAboutScreen
 import com.sbai.ui.settings.SettingsAppProxyScreen
 import com.sbai.ui.settings.SettingsBackupScreen
 import com.sbai.ui.settings.SettingsKernelScreen
+import com.sbai.ui.settings.SettingsLoadBalanceScreen
 import com.sbai.ui.settings.SettingsScreen
 import com.sbai.ui.settings.SettingsSubscriptionScreen
 import com.sbai.ui.theme.SbAiTheme
@@ -178,6 +179,7 @@ private fun MainScaffold() {
             composable(Screen.Settings.route) { SettingsScreen(navController = navController) }
             // 二级设置子页面
             composable("settings_kernel") { SettingsKernelScreen(navController) }
+            composable("settings_loadbalance") { SettingsLoadBalanceScreen(navController) }
             composable("settings_app_proxy") { SettingsAppProxyScreen(navController) }
             composable("settings_subscription") { SettingsSubscriptionScreen(navController) }
             composable("settings_appearance") { SettingsAppearanceScreen(navController) }

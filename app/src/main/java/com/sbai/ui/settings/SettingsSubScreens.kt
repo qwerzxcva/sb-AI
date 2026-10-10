@@ -980,7 +980,7 @@ fun SettingsAboutScreen(navController: NavHostController) {
 // ---------------------------------------------------------------------------
 
 @Composable
-private fun SettingsTextEditDialog(
+internal fun SettingsTextEditDialog(
     title: String,
     initial: String,
     onDismiss: () -> Unit,

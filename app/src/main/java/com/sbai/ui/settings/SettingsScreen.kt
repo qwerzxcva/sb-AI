@@ -8,6 +8,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Apps
+import androidx.compose.material.icons.filled.Balance
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.PowerSettingsNew
@@ -43,7 +44,7 @@ import kotlinx.coroutines.flow.map
 /**
  * 设置目录页（一级页面）：
  * 每个大分类一行卡片 → 点击进入二级子页面（settings_* 路由）。
- * 分类：内核 / 分应用代理 / 订阅身份 / 外观 / 备份与恢复 / 关于。
+ * 分类：内核 / 负载均衡 / 分应用代理 / 订阅身份 / 外观 / 备份与恢复 / 关于。
  * 高频开关（开机自启）保留在一级页，免去跳转。
  * 资源管理已并入「路由 / DNS」页第 3 页，设置页不再重复。
  */
@@ -82,6 +83,14 @@ fun SettingsScreen(navController: NavHostController) {
                             subtitle = "TUN / MTU / 网络栈 / IPv6 / 严格路由 / DPI 硬化",
                             icon = Icons.Filled.Shield,
                             onClick = { navController.navigate("settings_kernel") },
+                        )
+                    }
+                    item {
+                        SbItem(
+                            title = "负载均衡",
+                            subtitle = "总开关 / 模式 / 参与节点 / 配置预览 / 高级参数",
+                            icon = Icons.Filled.Balance,
+                            onClick = { navController.navigate("settings_loadbalance") },
                         )
                     }
                     item {
