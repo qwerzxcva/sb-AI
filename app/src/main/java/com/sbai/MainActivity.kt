@@ -192,11 +192,15 @@ private fun MainScaffold() {
                     beyondViewportPageCount = 0,
                     modifier = Modifier.fillMaxSize(),
                 ) { page ->
-                    when (items[page].route) {
-                        Screen.Home.route -> HomeScreen()
-                        Screen.Routes.route -> RouteRulesScreen()
-                        Screen.Monitor.route -> MonitorScreen()
-                        Screen.Settings.route -> SettingsScreen(navController = navController)
+                    // Pager 会组合当前页+相邻页供手势，不可见页的轮询/时钟 effect 仍在跑，
+                    // 叠加起来拖慢主进程。只在是当前页时才挂载页面内容。
+                    if (pagerState.currentPage == page) {
+                        when (items[page].route) {
+                            Screen.Home.route -> HomeScreen()
+                            Screen.Routes.route -> RouteRulesScreen()
+                            Screen.Monitor.route -> MonitorScreen()
+                            Screen.Settings.route -> SettingsScreen(navController = navController)
+                        }
                     }
                 }
             }
