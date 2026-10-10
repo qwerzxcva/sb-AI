@@ -214,7 +214,9 @@ object SingBoxConfigGenerator {
             }
 
             putJsonObject("route") {
-                putJsonArray("rules") { routeRules.forEach(::add) }
+                // 全局模式：不输出路由规则，所有流量直接落到 final（=代理入口），实现真·全局。
+                // 规则模式：按用户路由规则走。
+                putJsonArray("rules") { if (!state.settings.globalMode) routeRules.forEach(::add) }
                 putJsonArray("rule_set") {
                     // 显式规则集。LOCAL 且 localContent 是节点 tag 数组的是「订阅节点分组」，
                     // 已在 outbounds 里生成 selector 组，不是匹配规则集，必须从 rule_set 排除。
@@ -273,8 +275,9 @@ object SingBoxConfigGenerator {
                     }
                 }
                 // 1.13 已无 block/dns 特殊出站：旧配置里 final=block/dns 会引用不存在的 tag 导致启动失败，回退到入口。
+                // 系统模式=全局时，final 强制走代理入口（entryTag），绕过所有路由规则——所有流量走代理。
                 val finalTag = state.settings.finalOutbound.trim()
-                put("final", if (finalTag.isEmpty() || finalTag == "block" || finalTag == "dns") entryTag else finalTag)
+                put("final", if (state.settings.globalMode || finalTag.isEmpty() || finalTag == "block" || finalTag == "dns") entryTag else finalTag)
                 // 1.12 起 dial 字段缺少 domain_resolver 已废弃（后续版本移除）：为域名形式的节点 server
                 // 指定一个不走代理的解析器，避免「代理节点域名需要经代理解析」的循环。
                 dnsServers.firstOrNull { srv ->

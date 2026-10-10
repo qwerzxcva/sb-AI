@@ -473,6 +473,8 @@ data class AppSettings(
     val autoDetectInterface: Boolean = true,
     val strictRoute: Boolean = true,
     val finalOutbound: String = "",   // 留空 = 自动（跟随入口 tag）
+    /** 系统模式：true=全局（所有流量走代理入口，绕过路由规则）；false=规则（按路由规则走） */
+    val globalMode: Boolean = false,
     val dnsStrategy: String = "prefer_ipv4",   // prefer_ipv4 / prefer_ipv6 / ipv4_only / ipv6_only
     val perAppProxy: PerAppProxy = PerAppProxy(),
     // ---- 拆分隧道（已移除，用户反馈：写规则不好么？）----

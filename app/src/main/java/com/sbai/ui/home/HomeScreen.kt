@@ -139,6 +139,10 @@ fun HomeScreen() {
     val proxyNodes by remember(store) {
         store.state.map { it.proxyNodes }.distinctUntilChanged()
     }.collectAsState(initial = remember(store) { store.state.value.proxyNodes })
+    // 系统模式（全局/规则）：字段级订阅，避免全量 AppState 订阅导致整页重组。
+    val globalMode by remember(store) {
+        store.state.map { it.settings.globalMode }.distinctUntilChanged()
+    }.collectAsState(initial = remember(store) { store.state.value.settings.globalMode })
 
     val status by SbAiVpnService.status.collectAsState()
     val proxyGroups by SbCommandClient.groups.collectAsState()
@@ -449,55 +453,124 @@ fun HomeScreen() {
                 .padding(horizontal = tokens.screenHorizontalPadding),
             verticalArrangement = Arrangement.spacedBy(0.dp),
         ) {
-            // ---- 顶部状态区 ----
+            // ---- 顶部状态区（PiliPlus 式：居中标题 + 居中大电源键 + 模式卡片） ----
             item {
                 Spacer(Modifier.height(24.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text("sb-AI", style = MaterialTheme.typography.headlineLarge)
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Text("sb-AI", style = MaterialTheme.typography.headlineLarge)
+                    Text(
+                        // 跨进程真源：:core 进程把运行阶段写盘，UI 进程读取；
+                        // 不再用 CommandClient 连接状态冒充 VPN 状态。
+                        displayVpnPhase(effectivePhase, vpnMessage) +
+                            (vpnMessage?.let { " · $it" } ?: ""),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = when {
+                            effectivePhase == VpnRuntimeState.Phase.Error -> MaterialTheme.colorScheme.error
+                            running -> MaterialTheme.colorScheme.primary
+                            else -> MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                    )
+                    // 连接时长 + 出口 IP（跨进程遥测快照，:core 周期发布；主进程共享文件读取）
+                    // 关键1：只在「phase 是 Running 且心跳未过期」时显示计时（:core 死后 telemetry
+                    //   是死快照，不新鲜即隐藏，避免显示「已连接 00:25」的静态 UI）。
+                    // 关键2：连续计时。uptimeSec 是「updatedAt 那一刻」的时长；用 uptimeSec +
+                    //   (now - updatedAt)/1000 推算出「此刻」的真实时长，配合 1s tick 持续重组，
+                    //   首页不再要切页才跳一下。数据仍来自内核（非本地瞎加）。
+                    val tele = telemetry
+                    val telemetryFresh = tele != null &&
+                        (System.currentTimeMillis() - tele.updatedAt) <= VpnRuntimeState.RUNNING_LEASE_TIMEOUT_MS
+                    if (effectivePhase == VpnRuntimeState.Phase.Running &&
+                        tele != null && tele.uptimeSec > 0 && telemetryFresh
+                    ) {
+                        var tickSec by remember { mutableStateOf(0L) }
+                        LaunchedEffect(tele.updatedAt) {
+                            while (true) {
+                                kotlinx.coroutines.delay(1000L)
+                                tickSec = (System.currentTimeMillis() - tele.updatedAt) / 1000L
+                            }
+                        }
+                        val liveUptime = tele.uptimeSec + tickSec.coerceAtLeast(0L)
                         Text(
-                            // 跨进程真源：:core 进程把运行阶段写盘，UI 进程读取；
-                            // 不再用 CommandClient 连接状态冒充 VPN 状态。
-                            displayVpnPhase(effectivePhase, vpnMessage) +
-                                (vpnMessage?.let { " · $it" } ?: ""),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = when {
-                                effectivePhase == VpnRuntimeState.Phase.Error -> MaterialTheme.colorScheme.error
-                                running -> MaterialTheme.colorScheme.primary
-                                else -> MaterialTheme.colorScheme.onSurfaceVariant
+                            buildString {
+                                append("已连接 ${formatUptime(liveUptime)}")
+                                if (tele.publicIp.isNotBlank()) append(" · 出口 ${tele.publicIp}")
                             },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
-                        // 连接时长 + 出口 IP（跨进程遥测快照，:core 周期发布；主进程共享文件读取）
-                        // 关键1：只在「phase 是 Running 且心跳未过期」时显示计时（:core 死后 telemetry
-                        //   是死快照，不新鲜即隐藏，避免显示「已连接 00:25」的静态 UI）。
-                        // 关键2：连续计时。uptimeSec 是「updatedAt 那一刻」的时长；用 uptimeSec +
-                        //   (now - updatedAt)/1000 推算出「此刻」的真实时长，配合 1s tick 持续重组，
-                        //   首页不再要切页才跳一下。数据仍来自内核（非本地瞎加）。
-                        val tele = telemetry
-                        val telemetryFresh = tele != null &&
-                            (System.currentTimeMillis() - tele.updatedAt) <= VpnRuntimeState.RUNNING_LEASE_TIMEOUT_MS
-                        if (effectivePhase == VpnRuntimeState.Phase.Running &&
-                            tele != null && tele.uptimeSec > 0 && telemetryFresh
+                    }
+
+                    Spacer(Modifier.height(20.dp))
+
+                    // ---- 模式卡片：系统模式（规则/全局） + 出站模式（auto/当前节点） ----
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        // 系统模式卡：规则 / 全局（点选加深；切换改 route.final + 是否输出路由规则，重启生效）
+                        androidx.compose.material3.Surface(
+                            modifier = Modifier.weight(1f),
+                            shape = MaterialTheme.shapes.large,
+                            color = MaterialTheme.colorScheme.surfaceContainer,
                         ) {
-                            var tickSec by remember { mutableStateOf(0L) }
-                            LaunchedEffect(tele.updatedAt) {
-                                while (true) {
-                                    kotlinx.coroutines.delay(1000L)
-                                    tickSec = (System.currentTimeMillis() - tele.updatedAt) / 1000L
+                            Column(Modifier.padding(14.dp)) {
+                                Text("系统模式", style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Spacer(Modifier.height(8.dp))
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    FilterChip(
+                                        selected = !globalMode,
+                                        onClick = {
+                                            store.updateSettings(store.state.value.settings.copy(globalMode = false))
+                                            testFeedback = if (coreRunning) "已切换为规则模式，重启 VPN 后生效" else null
+                                        },
+                                        label = { Text("规则") },
+                                    )
+                                    FilterChip(
+                                        selected = globalMode,
+                                        onClick = {
+                                            store.updateSettings(store.state.value.settings.copy(globalMode = true))
+                                            testFeedback = if (coreRunning) "已切换为全局模式，重启 VPN 后生效" else null
+                                        },
+                                        label = { Text("全局") },
+                                    )
                                 }
                             }
-                            val liveUptime = tele.uptimeSec + tickSec.coerceAtLeast(0L)
-                            Text(
-                                buildString {
-                                    append("已连接 ${formatUptime(liveUptime)}")
-                                    if (tele.publicIp.isNotBlank()) append(" · 出口 ${tele.publicIp}")
-                                },
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
+                        }
+                        // 出站模式卡：auto / 当前节点（点选加深；auto 开 urltest 优选，节点走 proxy selector）
+                        androidx.compose.material3.Surface(
+                            modifier = Modifier.weight(1f),
+                            shape = MaterialTheme.shapes.large,
+                            color = MaterialTheme.colorScheme.surfaceContainer,
+                        ) {
+                            Column(Modifier.padding(14.dp)) {
+                                Text("出站模式", style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Spacer(Modifier.height(8.dp))
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    FilterChip(
+                                        selected = lb.autoEnabled,
+                                        onClick = {
+                                            store.updateLoadBalance(lb.copy(autoEnabled = true))
+                                            testFeedback = if (coreRunning) "已切换为自动优选，重启 VPN 后生效" else null
+                                        },
+                                        label = { Text("自动") },
+                                    )
+                                    FilterChip(
+                                        selected = !lb.autoEnabled,
+                                        onClick = {
+                                            store.updateLoadBalance(lb.copy(autoEnabled = false))
+                                            testFeedback = if (coreRunning) "已关闭自动优选，可在下方节点选择" else null
+                                        },
+                                        label = { Text("手动") },
+                                    )
+                                }
+                            }
                         }
                     }
-                    // 启动控制已收敛到底栏常驻 VPN 控件（导航栏旁），此处不再重复提供按钮。
                 }
                 SbSpacer()
             }
