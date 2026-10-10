@@ -208,11 +208,12 @@ fun HomeScreen() {
     // 需要 VPN 已运行（CommandServer 在线），否则提示先启动。
     fun testSingleNode(node: ProxyNode) {
         if (!coreConnected) {
-            importResult = "请先启动 VPN 再测速"
+            testFeedback = "请先启动 VPN 再测速"
             return
         }
         if (testingNodeId != null) return
         testingNodeId = node.id
+        testFeedback = "「${node.name}」测速中…"
         scope.launch {
             runCatching {
                 val groupTag = proxyGroups
@@ -230,9 +231,12 @@ fun HomeScreen() {
                             if (n.id == node.id) n.copy(urlTestDelay = delay, urlTestTime = System.currentTimeMillis()) else n
                         })
                     }
+                    testFeedback = "「${node.name}」延迟 ${delay}ms"
                 } else {
-                    importResult = "「${node.name}」测速失败（无响应或超时）"
+                    testFeedback = "「${node.name}」测速失败（无响应或超时）"
                 }
+            }.onFailure {
+                testFeedback = "「${node.name}」测速出错：${it.message}"
             }
             testingNodeId = null
         }
@@ -592,17 +596,20 @@ fun HomeScreen() {
             // ---- 订阅源 ----
             item {
                 SbGroup(title = "订阅源") {
+                    // 测速/切换反馈只显示一次（在订阅列表顶部），不在每个卡片上方重复
+                    if (testFeedback != null) {
+                        item {
+                            Text(
+                                testFeedback!!,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                            )
+                        }
+                    }
                     subscriptions.forEach { sub ->
                         item {
                             val subNodes = filteredNodes.filter { it.node.subscriptionId == sub.id }
-                            testFeedback?.let { fb ->
-                                Text(
-                                    fb,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-                                )
-                            }
                             SubscriptionCard(
                                 sub = sub,
                                 nodes = subNodes,
