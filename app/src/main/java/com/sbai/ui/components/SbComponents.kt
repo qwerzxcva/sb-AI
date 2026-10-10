@@ -121,9 +121,9 @@ fun GlassChoiceCard(
 ) {
     val colors = MaterialTheme.colorScheme
     val backgroundColor = if (selected) {
-        colors.primaryContainer.copy(alpha = 0.85f)
+        colors.primaryContainer.copy(alpha = 0.92f)
     } else {
-        colors.surfaceContainer.copy(alpha = 0.75f)
+        colors.surfaceContainer.copy(alpha = 0.90f)
     }
     val shape = RoundedCornerShape(16.dp)
 
@@ -135,12 +135,12 @@ fun GlassChoiceCard(
             .then(
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                     Modifier.graphicsLayer {
-                        val px = 16.dp.toPx()
+                        val px = 12.dp.toPx()  // 降低模糊半径
                         renderEffect = BlurEffect(px, px, TileMode.Clamp)
                     }.background(backgroundColor)
                         .border(
                             width = 1.dp,
-                            color = if (selected) colors.primary.copy(alpha = 0.5f) else colors.outline.copy(alpha = 0.3f),
+                            color = if (selected) colors.primary.copy(alpha = 0.5f) else colors.outline.copy(alpha = 0.2f),
                             shape = shape,
                         )
                 } else {

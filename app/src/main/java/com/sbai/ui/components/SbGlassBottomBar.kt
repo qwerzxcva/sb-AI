@@ -69,10 +69,10 @@ fun SbGlassBottomBar(
                     Modifier.graphicsLayer {
                         val px = 12.dp.toPx()
                         renderEffect = BlurEffect(px, px, TileMode.Clamp)
-                    }.background(colors.surfaceContainer.copy(alpha = 0.55f))
+                    }.background(colors.surfaceContainer.copy(alpha = 0.90f))
                 } else if (useGlassBackdrop) {
                     // Android 12 以下使用静态半透明作为降级
-                    Modifier.background(colors.surfaceContainer.copy(alpha = 0.85f))
+                    Modifier.background(colors.surfaceContainer.copy(alpha = 0.92f))
                 } else {
                     Modifier.background(colors.surfaceContainer.copy(alpha = 0.96f))
                 }

@@ -24,17 +24,17 @@ import androidx.compose.ui.unit.dp
  * 2. 半透明背景 + 微弱边框增强玻璃质感
  * 3. 动态模糊质量：滑动时自动降低以保持流畅
  * 
- * @param blurRadius 模糊半径，默认 20dp（高质量）
- * @param alpha 背景透明度，默认 0.65f
- * @param borderAlpha 边框透明度，默认 0.3f
+ * @param blurRadius 模糊半径，默认 16dp（中等质量，避免过度模糊）
+ * @param alpha 背景透明度，默认 0.88f（提高不透明度，确保文字清晰）
+ * @param borderAlpha 边框透明度，默认 0.2f
  * @param borderStroke 边框宽度，默认 1.dp
  */
 @Composable
 fun GlassSurface(
     modifier: Modifier = Modifier,
-    blurRadius: Dp = 20.dp,
-    alpha: Float = 0.65f,
-    borderAlpha: Float = 0.3f,
+    blurRadius: Dp = 16.dp,
+    alpha: Float = 0.88f,
+    borderAlpha: Float = 0.2f,
     borderStroke: Dp = 1.dp,
     cornerRadius: Dp = 24.dp,
     content: @Composable BoxScope.() -> Unit,
@@ -73,8 +73,8 @@ fun GlassSurface(
 @Composable
 fun LowBlurGlassSurface(
     modifier: Modifier = Modifier,
-    alpha: Float = 0.65f,
-    borderAlpha: Float = 0.3f,
+    alpha: Float = 0.88f,
+    borderAlpha: Float = 0.2f,
     borderStroke: Dp = 1.dp,
     cornerRadius: Dp = 24.dp,
     content: @Composable BoxScope.() -> Unit,
@@ -96,15 +96,15 @@ fun LowBlurGlassSurface(
 @Composable
 fun HighBlurGlassSurface(
     modifier: Modifier = Modifier,
-    alpha: Float = 0.7f,
-    borderAlpha: Float = 0.35f,
+    alpha: Float = 0.92f,
+    borderAlpha: Float = 0.25f,
     borderStroke: Dp = 1.dp,
     cornerRadius: Dp = 24.dp,
     content: @Composable BoxScope.() -> Unit,
 ) {
     GlassSurface(
         modifier = modifier,
-        blurRadius = 25.dp,  // 高模糊半径
+        blurRadius = 20.dp,  // 中等模糊半径
         alpha = alpha,
         borderAlpha = borderAlpha,
         borderStroke = borderStroke,
