@@ -994,7 +994,7 @@ fun HomeScreen() {
                 }
             }
             item {
-                SbGroup(title = "独立节点（${standaloneNodes}）") {
+                SbGroup(title = "本地源（${standaloneNodes}）") {
                     // 搜索过滤（订阅节点在订阅卡片内展开，这里只列手动/剪贴板导入的独立节点）
                     item {
                         Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
