@@ -152,8 +152,14 @@ object SingBoxConfigGenerator {
                         add("direct")
                         nodeTags.forEach(::add)
                     }
-                    // 默认选中 auto（自动优选）；用户点选后由内核记忆 selected。
-                    put("default", "auto")
+                    // 默认选中首页记下的全局出口；无效或节点已不在时退回 auto。
+                    val remembered = state.selectedOutboundTag
+                    val defaultTag = when {
+                        remembered == "auto" || remembered == "direct" -> remembered
+                        remembered in nodeTags -> remembered
+                        else -> "auto"
+                    }
+                    put("default", defaultTag)
                 })
             }
 

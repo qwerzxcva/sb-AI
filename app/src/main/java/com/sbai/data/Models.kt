@@ -242,14 +242,14 @@ data class DnsRule(
 
 @Serializable
 enum class LoadBalanceMode(val displayName: String) {
-    /** 延迟优选（urltest，tolerance=0） */
-    LATENCY("延迟优选"),
+    /** 延迟优选（urltest，tolerance=0）。首页「自动」已是同一行为，负载均衡里不再提供。 */
+    LATENCY("延迟最优"),
 
     /** 均衡负载（urltest + tolerance，节点间分摊，不轻易切换） */
-    BALANCED("均衡负载"),
+    BALANCED("均衡"),
 
     /** 手动切换（selector） */
-    MANUAL("手动切换"),
+    MANUAL("手动"),
 }
 
 /** urltest 选点模式（sb-AI UrltestMode） */
@@ -554,4 +554,10 @@ data class AppState(
     val profiles: List<ConfigProfile> = emptyList(),
     /** 当前激活的 profile id（空 = 无快照模式） */
     val activeProfileId: String = "",
+    /**
+     * 全局出口选择（首页直连/自动/节点卡片的真源）。
+     * "auto" / "direct" / 节点 tag。内核 selectOutbound 是异步的，且组状态回写有延迟，
+     * 单靠内核回写会导致「点了卡片不变色」；这里先记本地选择，内核回写后以内核为准。
+     */
+    val selectedOutboundTag: String = "auto",
 )

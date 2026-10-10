@@ -47,6 +47,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.Surface
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -158,13 +159,29 @@ fun SettingsKernelScreen(navController: NavHostController) {
                         Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
                             Text("TUN 网络栈", style = MaterialTheme.typography.labelLarge)
                             Spacer(Modifier.height(8.dp))
-                            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                                listOf("system", "gvisor", "mixed").forEachIndexed { i, stack ->
-                                    SegmentedButton(
-                                        selected = settings.tunStack == stack,
-                                        onClick = { store.updateSettings(settings.copy(tunStack = stack)) },
-                                        shape = SegmentedButtonDefaults.itemShape(index = i, count = 3),
-                                    ) { Text(stack) }
+                            val stacks = listOf(
+                                "system" to "system · 系统协议栈",
+                                "gvisor" to "gVisor · 用户态协议栈",
+                                "mixed" to "mixed · 系统 TCP + gVisor UDP",
+                            )
+                            stacks.forEach { (stack, label) ->
+                                Surface(
+                                    onClick = { store.updateSettings(settings.copy(tunStack = stack)) },
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = if (settings.tunStack == stack) {
+                                        MaterialTheme.colorScheme.primaryContainer
+                                    } else {
+                                        MaterialTheme.colorScheme.surfaceContainer
+                                    },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 3.dp),
+                                ) {
+                                    Text(
+                                        label,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                                    )
                                 }
                             }
                         }

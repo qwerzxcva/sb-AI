@@ -190,6 +190,8 @@ private fun MainScaffold() {
             composable("main") {
                 HorizontalPager(
                     state = pagerState,
+                    // 只保留当前页，避免首页节点列表和路由规则同时常驻导致点多了卡。
+                    beyondViewportPageCount = 0,
                     modifier = Modifier.fillMaxSize(),
                 ) { page ->
                     when (items[page].route) {

@@ -193,7 +193,11 @@ fun SettingsScreen(navController: NavHostController) {
             title = { Text("负载均衡模式") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    com.sbai.data.LoadBalanceMode.entries.forEach { mode ->
+                    // 延迟最优与首页「自动」是同一行为，负载均衡只保留真正分摊/手动的两种。
+                    listOf(
+                        com.sbai.data.LoadBalanceMode.BALANCED,
+                        com.sbai.data.LoadBalanceMode.MANUAL,
+                    ).forEach { mode ->
                         Surface(
                             onClick = {
                                 store.updateLoadBalance(loadBalance.copy(mode = mode))
@@ -207,9 +211,9 @@ fun SettingsScreen(navController: NavHostController) {
                                 Text(mode.displayName, style = MaterialTheme.typography.titleSmall)
                                 Text(
                                     when (mode) {
-                                        com.sbai.data.LoadBalanceMode.LATENCY -> "urltest：始终选延迟最低的节点"
-                                        com.sbai.data.LoadBalanceMode.BALANCED -> "urltest+tolerance：在可接受延迟内分摊节点"
-                                        com.sbai.data.LoadBalanceMode.MANUAL -> "selector：手动切换出口"
+                                        com.sbai.data.LoadBalanceMode.LATENCY -> "与首页「自动」相同，已不再放在这里"
+                                        com.sbai.data.LoadBalanceMode.BALANCED -> "在可接受的延迟差内分摊到多个节点"
+                                        com.sbai.data.LoadBalanceMode.MANUAL -> "自己在代理组里切换出口"
                                     },
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,

@@ -67,6 +67,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -138,6 +139,10 @@ fun HomeScreen() {
     val globalMode by remember(store) {
         store.state.map { it.settings.globalMode }.distinctUntilChanged()
     }.collectAsState(initial = remember(store) { store.state.value.settings.globalMode })
+    // 全局出口选择（直连/自动/节点）：本地先记，内核回写后以内核为准。
+    val selectedOutbound by remember(store) {
+        store.state.map { it.selectedOutboundTag }.distinctUntilChanged()
+    }.collectAsState(initial = remember(store) { store.state.value.selectedOutboundTag })
 
     val status by SbAiVpnService.status.collectAsState()
     val proxyGroups by SbCommandClient.groups.collectAsState()
@@ -201,6 +206,21 @@ fun HomeScreen() {
             scope.launch(kotlinx.coroutines.Dispatchers.IO) {
                 SbCommandClient.connectWithRetry()
             }
+        }
+    }
+
+    // 全局出口选择：先写本地（卡片立刻变色），VPN 运行时再通知内核。
+    fun selectGlobalOutbound(tag: String) {
+        store.updateSelectedOutbound(tag)
+        if (coreConnected) {
+            SbCommandClient.selectOutbound("proxy", tag)
+            testFeedback = when (tag) {
+                "auto" -> "已切到自动"
+                "direct" -> "已切到直连"
+                else -> "已切到 $tag"
+            }
+        } else {
+            testFeedback = "已记下「${if (tag == "auto") "自动" else if (tag == "direct") "直连" else tag}」，启动 VPN 后生效"
         }
     }
 
@@ -500,7 +520,7 @@ fun HomeScreen() {
 
                     Spacer(Modifier.height(20.dp))
 
-                    // ---- 系统模式卡（规则/全局，点选加深）——独占整行。出站选择改为订阅内 direct/auto/节点卡片点选。 ----
+                    // ---- 系统模式卡（规则/全局，点选加深）——独占整行。 ----
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -533,6 +553,41 @@ fun HomeScreen() {
                                         label = { Text("全局") },
                                     )
                                 }
+                            }
+                        }
+                    }
+                }
+                SbSpacer()
+            }
+
+            // ---- 全局出口：直连 / 自动（不放进订阅源，全局一份） ----
+            item {
+                val liveSelected = proxyGroups.firstOrNull { it.tag == "proxy" }?.selected
+                    ?.takeIf { it.isNotBlank() }
+                val effectiveSelected = liveSelected ?: selectedOutbound.ifBlank { "auto" }
+                SbGroup(title = "全局出口") {
+                    item {
+                        Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            OutboundSelectCard(
+                                label = "自动",
+                                subtitle = "在全部节点里选延迟最低的",
+                                selected = effectiveSelected == "auto",
+                                enabled = true,
+                                onClick = { selectGlobalOutbound("auto") },
+                            )
+                            OutboundSelectCard(
+                                label = "直连",
+                                subtitle = "不走代理",
+                                selected = effectiveSelected == "direct",
+                                enabled = true,
+                                onClick = { selectGlobalOutbound("direct") },
+                            )
+                            if (!coreConnected) {
+                                Text(
+                                    "VPN 未运行：选择已记下，启动后生效",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
                             }
                         }
                     }
@@ -625,7 +680,13 @@ fun HomeScreen() {
                                         refreshingId = sub.id
                                         scope.launch {
                                             try {
-                                                subManager.refresh(sub)
+                                                val result = subManager.refresh(sub)
+                                                testFeedback = when (result) {
+                                                    is SubscriptionManager.Result.Success ->
+                                                        "${sub.name.ifBlank { "订阅" }} 更新 ${result.nodeCount} 个节点"
+                                                    is SubscriptionManager.Result.Failure ->
+                                                        result.message
+                                                }
                                             } finally {
                                                 refreshingId = null
                                             }
@@ -670,17 +731,13 @@ fun HomeScreen() {
                                     store.upsertProxyNode(node.copy(enabled = enabled, disabledReason = null))
                                 },
                                 onEditSubscription = { editingSub = sub },
-                                // 统一选择器 proxy 组：当前选中项（auto/direct/节点 tag）
-                                selectedTag = proxyGroups.firstOrNull { it.tag == "proxy" }?.selected ?: "",
-                                onSelectTag = if (coreConnected) { tag ->
-                                    SbCommandClient.selectOutbound("proxy", tag)
-                                } else null,
-                                onSelectNode = if (coreConnected) { node ->
-                                    SbCommandClient.selectOutbound(
-                                        "proxy",
-                                        SingBoxConfigGenerator.nodeTagOf(node),
-                                    )
-                                } else null,
+                                // 选中态：内核已回写用内核，否则用本地记下的选择（点了立刻变色）
+                                selectedTag = proxyGroups.firstOrNull { it.tag == "proxy" }?.selected
+                                    ?.takeIf { it.isNotBlank() }
+                                    ?: selectedOutbound,
+                                onSelectNode = { node ->
+                                    selectGlobalOutbound(SingBoxConfigGenerator.nodeTagOf(node))
+                                },
                             )
                         }
                     }
@@ -701,18 +758,25 @@ fun HomeScreen() {
                                 onClick = {
                                     if (refreshingId == null) {
                                         scope.launch {
+                                            val targets = subscriptions.filter { it.enabled && it.url.isNotBlank() }
+                                            if (targets.isEmpty()) {
+                                                testFeedback = "没有可更新的订阅（需启用且填了地址）"
+                                                return@launch
+                                            }
+                                            var ok = 0
+                                            var failed = 0
                                             try {
-                                                // 并发刷新：多订阅同时拉取，不再串行等待（用户反馈「订阅不能同时更新」）。
-                                                // 限并发 4，避免过多并发把机场/本机打满。单订阅失败不影响其余。
-                                                val targets = subscriptions.filter { it.enabled && it.url.isNotBlank() }
-                                                refreshingId = "__all__"
-                                                coroutineScope {
-                                                    targets.chunked(4).forEach { batch ->
-                                                        batch.map { sub ->
-                                                            async { runCatching { subManager.refresh(sub) } }
-                                                        }.awaitAll()
+                                                // 逐个刷新：每张卡片都能转圈，失败写进 lastError，最后给总数。
+                                                for (sub in targets) {
+                                                    refreshingId = sub.id
+                                                    val result = runCatching { subManager.refresh(sub) }
+                                                        .getOrElse { SubscriptionManager.Result.Failure(it.message ?: "更新失败") }
+                                                    when (result) {
+                                                        is SubscriptionManager.Result.Success -> ok++
+                                                        is SubscriptionManager.Result.Failure -> failed++
                                                     }
                                                 }
+                                                testFeedback = "更新完成：成功 $ok，失败 $failed"
                                             } finally {
                                                 refreshingId = null
                                             }
@@ -1053,11 +1117,9 @@ private fun SubscriptionCard(
     onDeleteNode: (String) -> Unit,
     onToggleNode: (com.sbai.data.ProxyNode, Boolean) -> Unit,
     onEditSubscription: () -> Unit,
-    // 统一选择器 proxy 组当前选中项（auto/direct/节点 tag），用于卡片选中态加深
+    // 当前全局选中的节点 tag（直连/自动在订阅外单独显示）
     selectedTag: String,
-    // 点选 direct/auto 出口卡片（tag 为 "direct"/"auto"）
-    onSelectTag: ((String) -> Unit)?,
-    onSelectNode: ((com.sbai.data.ProxyNode) -> Unit)?,
+    onSelectNode: (com.sbai.data.ProxyNode) -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
     val used = sub.trafficUpload + sub.trafficDownload
@@ -1138,26 +1200,8 @@ private fun SubscriptionCard(
             }
         }
         
-        // 展开后：direct + auto 出口卡片（点选选中）+ 节点卡片列表（点选选中）
+        // 展开后：节点卡片列表（点选即全局选中；直连/自动在订阅外单独显示）
         if (expanded) {
-            Spacer(Modifier.height(6.dp))
-            // direct 出口卡片（在 auto 上面）
-            OutboundSelectCard(
-                label = "direct",
-                subtitle = "直连，不走代理",
-                selected = selectedTag == "direct",
-                enabled = onSelectTag != null,
-                onClick = { onSelectTag?.invoke("direct") },
-            )
-            Spacer(Modifier.height(4.dp))
-            // auto 出口卡片
-            OutboundSelectCard(
-                label = "auto",
-                subtitle = "自动优选延迟最低节点",
-                selected = selectedTag == "auto",
-                enabled = onSelectTag != null,
-                onClick = { onSelectTag?.invoke("auto") },
-            )
             Spacer(Modifier.height(6.dp))
             if (nodes.isEmpty()) {
                 Text(
@@ -1175,53 +1219,15 @@ private fun SubscriptionCard(
                 }
                 nodes.forEach { row ->
                     val nodeTag = com.sbai.service.SingBoxConfigGenerator.nodeTagOf(row.node)
-                    val selected = selectedTag == nodeTag
-                    // 节点卡片：点选选中加深（与 direct/auto 卡片同一套点选逻辑）
-                    androidx.compose.material3.Surface(
-                        onClick = { if (onSelectNode != null && row.node.enabled) onSelectNode.invoke(row.node) },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 2.dp),
-                        shape = RoundedCornerShape(10.dp),
-                        color = when {
-                            selected -> colors.primaryContainer
-                            row.node.enabled -> colors.surfaceContainerHigh
-                            else -> colors.surfaceContainerHigh.copy(alpha = 0.5f)
-                        },
-                    ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 8.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(Modifier.weight(1f)) {
-                            Text(
-                                row.node.name.ifBlank { "未命名节点" },
-                                style = MaterialTheme.typography.bodyMedium,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            Text(
-                                row.subtitle,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = colors.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                        // 节点启用/禁用
-                        Switch(
-                            checked = row.node.enabled,
-                            onCheckedChange = { onToggleNode(row.node, it) },
+                    key(row.node.id) {
+                        SelectableNodeRow(
+                            row = row,
+                            selected = selectedTag == nodeTag,
+                            onSelect = { onSelectNode(row.node) },
+                            onToggle = { onToggleNode(row.node, it) },
+                            onDelete = { onDeleteNode(row.node.id) },
+                            onEdit = { onEditNode(row.node) },
                         )
-                        IconButton(onClick = { onDeleteNode(row.node.id) }) {
-                            Icon(Icons.Filled.Delete, contentDescription = "删除节点")
-                        }
-                        IconButton(onClick = { onEditNode(row.node) }) {
-                            Icon(Icons.Filled.Edit, contentDescription = "编辑节点")
-                        }
-                    }
                     }
                 }
             }
@@ -1229,7 +1235,73 @@ private fun SubscriptionCard(
     }
 }
 
-/** direct/auto 出口选择卡片：点选选中加深（与节点卡片同一套点选逻辑）。 */
+@Composable
+private fun SelectableNodeRow(
+    row: NodeRow,
+    selected: Boolean,
+    onSelect: () -> Unit,
+    onToggle: (Boolean) -> Unit,
+    onDelete: () -> Unit,
+    onEdit: () -> Unit,
+) {
+    val colors = MaterialTheme.colorScheme
+    androidx.compose.material3.Surface(
+        onClick = { if (row.node.enabled) onSelect() },
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 2.dp),
+        shape = RoundedCornerShape(10.dp),
+        color = when {
+            selected -> colors.primaryContainer
+            row.node.enabled -> colors.surfaceContainerHigh
+            else -> colors.surfaceContainerHigh.copy(alpha = 0.5f)
+        },
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    row.node.name.ifBlank { "未命名节点" },
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    color = if (selected) colors.onPrimaryContainer else colors.onSurface,
+                )
+                Text(
+                    row.subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (selected) colors.onPrimaryContainer.copy(alpha = 0.75f) else colors.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            if (selected) {
+                Icon(
+                    Icons.Filled.Check,
+                    contentDescription = "已选中",
+                    tint = colors.primary,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+            Switch(
+                checked = row.node.enabled,
+                onCheckedChange = onToggle,
+            )
+            IconButton(onClick = onDelete) {
+                Icon(Icons.Filled.Delete, contentDescription = "删除节点")
+            }
+            IconButton(onClick = onEdit) {
+                Icon(Icons.Filled.Edit, contentDescription = "编辑节点")
+            }
+        }
+    }
+}
+
+/** 全局出口选择卡片：点选选中加深。 */
 @Composable
 private fun OutboundSelectCard(
     label: String,

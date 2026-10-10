@@ -429,6 +429,11 @@ class RuleStore private constructor(
     // ---- Settings ----
     fun updateSettings(settings: AppSettings) = update { s -> s.copy(settings = settings) }
 
+    /** 全局出口选择（auto / direct / 节点 tag）。立即落盘，供首页卡片选中态显示。 */
+    fun updateSelectedOutbound(tag: String) = updateCommitted { s ->
+        s.copy(selectedOutboundTag = tag.ifBlank { "auto" })
+    }
+
     // ---- 静态 hosts 映射 ----
     fun upsertHostsEntry(entry: HostsEntry) = update { s ->
         val list = s.customHosts.toMutableList()
