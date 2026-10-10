@@ -25,13 +25,19 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import androidx.compose.ui.Alignment
@@ -39,7 +45,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.unit.dp
-import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
@@ -158,6 +163,15 @@ private fun MainScaffold() {
         }
     }
 
+    // 四主页面横向滑动：main 目的地内嵌 HorizontalPager（首页/路由/监控/设置），
+    // 设置二级页（settings_*）仍走 NavHost 独立目的地。底栏选中与 Pager 页双向同步。
+    val pagerState = rememberPagerState(initialPage = 0, pageCount = { items.size })
+    val scope = rememberCoroutineScope()
+    // Pager 当前页 → currentRoute（供底栏高亮）；仅在 main 目的地时有效。
+    val mainCurrentRoute = if (currentRoute == "main" || currentRoute == null) {
+        items.getOrNull(pagerState.currentPage)?.route
+    } else currentRoute
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -168,15 +182,24 @@ private fun MainScaffold() {
     ) {
         NavHost(
             navController = navController,
-            startDestination = Screen.Home.route,
+            startDestination = "main",
             modifier = Modifier
                 .fillMaxSize()
                 .then(if (pageGlass) Modifier.layerBackdrop(pageBackdrop) else Modifier),
         ) {
-            composable(Screen.Home.route) { HomeScreen() }
-            composable(Screen.Routes.route) { RouteRulesScreen() }
-            composable(Screen.Monitor.route) { MonitorScreen() }
-            composable(Screen.Settings.route) { SettingsScreen(navController = navController) }
+            composable("main") {
+                HorizontalPager(
+                    state = pagerState,
+                    modifier = Modifier.fillMaxSize(),
+                ) { page ->
+                    when (items[page].route) {
+                        Screen.Home.route -> HomeScreen()
+                        Screen.Routes.route -> RouteRulesScreen()
+                        Screen.Monitor.route -> MonitorScreen()
+                        Screen.Settings.route -> SettingsScreen(navController = navController)
+                    }
+                }
+            }
             // 二级设置子页面
             composable("settings_kernel") { SettingsKernelScreen(navController) }
             composable("settings_loadbalance") { SettingsLoadBalanceScreen(navController) }
@@ -210,12 +233,15 @@ private fun MainScaffold() {
                 SbGlassBottomBar(
                     pageBackdrop = pageBackdrop,
                     items = items.map { SbNavItem(it.route, it.title, it.icon) },
-                    currentRoute = currentRoute,
+                    currentRoute = mainCurrentRoute,
                     onSelect = { route ->
-                        navController.navigate(route) {
-                            popUpTo(navController.graph.findStartDestination().id) { saveState = true }
-                            launchSingleTop = true
-                            restoreState = true
+                        val page = items.indexOfFirst { it.route == route }
+                        if (page >= 0) {
+                            // 在二级页时先回 main，再滚动 Pager 到目标页
+                            if (currentRoute != "main" && currentRoute != null) {
+                                navController.popBackStack("main", inclusive = false)
+                            }
+                            scope.launch { pagerState.animateScrollToPage(page) }
                         }
                     },
                     modifier = Modifier.weight(1f),
