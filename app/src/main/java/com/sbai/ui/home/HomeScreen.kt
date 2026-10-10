@@ -11,6 +11,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
@@ -27,6 +29,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Delete
@@ -493,14 +496,14 @@ fun HomeScreen() {
 
                     Spacer(Modifier.height(20.dp))
 
-                    // ---- 模式卡片：系统模式（规则/全局） + 出站模式（auto/当前节点） ----
+                    // ---- 系统模式卡（规则/全局，点选加深）——独占整行。出站选择改为订阅内 direct/auto/节点卡片点选。 ----
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        // 系统模式卡：规则 / 全局（点选加深；切换改 route.final + 是否输出路由规则，重启生效）
+                        // 系统模式卡：规则 / 全局（切换改 route.final + 是否输出路由规则，重启生效）
                         androidx.compose.material3.Surface(
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier.fillMaxWidth(),
                             shape = MaterialTheme.shapes.large,
                             color = MaterialTheme.colorScheme.surfaceContainer,
                         ) {
@@ -524,36 +527,6 @@ fun HomeScreen() {
                                             testFeedback = if (coreRunning) "已切换为全局模式，重启 VPN 后生效" else null
                                         },
                                         label = { Text("全局") },
-                                    )
-                                }
-                            }
-                        }
-                        // 出站模式卡：auto / 当前节点（点选加深；auto 开 urltest 优选，节点走 proxy selector）
-                        androidx.compose.material3.Surface(
-                            modifier = Modifier.weight(1f),
-                            shape = MaterialTheme.shapes.large,
-                            color = MaterialTheme.colorScheme.surfaceContainer,
-                        ) {
-                            Column(Modifier.padding(14.dp)) {
-                                Text("出站模式", style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                Spacer(Modifier.height(8.dp))
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    FilterChip(
-                                        selected = lb.autoEnabled,
-                                        onClick = {
-                                            store.updateLoadBalance(lb.copy(autoEnabled = true))
-                                            testFeedback = if (coreRunning) "已切换为自动优选，重启 VPN 后生效" else null
-                                        },
-                                        label = { Text("自动") },
-                                    )
-                                    FilterChip(
-                                        selected = !lb.autoEnabled,
-                                        onClick = {
-                                            store.updateLoadBalance(lb.copy(autoEnabled = false))
-                                            testFeedback = if (coreRunning) "已关闭自动优选，可在下方节点选择" else null
-                                        },
-                                        label = { Text("手动") },
                                     )
                                 }
                             }
@@ -619,16 +592,6 @@ fun HomeScreen() {
             // ---- 订阅源 ----
             item {
                 SbGroup(title = "订阅源") {
-                    // 自动模式移到订阅区顶部（lxbox 模式：点击启用/停用，不是独立开关组）
-                    item {
-                        SbSwitchItem(
-                            title = "自动模式",
-                            subtitle = if (lb.autoEnabled) "已启用 · 自动优选延迟最低节点" else "点击启用：自动优选延迟最低节点",
-                            icon = Icons.Filled.Sync,
-                            checked = lb.autoEnabled,
-                            onCheckedChange = { store.updateLoadBalance(lb.copy(autoEnabled = it)) },
-                        )
-                    }
                     subscriptions.forEach { sub ->
                         item {
                             val subNodes = filteredNodes.filter { it.node.subscriptionId == sub.id }
@@ -700,15 +663,16 @@ fun HomeScreen() {
                                     store.upsertProxyNode(node.copy(enabled = enabled, disabledReason = null))
                                 },
                                 onEditSubscription = { editingSub = sub },
+                                // 统一选择器 proxy 组：当前选中项（auto/direct/节点 tag）
+                                selectedTag = proxyGroups.firstOrNull { it.tag == "proxy" }?.selected ?: "",
+                                onSelectTag = if (coreConnected) { tag ->
+                                    SbCommandClient.selectOutbound("proxy", tag)
+                                } else null,
                                 onSelectNode = if (coreConnected) { node ->
-                                    // 点击节点切换当前出口（lxbox 模式）：找 selector 组，用节点 tag 切换
-                                    val selectorGroup = proxyGroups.firstOrNull { it.type == "selector" }
-                                    if (selectorGroup != null) {
-                                        SbCommandClient.selectOutbound(
-                                            selectorGroup.tag,
-                                            SingBoxConfigGenerator.nodeTagOf(node),
-                                        )
-                                    }
+                                    SbCommandClient.selectOutbound(
+                                        "proxy",
+                                        SingBoxConfigGenerator.nodeTagOf(node),
+                                    )
                                 } else null,
                             )
                         }
@@ -1082,6 +1046,10 @@ private fun SubscriptionCard(
     onDeleteNode: (String) -> Unit,
     onToggleNode: (com.sbai.data.ProxyNode, Boolean) -> Unit,
     onEditSubscription: () -> Unit,
+    // 统一选择器 proxy 组当前选中项（auto/direct/节点 tag），用于卡片选中态加深
+    selectedTag: String,
+    // 点选 direct/auto 出口卡片（tag 为 "direct"/"auto"）
+    onSelectTag: ((String) -> Unit)?,
     onSelectNode: ((com.sbai.data.ProxyNode) -> Unit)?,
 ) {
     val colors = MaterialTheme.colorScheme
@@ -1163,8 +1131,26 @@ private fun SubscriptionCard(
             }
         }
         
-        // 展开后显示该订阅的节点：节点启用开关 + 测速
+        // 展开后：direct + auto 出口卡片（点选选中）+ 节点卡片列表（点选选中）
         if (expanded) {
+            Spacer(Modifier.height(6.dp))
+            // direct 出口卡片（在 auto 上面）
+            OutboundSelectCard(
+                label = "direct",
+                subtitle = "直连，不走代理",
+                selected = selectedTag == "direct",
+                enabled = onSelectTag != null,
+                onClick = { onSelectTag?.invoke("direct") },
+            )
+            Spacer(Modifier.height(4.dp))
+            // auto 出口卡片
+            OutboundSelectCard(
+                label = "auto",
+                subtitle = "自动优选延迟最低节点",
+                selected = selectedTag == "auto",
+                enabled = onSelectTag != null,
+                onClick = { onSelectTag?.invoke("auto") },
+            )
             Spacer(Modifier.height(6.dp))
             if (nodes.isEmpty()) {
                 Text(
@@ -1181,14 +1167,25 @@ private fun SubscriptionCard(
                     TextButton(onClick = onTestNodes) { Text("测速本订阅节点") }
                 }
                 nodes.forEach { row ->
+                    val nodeTag = com.sbai.service.SingBoxConfigGenerator.nodeTagOf(row.node)
+                    val selected = selectedTag == nodeTag
+                    // 节点卡片：点选选中加深（与 direct/auto 卡片同一套点选逻辑）
+                    androidx.compose.material3.Surface(
+                        onClick = { if (onSelectNode != null && row.node.enabled) onSelectNode.invoke(row.node) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 2.dp),
+                        shape = RoundedCornerShape(10.dp),
+                        color = when {
+                            selected -> colors.primaryContainer
+                            row.node.enabled -> colors.surfaceContainerHigh
+                            else -> colors.surfaceContainerHigh.copy(alpha = 0.5f)
+                        },
+                    ) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            // 点击节点行切换当前节点（lxbox 模式：核运行时通过 selector 即时切换）
-                            .clickable(enabled = onSelectNode != null && row.node.enabled) {
-                                onSelectNode?.invoke(row.node)
-                            }
-                            .padding(horizontal = 4.dp, vertical = 4.dp),
+                            .padding(horizontal = 8.dp, vertical = 6.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Column(Modifier.weight(1f)) {
@@ -1218,7 +1215,56 @@ private fun SubscriptionCard(
                             Icon(Icons.Filled.Edit, contentDescription = "编辑节点")
                         }
                     }
+                    }
                 }
+            }
+        }
+    }
+}
+
+/** direct/auto 出口选择卡片：点选选中加深（与节点卡片同一套点选逻辑）。 */
+@Composable
+private fun OutboundSelectCard(
+    label: String,
+    subtitle: String,
+    selected: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    val colors = MaterialTheme.colorScheme
+    androidx.compose.material3.Surface(
+        onClick = { if (enabled) onClick() },
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(10.dp),
+        color = when {
+            selected -> colors.primaryContainer
+            enabled -> colors.surfaceContainer
+            else -> colors.surfaceContainer.copy(alpha = 0.5f)
+        },
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    label,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (selected) colors.onPrimaryContainer else colors.onSurface,
+                )
+                Text(
+                    subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (selected) colors.onPrimaryContainer.copy(alpha = 0.75f) else colors.onSurfaceVariant,
+                )
+            }
+            if (selected) {
+                Icon(
+                    Icons.Filled.Check,
+                    contentDescription = "已选中",
+                    tint = colors.primary,
+                    modifier = Modifier.size(20.dp),
+                )
             }
         }
     }
@@ -1432,10 +1478,12 @@ private fun SubscriptionEditorDialog(
             )
         },
     ) { padding ->
+            // 整页可滚动：字段多（20+ 输入框/开关），不可滚动的 Column 会溢出屏幕看不到/点不到。
             Column(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(padding)
+                    .verticalScroll(rememberScrollState())
                     .padding(horizontal = 20.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {

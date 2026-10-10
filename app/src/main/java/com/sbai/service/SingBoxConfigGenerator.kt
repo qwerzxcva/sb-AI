@@ -88,13 +88,17 @@ object SingBoxConfigGenerator {
             nodeTags.size == 1 -> nodeTags[0]
             else -> "direct"
         }
-        // 自动模式与负载均衡解耦：auto（urltest 优选）可在关掉负载均衡后单独使用。
-        // 但 auto 只有在「有多个出口候选可测速」时才有意义：
-        //  - lb（urltest 组）/ proxy（多节点 selector）→ 套 auto 再优选，合理；
-        //  - lb-selector（手动）→ 套 urltest 会覆盖用户手动选择，不套；
-        //  - 单节点 / direct → 无可测速对象，不套。
-        val autoWorthWrapping = lb.autoEnabled && (finalProxyTag == "lb" || finalProxyTag == "proxy")
-        val entryTag = if (autoWorthWrapping) "auto" else finalProxyTag
+        // 统一选择器：proxy 组含 direct + auto + 全部节点，首页点选 direct/auto/节点都落在
+        // proxy 组的 selected（与 LxBox/bettbox 卡片点选一致）。auto urltest 始终生成（多节点时），
+        // 作为 proxy 组内一个可选项；不再用 autoEnabled 套层决定入口。
+        val proxyGroupTag = if (nodeTags.size > 1 && !lb.enabled) "proxy" else null
+        val autoInGroup = nodeTags.size > 1 && !lb.enabled
+        // entryTag：lb 开启走 lb/lb-selector；否则走统一选择器 proxy；单节点/无节点直连或单节点。
+        val entryTag = when {
+            lb.enabled -> finalProxyTag
+            proxyGroupTag != null -> proxyGroupTag
+            else -> finalProxyTag
+        }
 
         val dnsServers = buildDnsServers(state, entryTag)
         val defaultDnsTag = state.dnsServers.firstOrNull { it.enabled && it.tag.isNotBlank() }?.tag
@@ -139,19 +143,26 @@ object SingBoxConfigGenerator {
                     })
                 }
             } else if (nodeTags.size > 1) {
+                // 统一选择器：direct + auto + 全部节点，首页 direct/auto/节点卡片点选都改这个组的 selected。
                 add(buildJsonObject {
                     put("type", "selector")
                     put("tag", "proxy")
-                    putJsonArray("outbounds") { nodeTags.forEach(::add) }
+                    putJsonArray("outbounds") {
+                        add("auto")
+                        add("direct")
+                        nodeTags.forEach(::add)
+                    }
+                    // 默认选中 auto（自动优选）；用户点选后由内核记忆 selected。
+                    put("default", "auto")
                 })
             }
 
-            // 自动模式独立于负载均衡：与 entryTag 同条件创建（仅为多候选出口套 urltest 优选）
-            if (autoWorthWrapping) {
+            // auto urltest（多节点且未开 lb 时始终生成）：在全部节点间优选，作为 proxy 组的可选项。
+            if (autoInGroup) {
                 add(buildJsonObject {
                     put("type", "urltest")
                     put("tag", "auto")
-                    putJsonArray("outbounds") { add(finalProxyTag) }
+                    putJsonArray("outbounds") { nodeTags.forEach(::add) }
                     put("url", lb.checkUrl)
                     put("interval", lb.interval)
                 })

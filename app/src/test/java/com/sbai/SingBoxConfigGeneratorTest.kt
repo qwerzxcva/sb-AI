@@ -62,19 +62,29 @@ class SingBoxConfigGeneratorTest {
     }
 
     @Test
-    fun `auto mode works independently of load balance`() {
-        // 关掉负载均衡、只开自动模式 + 多节点：入口应为 auto（urltest 优选）
+    fun `proxy group is unified selector with auto and direct`() {
+        // 统一选择器：proxy 组含 auto + direct + 全部节点；route.final 指向 proxy。
         val node1 = ProxyNode(name = "n1", outboundJson = """{"type":"vless","tag":"n1","server":"1.2.3.4","server_port":443,"uuid":"x"}""")
         val node2 = ProxyNode(name = "n2", outboundJson = """{"type":"vless","tag":"n2","server":"1.2.3.5","server_port":443,"uuid":"y"}""")
         val state = AppState(
             proxyNodes = listOf(node1, node2),
-            loadBalance = LoadBalanceConfig(enabled = false, autoEnabled = true),
+            loadBalance = LoadBalanceConfig(enabled = false),
         )
         val cfg = parse(state)
-        assertEquals("auto", cfg["route"]!!.jsonObject["final"]!!.jsonPrimitive.content)
-        val tags = outbounds(cfg).map { it.jsonObject["tag"]!!.jsonPrimitive.content }
-        assertTrue("auto" in tags)
+        assertEquals("proxy", cfg["route"]!!.jsonObject["final"]!!.jsonPrimitive.content)
+        val obs = outbounds(cfg)
+        val proxy = obs.first { it.jsonObject["tag"]!!.jsonPrimitive.content == "proxy" }.jsonObject
+        val members = proxy["outbounds"]!!.jsonArray.map { it.jsonPrimitive.content }
+        // proxy 组成员：auto + direct + 节点
+        assertTrue("auto" in members)
+        assertTrue("direct" in members)
+        assertTrue("n1" in members && "n2" in members)
+        assertEquals("auto", proxy["default"]!!.jsonPrimitive.content)
+        // auto urltest 独立生成（含全部节点）
+        val auto = obs.first { it.jsonObject["tag"]!!.jsonPrimitive.content == "auto" }.jsonObject
+        assertEquals("urltest", auto["type"]!!.jsonPrimitive.content)
         // 不应有 lb / lb-selector（负载均衡关闭）
+        val tags = obs.map { it.jsonObject["tag"]!!.jsonPrimitive.content }
         assertTrue("lb" !in tags && "lb-selector" !in tags)
     }
 
@@ -390,18 +400,16 @@ class SingBoxConfigGeneratorTest {
         val obs = outbounds(cfg)
         val tags = obs.map { it.jsonObject["tag"]!!.jsonPrimitive.content }
         assertTrue("lb" in tags)
-        assertTrue("auto" in tags)
         assertTrue("n1" in tags)
+        // lb 开启时 auto 不单独生成（auto 只在非 lb 的统一选择器 proxy 组内）
+        assertTrue("auto" !in tags)
 
         val lb = obs.first { it.jsonObject["tag"]!!.jsonPrimitive.content == "lb" }.jsonObject
         assertEquals("urltest", lb["type"]!!.jsonPrimitive.content)
         assertTrue(lb["tolerance"]!!.jsonPrimitive.content.toInt() > 0)
 
-        val auto = obs.first { it.jsonObject["tag"]!!.jsonPrimitive.content == "auto" }.jsonObject
-        assertEquals("urltest", auto["type"]!!.jsonPrimitive.content)
-
-        // 路由 final 应指向 auto
-        assertEquals("auto", cfg["route"]!!.jsonObject["final"]!!.jsonPrimitive.content)
+        // 路由 final 应指向 lb（负载均衡入口）
+        assertEquals("lb", cfg["route"]!!.jsonObject["final"]!!.jsonPrimitive.content)
     }
 
     @Test
