@@ -39,6 +39,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asComposeRenderEffect
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.render.AndroidRenderEffect
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -118,11 +119,13 @@ fun GlassChoiceCard(
     modifier: Modifier = Modifier,
 ) {
     val colors = MaterialTheme.colorScheme
+    val density = LocalDensity.current
     val backgroundColor = if (selected) {
         colors.primaryContainer.copy(alpha = 0.85f)
     } else {
         colors.surfaceContainer.copy(alpha = 0.75f)
     }
+    val blurRadius = with(density) { 16.dp.toPx() }
     
     Box(
         modifier = modifier
@@ -141,8 +144,8 @@ fun GlassChoiceCard(
                         .graphicsLayer {
                             renderEffect = AndroidRenderEffect
                                 .createBlurEffect(
-                                    radiusX = 16.dp.toPx(),
-                                    radiusY = 16.dp.toPx(),
+                                    radiusX = blurRadius,
+                                    radiusY = blurRadius,
                                     edgeTreatment = AndroidRenderEffect.EdgeTreatment.CLAMP,
                                 )
                                 .asComposeRenderEffect()

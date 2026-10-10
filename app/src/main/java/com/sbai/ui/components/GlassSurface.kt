@@ -9,10 +9,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asComposeRenderEffect
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.render.AndroidRenderEffect
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -41,6 +41,8 @@ fun GlassSurface(
     content: @Composable BoxScope.() -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
+    val density = LocalDensity.current
+    val blurRadiusPx = with(density) { blurRadius.toPx() }
     
     Box(
         modifier = modifier
@@ -58,8 +60,8 @@ fun GlassSurface(
                         .graphicsLayer {
                             renderEffect = AndroidRenderEffect
                                 .createBlurEffect(
-                                    radiusX = blurRadius.toPx(),
-                                    radiusY = blurRadius.toPx(),
+                                    radiusX = blurRadiusPx,
+                                    radiusY = blurRadiusPx,
                                     edgeTreatment = AndroidRenderEffect.EdgeTreatment.CLAMP,
                                 )
                                 .asComposeRenderEffect()
