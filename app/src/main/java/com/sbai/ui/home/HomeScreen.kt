@@ -350,25 +350,23 @@ fun HomeScreen() {
     // lastPublishedAt 过期但 Compose 无新状态可订阅，页面不会自动重绘——
     // 必须切页（触发 recomposition）才刷新，正是用户报的「切回去才看到已停止」。
     var clockTick by remember { mutableIntStateOf(0) }
-    LaunchedEffect(Unit) {
+    // 时钟只在状态可能随时间过期时才需要（Starting/Stopping/Running）；
+    // Stopped/Error 每秒触发整页重组是卡顿来源，此时间隔放宽到 15s。
+    val needClock = vpnPhase == VpnRuntimeState.Phase.Starting ||
+        vpnPhase == VpnRuntimeState.Phase.Stopping ||
+        vpnPhase == VpnRuntimeState.Phase.Running
+    LaunchedEffect(needClock) {
         while (true) {
             withContext(Dispatchers.IO) {
                 VpnRuntimeState.refreshFromDisk(context)
-                // 跨进程遥测快照（:core 发布的流量/连接/时长/出口IP），首页状态卡与监控页共用
                 VpnRuntimeState.refreshTelemetry(context)
-                // :core 会异步自动禁用坏节点；UI 轮询时把最新磁盘态刷入内存，
-                // 否则首页的代理列表/节点数量会滞后（P0 相关体验问题）。
                 RuleStore.get(context).refreshFromDisk()
-                // 卡死检测需要「当前」时间戳：旧实现只在启动时读一次，
-                // 90s 后任何 Starting/Stopping（含合法慢启动）都会误判为卡死、
-                // 按钮被锁死或 VPN 显示状态错误（P0：点了没反应/状态错乱）。
                 lastPublishedAt = VpnRuntimeState.lastPublishedAt(context)
             }
             clockTick = clockTick + 1
-            delay(1000L)
+            delay(if (needClock) 1000L else 15_000L)
         }
     }
-    // 读 clockTick 以建立对该状态的订阅（值本身不直接使用）
     @Suppress("UNUSED_EXPRESSION") clockTick
     val effectivePhase = when (vpnPhase) {
         VpnRuntimeState.Phase.Starting, VpnRuntimeState.Phase.Stopping ->

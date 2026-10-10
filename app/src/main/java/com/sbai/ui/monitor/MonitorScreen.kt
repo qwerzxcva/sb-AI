@@ -89,12 +89,12 @@ fun MonitorScreen() {
     }
     LaunchedEffect(tab) { VpnRuntimeState.refreshTelemetry(context); telemetry = VpnRuntimeState.telemetry.value }
     var query by remember { mutableStateOf("") }
-    // 1s 时钟心跳：让 telemetry 新鲜度判断每秒重算。否则 :core 死后更新停止，
-    // 页面无新状态可订阅，需切页才重绘（监控页显示死快照「运行 25s」的根因）。
+    // 时钟只在有遥测数据可能过期时才需要；无遥测（内核未跑）每秒重组是卡顿来源。
     var clockTick by remember { mutableIntStateOf(0) }
-    LaunchedEffect(Unit) {
+    val hasTelemetry = telemetry != null || connected
+    LaunchedEffect(hasTelemetry) {
         while (true) {
-            kotlinx.coroutines.delay(1000L)
+            kotlinx.coroutines.delay(if (hasTelemetry) 1000L else 15_000L)
             clockTick = clockTick + 1
         }
     }

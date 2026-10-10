@@ -134,14 +134,7 @@ private fun MainScaffold() {
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
 
-    // LayerBackdrop 只有在页面使用 layerBackdrop 写入内容后才能被底栏采样。
-    // 开启 pageGlass 把 NavHost 内容捕获为纹理供底栏采样（drawBackdrop 实时磨砂）。
-    // 首页长列表曾因此卡顿，故 barGlass 的模糊半径压小、且不额外加 highlight/lens，
-    // 让底栏有真实的透光磨砂质感又不过度拖累滚动帧率。
-    val barGlass = true
-    // 整页 layerBackdrop 会把首页节点列表每帧抓成纹理，节点一多就卡。
-    // 底栏磨砂改由底栏自身采样，不再给整页内容加捕获层。
-    val pageGlass = false
+    // 磨砂采样已关（每帧模糊着色器+离屏纹理是卡顿来源）：底栏用静态半透明。
     val pageBackdrop = rememberLayerBackdrop()
 
     // 下滑隐藏 / 上滑显示底栏；BottomBarController 为跨组件真源，
@@ -185,9 +178,7 @@ private fun MainScaffold() {
         NavHost(
             navController = navController,
             startDestination = "main",
-            modifier = Modifier
-                .fillMaxSize()
-                .then(if (pageGlass) Modifier.layerBackdrop(pageBackdrop) else Modifier),
+            modifier = Modifier.fillMaxSize(),
         ) {
             composable("main") {
                 HorizontalPager(
@@ -250,7 +241,7 @@ private fun MainScaffold() {
                     },
                     modifier = Modifier.weight(1f),
                     barHeight = controlHeight,
-                    useGlassBackdrop = barGlass,
+                    useGlassBackdrop = false,
                 )
                 Spacer(modifier = Modifier.size(gap))
                 // 保留原权限请求、连接状态与启停行为；窄屏仍有 56dp 独立触摸区。
