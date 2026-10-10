@@ -1,6 +1,7 @@
 package com.sbai.ui.monitor
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,6 +21,8 @@ import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ClearAll
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material3.Icon
@@ -30,6 +33,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -58,10 +62,17 @@ fun MonitorScreen() {
     val context = LocalContext.current
     val tokens = LocalSbStyleTokens.current
     var tab by remember { mutableIntStateOf(0) }
+    // 暂停刷新：冻结连接/日志展示快照（用户要求加暂停按钮）
+    var paused by remember { mutableStateOf(false) }
+    var frozenConnections by remember { mutableStateOf<List<SbCommandClient.ConnectionEntry>?>(null) }
+    var frozenLogs by remember { mutableStateOf<List<SbCommandClient.LogLine>?>(null) }
 
     val status by SbCommandClient.status.collectAsState()
-    val logs by SbCommandClient.logs.collectAsState()
-    val connections by SbCommandClient.connections.collectAsState()
+    val logsRaw by SbCommandClient.logs.collectAsState()
+    val connectionsRaw by SbCommandClient.connections.collectAsState()
+    // 暂停时用冻结快照，否则用实时流
+    val logs = if (paused) frozenLogs ?: logsRaw else logsRaw
+    val connections = if (paused) frozenConnections ?: connectionsRaw else connectionsRaw
     val connected by SbCommandClient.connectedToService.collectAsState()
     // 跨进程遥测快照（UI 主进程通过共享文件读取 :core 发布的 CommandClient 数据）。
     // 刷新时机：进入页面时 + tab 切换时 + 每 3s 轮询（覆盖冷启动时文件尚未落盘的窗口）。
@@ -124,6 +135,34 @@ fun MonitorScreen() {
                 Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("状态") })
                 Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("连接（${connections.size.coerceAtLeast(telemetry?.connections ?: 0)}）") })
                 Tab(selected = tab == 2, onClick = { tab = 2 }, text = { Text("日志（${logs.size.coerceAtLeast(telemetry?.logTail?.size ?: 0)}）") })
+            }
+            // 暂停/继续刷新（连接与日志 tab 用）：冻结当前快照便于查看，再点恢复实时流。
+            if (tab == 1 || tab == 2) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    TextButton(onClick = {
+                        if (paused) {
+                            paused = false
+                            frozenConnections = null
+                            frozenLogs = null
+                        } else {
+                            frozenConnections = connectionsRaw
+                            frozenLogs = logsRaw
+                            paused = true
+                        }
+                    }) {
+                        Icon(
+                            if (paused) Icons.Filled.PlayArrow else Icons.Filled.Pause,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Spacer(Modifier.size(4.dp))
+                        Text(if (paused) "继续" else "暂停")
+                    }
+                }
             }
 
         if (tab == 0) {
@@ -340,6 +379,8 @@ private fun SbStatBadge(text: String, ok: Boolean) {
 private fun ConnectionCard(entry: SbCommandClient.ConnectionEntry, onClose: () -> Unit) {
     val title = entry.domain.ifBlank { entry.destination }.ifBlank { "(unknown)" }
     val app = entry.processPath.substringAfterLast('/').ifBlank { entry.userName }
+    // 点击展开/收起完整连接信息（用户要求点击展开更多数据）
+    var expanded by remember { mutableStateOf(false) }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -347,6 +388,7 @@ private fun ConnectionCard(entry: SbCommandClient.ConnectionEntry, onClose: () -
                 MaterialTheme.colorScheme.surfaceContainer,
                 MaterialTheme.shapes.small,
             )
+            .clickable { expanded = !expanded }
             .padding(horizontal = 14.dp, vertical = 10.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -354,7 +396,7 @@ private fun ConnectionCard(entry: SbCommandClient.ConnectionEntry, onClose: () -
                 Text(
                     title,
                     style = MaterialTheme.typography.titleSmall,
-                    maxLines = 1,
+                    maxLines = if (expanded) Int.MAX_VALUE else 1,
                 )
                 Text(
                     buildString {
@@ -364,7 +406,7 @@ private fun ConnectionCard(entry: SbCommandClient.ConnectionEntry, onClose: () -
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
+                    maxLines = if (expanded) Int.MAX_VALUE else 1,
                 )
             }
             IconButton(onClick = onClose) {
@@ -392,7 +434,7 @@ private fun ConnectionCard(entry: SbCommandClient.ConnectionEntry, onClose: () -
                     "rule: ${entry.rule}",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
+                    maxLines = if (expanded) Int.MAX_VALUE else 1,
                     modifier = Modifier.weight(1f),
                 )
             }
@@ -401,6 +443,19 @@ private fun ConnectionCard(entry: SbCommandClient.ConnectionEntry, onClose: () -
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.secondary,
             )
+        }
+        // 展开时显示完整字段
+        if (expanded) {
+            Spacer(Modifier.height(6.dp))
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text("目标: ${entry.destination}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (entry.domain.isNotBlank()) Text("域名: ${entry.domain}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (entry.processPath.isNotBlank()) Text("进程: ${entry.processPath}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (entry.outbound.isNotBlank()) Text("出口: ${entry.outbound}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (entry.rule.isNotBlank()) Text("规则: ${entry.rule}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("网络: ${entry.network} · 协议: ${entry.protocol.ifBlank { "-" }}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("↑${formatBytes(entry.uplinkTotal)} ↓${formatBytes(entry.downlinkTotal)}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.secondary)
+            }
         }
     }
 }

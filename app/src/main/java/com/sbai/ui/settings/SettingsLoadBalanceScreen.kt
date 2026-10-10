@@ -79,8 +79,6 @@ fun SettingsLoadBalanceScreen(navController: NavHostController) {
     }.collectAsState(initial = remember(store) { store.state.value.proxyNodes })
     val lb = loadBalance
 
-    var showConfigPreview by remember { mutableStateOf(false) }
-    var showModeDialog by remember { mutableStateOf(false) }
     var showNodesPicker by remember { mutableStateOf(false) }
     var editingText by remember { mutableStateOf<Triple<String, String, (String) -> Unit>?>(null) }
 
@@ -109,28 +107,12 @@ fun SettingsLoadBalanceScreen(navController: NavHostController) {
                     if (lb.enabled) {
                         item {
                             SbItem(
-                                title = "模式",
-                                subtitle = lb.mode.displayName,
-                                icon = Icons.Filled.Router,
-                                onClick = { showModeDialog = true },
-                            )
-                        }
-                        item {
-                            SbItem(
                                 title = "参与节点",
                                 subtitle = if (lb.outbounds.isEmpty()) "全部节点" else lb.outbounds.joinToString(),
                                 icon = Icons.Filled.Hub,
                                 onClick = { showNodesPicker = true },
                             )
                         }
-                    }
-                    item {
-                        SbItem(
-                            title = "配置预览",
-                            subtitle = "查看生成的 sing-box 配置",
-                            icon = Icons.Filled.Code,
-                            onClick = { showConfigPreview = true },
-                        )
                     }
                 }
                 SbSpacer()
@@ -259,62 +241,6 @@ fun SettingsLoadBalanceScreen(navController: NavHostController) {
         }
     }
 
-    if (showConfigPreview) {
-        var previewConfig by remember { mutableStateOf("正在生成配置…") }
-        LaunchedEffect(Unit) {
-            val snapshot = store.state.value
-            previewConfig = try {
-                withContext(Dispatchers.Default) {
-                    SingBoxConfigGenerator.generate(snapshot)
-                }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                "生成失败: ${e.message}"
-            }
-        }
-        LoadBalanceConfigPreviewDialog(
-            config = previewConfig,
-            onDismiss = { showConfigPreview = false },
-        )
-    }
-
-    if (showModeDialog) {
-        AlertDialog(
-            onDismissRequest = { showModeDialog = false },
-            title = { Text("负载均衡模式") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    LoadBalanceMode.entries.forEach { mode ->
-                        Surface(
-                            onClick = {
-                                store.updateLoadBalance(lb.copy(mode = mode))
-                                showModeDialog = false
-                            },
-                            shape = RoundedCornerShape(16.dp),
-                            color = if (lb.mode == mode) MaterialTheme.colorScheme.primaryContainer
-                            else MaterialTheme.colorScheme.surfaceContainer,
-                        ) {
-                            Column(Modifier.padding(16.dp)) {
-                                Text(mode.displayName, style = MaterialTheme.typography.titleSmall)
-                                Text(
-                                    when (mode) {
-                                        LoadBalanceMode.LATENCY -> "urltest：始终选延迟最低的节点"
-                                        LoadBalanceMode.BALANCED -> "urltest+tolerance：在可接受延迟内分摊节点"
-                                        LoadBalanceMode.MANUAL -> "selector：手动切换出口"
-                                    },
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                        }
-                    }
-                }
-            },
-            confirmButton = { TextButton(onClick = { showModeDialog = false }) { Text("关闭") } },
-        )
-    }
-
     if (showNodesPicker) {
         val nodeTags = proxyNodes.filter { it.enabled }
             .map { SingBoxConfigGenerator.nodeTagOf(it) }.distinct()
@@ -354,24 +280,4 @@ fun SettingsLoadBalanceScreen(navController: NavHostController) {
             onDone = { onDone(it); editingText = null },
         )
     }
-}
-
-@Composable
-private fun LoadBalanceConfigPreviewDialog(config: String, onDismiss: () -> Unit) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("sing-box 配置预览") },
-        text = {
-            OutlinedTextField(
-                value = config,
-                onValueChange = {},
-                readOnly = true,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 240.dp),
-                minLines = 12,
-            )
-        },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } },
-    )
 }

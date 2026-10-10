@@ -1,6 +1,19 @@
 package com.sbai.ui.settings
 
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.Router
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -58,6 +71,12 @@ fun SettingsScreen(navController: NavHostController) {
     val settings by remember(store) {
         store.state.map { it.settings }.distinctUntilChanged()
     }.collectAsState(initial = remember(store) { store.state.value.settings })
+    val loadBalance by remember(store) {
+        store.state.map { it.loadBalance }.distinctUntilChanged()
+    }.collectAsState(initial = remember(store) { store.state.value.loadBalance })
+    // 一级页对话框：配置预览 / 负载均衡模式（从二级页上移，用户要求放一级页）
+    var showConfigPreview by remember { mutableStateOf(false) }
+    var showModeDialog by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -88,9 +107,25 @@ fun SettingsScreen(navController: NavHostController) {
                     item {
                         SbItem(
                             title = "负载均衡",
-                            subtitle = "总开关 / 模式 / 参与节点 / 配置预览 / 高级参数",
+                            subtitle = "总开关 / 参与节点 / 高级参数",
                             icon = Icons.Filled.Balance,
                             onClick = { navController.navigate("settings_loadbalance") },
+                        )
+                    }
+                    item {
+                        SbItem(
+                            title = "负载均衡模式",
+                            subtitle = loadBalance.mode.displayName,
+                            icon = Icons.Filled.Router,
+                            onClick = { showModeDialog = true },
+                        )
+                    }
+                    item {
+                        SbItem(
+                            title = "配置预览",
+                            subtitle = "查看生成的 sing-box 配置",
+                            icon = Icons.Filled.Code,
+                            onClick = { showConfigPreview = true },
                         )
                     }
                     item {
@@ -149,6 +184,71 @@ fun SettingsScreen(navController: NavHostController) {
             }
             item { Spacer(Modifier.height(80.dp)) }
         }
+    }
+
+    // ---- 一级页对话框：负载均衡模式 ----
+    if (showModeDialog) {
+        AlertDialog(
+            onDismissRequest = { showModeDialog = false },
+            title = { Text("负载均衡模式") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    com.sbai.data.LoadBalanceMode.entries.forEach { mode ->
+                        Surface(
+                            onClick = {
+                                store.updateLoadBalance(loadBalance.copy(mode = mode))
+                                showModeDialog = false
+                            },
+                            shape = RoundedCornerShape(16.dp),
+                            color = if (loadBalance.mode == mode) MaterialTheme.colorScheme.primaryContainer
+                            else MaterialTheme.colorScheme.surfaceContainer,
+                        ) {
+                            Column(Modifier.padding(16.dp).fillMaxWidth()) {
+                                Text(mode.displayName, style = MaterialTheme.typography.titleSmall)
+                                Text(
+                                    when (mode) {
+                                        com.sbai.data.LoadBalanceMode.LATENCY -> "urltest：始终选延迟最低的节点"
+                                        com.sbai.data.LoadBalanceMode.BALANCED -> "urltest+tolerance：在可接受延迟内分摊节点"
+                                        com.sbai.data.LoadBalanceMode.MANUAL -> "selector：手动切换出口"
+                                    },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { showModeDialog = false }) { Text("关闭") } },
+        )
+    }
+
+    // ---- 一级页对话框：配置预览 ----
+    if (showConfigPreview) {
+        var previewConfig by remember { mutableStateOf("正在生成配置…") }
+        LaunchedEffect(Unit) {
+            val snapshot = store.state.value
+            previewConfig = try {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                    com.sbai.service.SingBoxConfigGenerator.generate(snapshot)
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                "生成失败: ${e.message}"
+            }
+        }
+        AlertDialog(
+            onDismissRequest = { showConfigPreview = false },
+            title = { Text("sing-box 配置预览") },
+            text = {
+                OutlinedTextField(
+                    value = previewConfig, onValueChange = {}, readOnly = true,
+                    modifier = Modifier.fillMaxWidth(), minLines = 12,
+                )
+            },
+            confirmButton = { TextButton(onClick = { showConfigPreview = false }) { Text("关闭") } },
+        )
     }
 }
 
