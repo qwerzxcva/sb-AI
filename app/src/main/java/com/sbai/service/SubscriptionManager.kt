@@ -136,17 +136,30 @@ class SubscriptionManager(
             }
             store.replaceSubscriptionNodes(subscription.id, nodes)
 
-            // 导入解析出的路由规则（Clash YAML / sing-box JSON 配置带规则时）。
-            // blockImportRules=true 时跳过：用户只用自己维护的规则集，不被订阅的 rules 覆盖。
+            // 订阅自带规则：禁止导入则清掉；否则按直连/代理/拦截归并成三个规则集，
+            // 路由列表每类只留一条引用。归并不了的复杂规则（端口/进程等）原样保留。
             val importedRules = parsedResult.routeRules
-            if (importedRules.isNotEmpty() && !subscription.blockImportRules) {
-                // 只保留启用的新规则，插入到现有规则最前（订阅规则优先级最高）
-                importedRules.forEach { rule ->
-                    store.upsertRouteRule(rule.copy(enabled = true))
+            when {
+                subscription.blockImportRules -> {
+                    store.replaceSubscriptionRules(subscription.id, emptyList())
+                    if (importedRules.isNotEmpty()) {
+                        Log.i(TAG, "subscription ${subscription.name}: skipped ${importedRules.size} route rules (blockImportRules)")
+                    }
                 }
-                Log.i(TAG, "subscription ${subscription.name}: +${importedRules.size} route rules ($subFormat)")
-            } else if (importedRules.isNotEmpty()) {
-                Log.i(TAG, "subscription ${subscription.name}: skipped ${importedRules.size} route rules (blockImportRules)")
+                importedRules.isNotEmpty() -> {
+                    val merged = SubscriptionRuleMerger.merge(
+                        subscription.id,
+                        subscription.name.ifBlank { detectAirportName(fetched.headers, subscription.url) },
+                        importedRules,
+                    )
+                    merged.ruleSets.forEach { store.upsertRuleSetByTag(it) }
+                    val mergedActions = merged.rules.map { it.action }.toSet()
+                    val leftover = importedRules.filterNot {
+                        it.enabled && it.action in mergedActions && SubscriptionRuleMerger.isMergeable(it)
+                    }.map { it.copy(enabled = true, subscriptionId = subscription.id) }
+                    store.replaceSubscriptionRules(subscription.id, merged.rules + leftover)
+                    Log.i(TAG, "subscription ${subscription.name}: merged ${importedRules.size} rules into ${merged.ruleSets.size} rule sets")
+                }
             }
 
             // 把订阅节点按直连/代理/拦截分组到规则集（<订阅名>直连/代理/拦截）。

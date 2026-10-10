@@ -288,6 +288,15 @@ class RuleStore private constructor(
         s.copy(routeRuleSets = list)
     }
 
+    /**
+     * 替换某订阅导入的规则：先删掉该订阅旧规则，再把新规则插到列表最前。
+     * 手动规则（subscriptionId == null）不动。
+     */
+    fun replaceSubscriptionRules(subscriptionId: String, rules: List<RouteRule>) = update { s ->
+        val kept = s.routeRules.filterNot { it.subscriptionId == subscriptionId }
+        s.copy(routeRules = rules + kept)
+    }
+
     /** 按 tag 幂等替换/新增规则集（订阅节点分组用：同 tag 更新而非堆积重复）。 */
     fun upsertRuleSetByTag(rs: RouteRuleSet) = update { s ->
         val list = s.routeRuleSets.toMutableList()
@@ -421,6 +430,7 @@ class RuleStore private constructor(
         s.copy(
             subscriptions = s.subscriptions.filterNot { it.id == id },
             proxyNodes = s.proxyNodes.filterNot { it.subscriptionId == id },
+            routeRules = s.routeRules.filterNot { it.subscriptionId == id },
             routeRuleSets = if (groupTags.isEmpty()) s.routeRuleSets
                 else s.routeRuleSets.filterNot { it.tag in groupTags },
         )

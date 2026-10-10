@@ -95,6 +95,8 @@ data class RouteRule(
 
     // 直连/代理可指定 DNS 或 DNS group（不强制）；拦截类/IP 规则/远程规则集规则不使用
     val dnsTag: String? = null,                       // DNS server tag 或 DNS group 名
+    /** 来源订阅 id；手动规则为 null。用于按订阅归并/清理订阅自带规则。 */
+    val subscriptionId: String? = null,
 ) {
     /** 仅由 IP CIDR / 远程规则集构成的规则不生成 DNS 联动 */
     val isIpOrRemoteOnly: Boolean

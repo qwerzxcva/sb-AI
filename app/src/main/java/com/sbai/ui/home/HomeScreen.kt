@@ -1607,13 +1607,19 @@ private fun SubscriptionEditorDialog(
                     )
                 }
 
-                // 禁止导入订阅自带的规则集/路由规则
+                // 禁止导入订阅自带的路由规则
                 SubOptionSwitch(
-                    "禁止导入订阅规则集",
+                    "禁用订阅规则",
                     blockImportRules,
                 ) { blockImportRules = it }
                 Text(
-                    "开启后不使用订阅自带的 rules，只用我自己的路由/规则集。",
+                    "开启后不导入这份订阅自带的路由规则，只用我自己的规则。下次更新生效。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+
+                Text(
+                    "订阅规则默认按直连 / 代理 / 拦截归并成三个规则集，在「路由」页查看。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -1624,7 +1630,7 @@ private fun SubscriptionEditorDialog(
                     groupNodesToRuleSets,
                 ) { groupNodesToRuleSets = it }
                 Text(
-                    "生成「<订阅名>直连 / 代理 / 拦截」三组，路由规则可整组引用这批节点。",
+                    "另外生成「<订阅名>直连 / 代理 / 拦截」三组节点，路由规则可整组引用这批节点。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

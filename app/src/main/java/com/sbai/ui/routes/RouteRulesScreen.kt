@@ -459,8 +459,8 @@ private fun RouteRulesSubPage(
                     }
                     item {
                         SbItem(
-                            title = "IP 列表资源（${stateResources.size}）",
-                            subtitle = "CHINA_IP 等资源自动注入路由；在路由规则内直接填 IP 远程订阅 URL 更简单",
+                            title = "IP 列表 / 资源（${stateResources.size}）",
+                            subtitle = "China IP、GeoIP、Hosts、规则集。启用的 China IP 会自动直连",
                             icon = Icons.Filled.Settings,
                             onClick = onOpenResourcesManager,
                         )
