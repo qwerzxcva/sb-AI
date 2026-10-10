@@ -375,6 +375,10 @@ data class Subscription(
     val blockImportRules: Boolean = false,
     /** 把订阅节点按直连/代理/拦截分组到规则集（生成 <订阅名>直连/代理/拦截规则集） */
     val groupNodesToRuleSets: Boolean = false,
+    /** 节点重命名正则：匹配模式（空 = 不重命名）。如 `香港|HK` */
+    val renamePattern: String = "",
+    /** 节点重命名替换内容（可为空字符串=删除匹配部分）。如 `🇭🇰 香港` */
+    val renameReplace: String = "",
 )
 
 @Serializable

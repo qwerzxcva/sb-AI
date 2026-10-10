@@ -99,6 +99,18 @@ class SubscriptionManager(
                 }
             }
 
+            // 节点重命名（正则替换）：renamePattern 非空时对节点名做 replace。
+            val renamePattern = subscription.renamePattern.trim()
+            if (renamePattern.isNotEmpty()) {
+                val regex = runCatching { Regex(renamePattern) }.getOrNull()
+                if (regex != null) {
+                    parsed = parsed.map { n ->
+                        n.copy(name = n.name.replace(regex, subscription.renameReplace).trim().ifBlank { n.name })
+                    }
+                } else {
+                    Log.w(TAG, "subscription ${subscription.name}: invalid renamePattern regex, skipped")
+                }
+            }
             // 节点后处理选项
             if (subscription.removeInsecure) {
                 parsed = parsed.filter { !isInsecureNode(it.outboundJson) }

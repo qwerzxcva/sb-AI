@@ -112,6 +112,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -909,9 +912,16 @@ fun HomeScreen() {
                                     if (refreshingId == null) {
                                         scope.launch {
                                             try {
-                                                subscriptions.filter { it.enabled }.forEach { sub ->
-                                                    refreshingId = sub.id
-                                                    subManager.refresh(sub)
+                                                // 并发刷新：多订阅同时拉取，不再串行等待（用户反馈「订阅不能同时更新」）。
+                                                // 限并发 4，避免过多并发把机场/本机打满。单订阅失败不影响其余。
+                                                val targets = subscriptions.filter { it.enabled && it.url.isNotBlank() }
+                                                refreshingId = "__all__"
+                                                coroutineScope {
+                                                    targets.chunked(4).forEach { batch ->
+                                                        batch.map { sub ->
+                                                            async { runCatching { subManager.refresh(sub) } }
+                                                        }.awaitAll()
+                                                    }
                                                 }
                                             } finally {
                                                 refreshingId = null
@@ -1639,6 +1649,10 @@ private fun SubscriptionEditorDialog(
     var skipCertVerify by remember { mutableStateOf(initial.skipCertVerify) }
     var blockImportRules by remember { mutableStateOf(initial.blockImportRules) }
     var groupNodesToRuleSets by remember { mutableStateOf(initial.groupNodesToRuleSets) }
+    var renamePattern by remember { mutableStateOf(initial.renamePattern) }
+    var renameReplace by remember { mutableStateOf(initial.renameReplace) }
+    var filterProtocol by remember { mutableStateOf(initial.filterProtocol) }
+    var filterRegion by remember { mutableStateOf(initial.filterRegion) }
     var error by remember { mutableStateOf<String?>(null) }
 
     // 整页编辑器（不再是弹窗）；拦截系统返回/侧滑回到首页
@@ -1668,6 +1682,10 @@ private fun SubscriptionEditorDialog(
                 skipCertVerify = skipCertVerify,
                 blockImportRules = blockImportRules,
                 groupNodesToRuleSets = groupNodesToRuleSets,
+                renamePattern = renamePattern.trim(),
+                renameReplace = renameReplace,
+                filterProtocol = filterProtocol.trim(),
+                filterRegion = filterRegion.trim(),
             ),
         )
     }
@@ -1786,6 +1804,25 @@ private fun SubscriptionEditorDialog(
                     value = excludeKw, onValueChange = { excludeKw = it },
                     label = { Text("排除关键字（空格分隔，可选）") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
                 )
+                OutlinedTextField(
+                    value = filterProtocol, onValueChange = { filterProtocol = it },
+                    label = { Text("协议过滤（如 hysteria2 vless，空格分隔，可选）") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = filterRegion, onValueChange = { filterRegion = it },
+                    label = { Text("地区过滤（如 香港 日本，空格分隔，可选）") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+                )
+                // 节点重命名（正则替换）：renamePattern 非空时把节点名中的匹配部分换成 renameReplace。
+                OutlinedTextField(
+                    value = renamePattern, onValueChange = { renamePattern = it },
+                    label = { Text("节点重命名正则（可选，如 `香港|HK`）") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+                )
+                if (renamePattern.isNotBlank()) {
+                    OutlinedTextField(
+                        value = renameReplace, onValueChange = { renameReplace = it },
+                        label = { Text("替换为（可留空=删除匹配部分）") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+                    )
+                }
 
                 // ---- 节点后处理（SubscriptionOptions 基准） ----
                 Text("节点后处理", style = MaterialTheme.typography.labelLarge)
