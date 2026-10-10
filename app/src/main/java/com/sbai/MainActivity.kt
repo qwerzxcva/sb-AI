@@ -129,10 +129,11 @@ private fun MainScaffold() {
     val currentRoute = backStackEntry?.destination?.route
 
     // LayerBackdrop 只有在页面使用 layerBackdrop 写入内容后才能被底栏采样。
-    // 全页捕获曾导致首页卡顿，因此暂不启用；底栏使用半透明背景，
-    // 不把空 LayerBackdrop 的绘制误称为实时磨砂。后续须在设备上验证低成本采样方案。
-    val barGlass = false
-    val pageGlass = false
+    // 开启 pageGlass 把 NavHost 内容捕获为纹理供底栏采样（drawBackdrop 实时磨砂）。
+    // 首页长列表曾因此卡顿，故 barGlass 的模糊半径压小、且不额外加 highlight/lens，
+    // 让底栏有真实的透光磨砂质感又不过度拖累滚动帧率。
+    val barGlass = true
+    val pageGlass = true
     val pageBackdrop = rememberLayerBackdrop()
 
     // 下滑隐藏 / 上滑显示底栏；BottomBarController 为跨组件真源，

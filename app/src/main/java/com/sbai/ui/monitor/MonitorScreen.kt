@@ -77,6 +77,16 @@ fun MonitorScreen() {
     }
     LaunchedEffect(tab) { VpnRuntimeState.refreshTelemetry(context); telemetry = VpnRuntimeState.telemetry.value }
     var query by remember { mutableStateOf("") }
+    // 1s 时钟心跳：让 telemetry 新鲜度判断每秒重算。否则 :core 死后更新停止，
+    // 页面无新状态可订阅，需切页才重绘（监控页显示死快照「运行 25s」的根因）。
+    var clockTick by remember { mutableIntStateOf(0) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            kotlinx.coroutines.delay(1000L)
+            clockTick = clockTick + 1
+        }
+    }
+    @Suppress("UNUSED_EXPRESSION") clockTick
 
     Box(modifier = Modifier.fillMaxSize()) {
         // 背景渐变，避免一片死黑
@@ -117,25 +127,30 @@ fun MonitorScreen() {
             }
 
         if (tab == 0) {
+            // telemetry 新鲜度：:core 周期发布遥测（含 updatedAt）。:core 死后文件不再更新，
+            // 若不看新鲜度，监控页会永远显示死亡时刻的死快照（「运行 25s」静态 UI 的第二现场）。
+            val telemetryFresh = telemetry != null &&
+                (System.currentTimeMillis() - (telemetry?.updatedAt ?: 0L)) <= VpnRuntimeState.RUNNING_LEASE_TIMEOUT_MS
+            val liveTelemetry = if (telemetryFresh) telemetry else null
             LazyColumn {
                 item { Spacer(Modifier.height(16.dp)) }
 
                 // 连接状态大卡（有色彩层次，避免「黑的要死」）
-                // 跨进程时：telemetry != null → 显示共享快照（含 uptime/publicIp/connections）；否则 fallback 到 CommandClient
+                // 跨进程时：liveTelemetry != null → 显示共享快照（含 uptime/publicIp/connections）；否则 fallback 到 CommandClient
                 item {
                     StatusHeroCard(
-                        connected = connected || telemetry != null,
-                        status = telemetry?.toStatus() ?: status,
-                        uptimeSec = telemetry?.uptimeSec,
-                        publicIp = telemetry?.publicIp,
-                        loadingHint = telemetry == null && !connected,
+                        connected = connected || liveTelemetry != null,
+                        status = liveTelemetry?.toStatus() ?: status,
+                        uptimeSec = liveTelemetry?.uptimeSec,
+                        publicIp = liveTelemetry?.publicIp,
+                        loadingHint = liveTelemetry == null && !connected,
                     )
                     Spacer(Modifier.height(16.dp))
                 }
 
                 // 实时流量卡（跨进程时优先用共享快照的流量）
                 item {
-                    TrafficCard(status = telemetry?.toStatus() ?: status)
+                    TrafficCard(status = liveTelemetry?.toStatus() ?: status)
                     Spacer(Modifier.height(16.dp))
                 }
 
@@ -152,8 +167,8 @@ fun MonitorScreen() {
                 }
 
                 item {
-                    val effStatus = telemetry?.toStatus() ?: status
-                    val connCount = (telemetry?.connections ?: 0).coerceAtLeast(status.connectionsIn + status.connectionsOut)
+                    val effStatus = liveTelemetry?.toStatus() ?: status
+                    val connCount = (liveTelemetry?.connections ?: 0).coerceAtLeast(status.connectionsIn + status.connectionsOut)
                     SbGroup(title = "内核详情") {
                         item {
                             SbItem(title = "连接数", subtitle = "活跃 ${connCount} · 出站 ${effStatus.connectionsOut}")
@@ -167,7 +182,7 @@ fun MonitorScreen() {
                     }
                 }
                 item {
-                    if (!connected && telemetry == null) {
+                    if (!connected && liveTelemetry == null) {
                         Spacer(Modifier.height(16.dp))
                         Text(
                             "服务未运行时此处无数据。启动 VPN 后自动连接内核。",

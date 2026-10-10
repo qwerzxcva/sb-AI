@@ -124,14 +124,24 @@ class SubscriptionManager(
             }
             store.replaceSubscriptionNodes(subscription.id, nodes)
 
-            // 导入解析出的路由规则（Clash YAML / sing-box JSON 配置带规则时）
+            // 导入解析出的路由规则（Clash YAML / sing-box JSON 配置带规则时）。
+            // blockImportRules=true 时跳过：用户只用自己维护的规则集，不被订阅的 rules 覆盖。
             val importedRules = parsedResult.routeRules
-            if (importedRules.isNotEmpty()) {
+            if (importedRules.isNotEmpty() && !subscription.blockImportRules) {
                 // 只保留启用的新规则，插入到现有规则最前（订阅规则优先级最高）
                 importedRules.forEach { rule ->
                     store.upsertRouteRule(rule.copy(enabled = true))
                 }
                 Log.i(TAG, "subscription ${subscription.name}: +${importedRules.size} route rules ($subFormat)")
+            } else if (importedRules.isNotEmpty()) {
+                Log.i(TAG, "subscription ${subscription.name}: skipped ${importedRules.size} route rules (blockImportRules)")
+            }
+
+            // 把订阅节点按直连/代理/拦截分组到规则集（<订阅名>直连/代理/拦截）。
+            // 节点本身只是 outbound；这里生成的是「以订阅为单位的命名分组」，
+            // 供路由规则按组引用，而不必逐节点写规则。
+            if (subscription.groupNodesToRuleSets && nodes.isNotEmpty()) {
+                applyNodeGroupRuleSets(store, subscription, nodes)
             }
 
             // #15：未填名称时，自动识别机场名（profile-title 头 > content-disposition > 域名）
@@ -179,6 +189,30 @@ class SubscriptionManager(
     private fun fail(subscription: Subscription, message: String): Result.Failure {
         store.upsertSubscription(subscription.copy(lastError = message))
         return Result.Failure(message)
+    }
+
+    /**
+     * 把订阅节点按直连/代理/拦截分组写入规则集：<订阅名>直连 / <订阅名>代理 / <订阅名>拦截。
+     *
+     * 语义：节点本身是 outbound；这里生成三个以「订阅名+动作」命名的节点分组，
+     * 供路由规则按组整批引用这批节点（不必逐节点写规则）。localContent 存节点 tag 列表（JSON）。
+     */
+    private fun applyNodeGroupRuleSets(store: RuleStore, subscription: Subscription, nodes: List<ProxyNode>) {
+        val base = subscription.name.ifBlank { "订阅" }
+        val tags = nodes.map { SingBoxConfigGenerator.nodeTagOf(it) }
+        listOf("直连", "代理", "拦截").forEach { suffix ->
+            // 按 tag 幂等更新：订阅刷新节点变化时更新而非堆积重复分组
+            store.upsertRuleSetByTag(
+                com.sbai.data.RouteRuleSet(
+                    tag = "$base$suffix",
+                    type = com.sbai.data.RuleSetType.LOCAL,
+                    localContent = kotlinx.serialization.json.buildJsonArray {
+                        tags.forEach { add(kotlinx.serialization.json.JsonPrimitive(it)) }
+                    }.toString(),
+                ),
+            )
+        }
+        Log.i(TAG, "subscription $base: grouped ${tags.size} nodes into ${'$'}base直连/代理/拦截")
     }
 
     /**

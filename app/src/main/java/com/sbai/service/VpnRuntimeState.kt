@@ -127,6 +127,39 @@ object VpnRuntimeState {
         }
     }
 
+    /**
+     * 判断磁盘上的 Running 是否仍然存活。
+     *
+     * 「UI 显示运行中但计时/数据是旧快照、:core 实际已死」的根因：
+     * 旧实现里 Running 不参与租约超时（isActuallyActive 对 Running 恒 true），
+     * :core 进程崩溃/被系统杀死后没人改 phase 文件，主进程 2s 轮询 refreshFromDisk
+     * 不断把这条 8 分钟前的 Running 灌进 UI —— 用户看到的就是一个「静态 UI」。
+     *
+     * 修法：Running 同样受心跳租约约束。:core 存活时 heartbeatJob 每 5s 续一次 publishedAt，
+     * 超过 RUNNING_LEASE_TIMEOUT_MS 没续即证明 :core 已死，UI 不得再显示运行中。
+     */
+    const val RUNNING_LEASE_TIMEOUT_MS = 20_000L
+    const val CORE_DIED_MESSAGE = "VPN 服务已停止（内核进程意外退出），请重新启动"
+
+    /**
+     * Running 专用观测：租约内 → 原样；租约外 → 视为内核已死，返回 (Error, CORE_DIED_MESSAGE)。
+     * 与 observedState 区别：只处理 Running，不触碰 Starting/Stopping（那俩走 STUCK 检测）。
+     */
+    fun observedRunning(
+        phase: Phase,
+        message: String?,
+        publishedAt: Long,
+        nowMs: Long,
+    ): Pair<Phase, String?> {
+        if (phase != Phase.Running) return phase to message
+        val age = nowMs - publishedAt
+        return if (publishedAt > 0L && age >= 0L && age <= RUNNING_LEASE_TIMEOUT_MS) {
+            phase to message
+        } else {
+            Phase.Error to CORE_DIED_MESSAGE
+        }
+    }
+
     /** 由 UI 进程调用：读取 :core 发布的最新阶段（刷新内存镜像）。
      * 优先读 JSON 文件（跨进程永远最新）；文件不存在/损坏时回退旧 SharedPreferences。
      */
@@ -181,9 +214,13 @@ object VpnRuntimeState {
                 json.decodeFromString(FileState.serializer(), file.readText())
             }.getOrNull()
             if (parsed != null) {
-                val (phase, message) = observedState(
-                    parsed.phase, parsed.message, parsed.publishedAt, nowMs,
-                )
+                // Running 受心跳租约约束：:core 死后无人续租，必须把过期 Running
+                // 降级为 Error，否则 UI 永远显示「运行中」但计时/数据是死快照（静态 UI）。
+                val (phase, message) = if (parsed.phase == Phase.Running) {
+                    observedRunning(parsed.phase, parsed.message, parsed.publishedAt, nowMs)
+                } else {
+                    observedState(parsed.phase, parsed.message, parsed.publishedAt, nowMs)
+                }
                 _phase.value = phase
                 _message.value = message
                 return
@@ -208,15 +245,19 @@ object VpnRuntimeState {
     const val STUCK_TIMEOUT_MS = 90_000L
 
     /**
-     * UI 侧健壮状态判断：若 phase 是 Starting/Stopping 且发布时间戳已超时，视为已回退到 Stopped。
-     * 这防止了服务崩溃/被杀导致 VpnRuntimeState 永远卡在中间态，按钮「没有反应」。
+     * UI 侧健壮状态判断：Starting/Stopping 超时视为回退 Stopped；Running 超时视为内核已死。
+     * 这防止服务崩溃/被杀导致 VpnRuntimeState 永远卡在中间态/运行态，按钮「没有反应」
+     * 或 UI 显示运行中但数据是死快照。
      */
     fun isActuallyActive(lastPublishedAt: Long): Boolean {
         val phase = _phase.value
-        if (phase != Phase.Starting && phase != Phase.Running) return false
-        // Running 不超时；Starting/Stopping 超时则视为失效
-        if (phase == Phase.Running) return true
-        return (System.currentTimeMillis() - lastPublishedAt) < STUCK_TIMEOUT_MS
+        val now = System.currentTimeMillis()
+        return when (phase) {
+            // Running 也受租约约束：:core 死后 publishedAt 不再续，超过阈值即不活跃
+            Phase.Running -> lastPublishedAt > 0 && (now - lastPublishedAt) < RUNNING_LEASE_TIMEOUT_MS
+            Phase.Starting, Phase.Stopping -> (now - lastPublishedAt) < STUCK_TIMEOUT_MS
+            else -> false
+        }
     }
 
     /** 读取上次发布时间戳（供 UI 做卡死检测）。 */

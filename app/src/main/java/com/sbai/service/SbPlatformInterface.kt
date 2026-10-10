@@ -236,9 +236,29 @@ class SbPlatformInterface(
     }
 
     private fun updateDefaultInterface(listener: InterfaceUpdateListener, network: Network?) {
-        val name = network?.let(connectivityManager::getLinkProperties)?.interfaceName.orEmpty()
+        // VPN 建立后回调传入的 network 会变成 tun0（VPN transport）；若直接上报，
+        // sing-box 会拿 tun 当出口再拨号被系统回环拒绝 → 全部连接 no available network interface（真机复现）。
+        // 一律解析为底层物理网络（cellular/wifi/ethernet），跳过 VPN transport。
+        val underlying = resolveUnderlying(network)
+        val name = underlying?.let(connectivityManager::getLinkProperties)?.interfaceName.orEmpty()
         val index = runCatching { NetworkInterface.getByName(name)?.index ?: -1 }.getOrDefault(-1)
         listener.updateDefaultInterface(name, index, false, false)
+    }
+
+    // 传入的 network 若是 VPN(tun)，则改挑底层物理网络；否则原样返回。
+    private fun resolveUnderlying(network: Network?): Network? {
+        if (network != null) {
+            val isVpn = connectivityManager.getNetworkCapabilities(network)
+                ?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
+            if (!isVpn) return network
+        }
+        return connectivityManager.allNetworks.firstOrNull { net ->
+            val caps = connectivityManager.getNetworkCapabilities(net) ?: return@firstOrNull false
+            !caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN) &&
+                (caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) ||
+                    caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
+                    caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET))
+        }
     }
 
     // ---- 网络接口枚举 ----
@@ -406,10 +426,24 @@ private class AndroidLocalDnsTransport(
         exchangeRaw(context, message)
     }
 
+    // local DNS 必须走底层物理网络，否则在 tun 上解析会失败/回环导致全网断（真机复现）。
+    private fun pickUnderlyingNetwork(): android.net.Network {
+        val active = connectivityManager.activeNetwork
+        val activeIsVpn = active != null && connectivityManager
+            .getNetworkCapabilities(active)?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
+        if (active != null && !activeIsVpn) return active
+        return connectivityManager.allNetworks.firstOrNull { net ->
+            val caps = connectivityManager.getNetworkCapabilities(net) ?: return@firstOrNull false
+            !caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN) &&
+                (caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) ||
+                    caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
+                    caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET))
+        } ?: error("android: underlying network is unavailable")
+    }
+
     @androidx.annotation.RequiresApi(Build.VERSION_CODES.Q)
     private fun exchangeRaw(context: ExchangeContext, message: ByteArray) = runBlocking {
-        val network = connectivityManager.activeNetwork
-            ?: error("android: default network is unavailable")
+        val network = pickUnderlyingNetwork()
         suspendCancellableCoroutine { continuation ->
             val cancellation = CancellationSignal()
             context.onCancel(cancellation::cancel)
@@ -440,8 +474,7 @@ private class AndroidLocalDnsTransport(
     }
 
     override fun lookup(context: ExchangeContext, network: String, domain: String) = runBlocking {
-        val defaultNetwork = connectivityManager.activeNetwork
-            ?: error("android: default network is unavailable")
+        val defaultNetwork = pickUnderlyingNetwork()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             lookupWithResolver(context, defaultNetwork, network, domain)
         } else {

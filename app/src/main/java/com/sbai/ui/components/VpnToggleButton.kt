@@ -75,11 +75,16 @@ fun VpnToggleButton(
             }
         }
     }
-    // 生效的 phase：Starting/Stopping 超时（>90s）视为已失效 → 回退 Stopped
+    // 生效的 phase：Starting/Stopping 超时（>90s）视为已失效 → 回退 Stopped；
+    // Running 超时（:core 心跳停续）→ 回退 Stopped，让按钮能重新启动而不是停在「运行中」。
     val effectivePhase = when (vpnPhase) {
         VpnRuntimeState.Phase.Starting, VpnRuntimeState.Phase.Stopping ->
             if (lastPublishedAt > 0 &&
                 System.currentTimeMillis() - lastPublishedAt > VpnRuntimeState.STUCK_TIMEOUT_MS
+            ) VpnRuntimeState.Phase.Stopped else vpnPhase
+        VpnRuntimeState.Phase.Running ->
+            if (lastPublishedAt > 0 &&
+                System.currentTimeMillis() - lastPublishedAt > VpnRuntimeState.RUNNING_LEASE_TIMEOUT_MS
             ) VpnRuntimeState.Phase.Stopped else vpnPhase
         else -> vpnPhase
     }

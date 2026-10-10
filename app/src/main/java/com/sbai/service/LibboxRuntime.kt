@@ -160,7 +160,10 @@ class LibboxServiceRuntime(
         platformInterface.closeTun()
     }
 
-    override fun serviceStop() = onStopRequested()
+    override fun serviceStop() {
+        android.util.Log.w("LibboxServiceRuntime", "serviceStop: kernel requested stop")
+        onStopRequested()
+    }
 
     override fun serviceReload() = Unit
 

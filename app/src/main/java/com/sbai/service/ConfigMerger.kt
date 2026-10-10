@@ -33,6 +33,14 @@ object ConfigMerger {
     /** 数组元素用于去重的 key 字段（按优先级） */
     private val IDENTITY_KEYS = listOf("tag", "name")
 
+    /**
+     * lx 内核（sing-box-lx，无 with_clash_api tag）不支持的 experimental 字段。
+     * 用户导入的完整 sing-box 配置（含 clash_api / v2ray_api）合并后会让内核
+     * `decode config: clash api is not included in this build` 拒绝启动——
+     * 真机复现「VPN 启用不生效」的根因。合并时剥离这些字段。
+     */
+    private val UNSUPPORTED_EXPERIMENTAL_KEYS = setOf("clash_api", "v2ray_api", "external_ui")
+
     fun merge(uiConfig: String, importedJson: String, priority: OverridePriority): String {
         val ui = json.parseToJsonElement(uiConfig).jsonObject
         val imported = json.parseToJsonElement(importedJson).jsonObject
@@ -43,7 +51,17 @@ object ConfigMerger {
             OverridePriority.IMPORT_HIGHEST -> ui to imported
         }
         val merged = mergeObject(base, overlay)
-        return json.encodeToString(JsonElement.serializer(), merged)
+        return json.encodeToString(JsonElement.serializer(), stripUnsupported(merged))
+    }
+
+    /** 剥离 lx 内核不支持的 experimental 子字段（clash_api / v2ray_api / external_ui）。 */
+    private fun stripUnsupported(config: JsonObject): JsonObject {
+        val exp = config["experimental"] as? JsonObject ?: return config
+        val filtered = exp.filterKeys { it !in UNSUPPORTED_EXPERIMENTAL_KEYS }
+        if (filtered.size == exp.size) return config
+        return JsonObject(config.toMutableMap().apply {
+            if (filtered.isEmpty()) remove("experimental") else put("experimental", JsonObject(filtered))
+        })
     }
 
     private fun mergeObject(base: JsonObject, overlay: JsonObject): JsonObject = buildJsonObject {

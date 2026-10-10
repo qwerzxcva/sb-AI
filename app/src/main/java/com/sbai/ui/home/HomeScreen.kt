@@ -7,6 +7,7 @@ import android.net.VpnService
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -40,6 +41,7 @@ import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Router
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Widgets
 import androidx.compose.material.icons.filled.Close
@@ -68,6 +70,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -145,6 +148,7 @@ fun HomeScreen() {
 
     val subManager = remember { SubscriptionManager(store, context.applicationContext) }
     var refreshingId by remember { mutableStateOf<String?>(null) }
+    var testFeedback by remember { mutableStateOf<String?>(null) }
 
     var editingNode by remember { mutableStateOf<ProxyNode?>(null) }
     var editingSub by remember { mutableStateOf<Subscription?>(null) }
@@ -322,6 +326,10 @@ fun HomeScreen() {
     val telemetry by VpnRuntimeState.telemetry.collectAsState()
     // 卡死检测：Starting/Stopping 超过 90s 视为已回退 Stopped（服务崩溃/被杀场景）
     var lastPublishedAt by remember { mutableStateOf(0L) }
+    // 1s 时钟心跳：驱动 effectivePhase 的租约判断每秒重算。否则 :core 死后
+    // lastPublishedAt 过期但 Compose 无新状态可订阅，页面不会自动重绘——
+    // 必须切页（触发 recomposition）才刷新，正是用户报的「切回去才看到已停止」。
+    var clockTick by remember { mutableIntStateOf(0) }
     LaunchedEffect(Unit) {
         while (true) {
             withContext(Dispatchers.IO) {
@@ -336,14 +344,22 @@ fun HomeScreen() {
                 // 按钮被锁死或 VPN 显示状态错误（P0：点了没反应/状态错乱）。
                 lastPublishedAt = VpnRuntimeState.lastPublishedAt(context)
             }
-            delay(2000L)
+            clockTick = clockTick + 1
+            delay(1000L)
         }
     }
+    // 读 clockTick 以建立对该状态的订阅（值本身不直接使用）
+    @Suppress("UNUSED_EXPRESSION") clockTick
     val effectivePhase = when (vpnPhase) {
         VpnRuntimeState.Phase.Starting, VpnRuntimeState.Phase.Stopping ->
             if (lastPublishedAt > 0 &&
                 System.currentTimeMillis() - lastPublishedAt > VpnRuntimeState.STUCK_TIMEOUT_MS
             ) VpnRuntimeState.Phase.Stopped else vpnPhase
+        // Running 过期（:core 死后心跳停续）→ 视为内核已死，不再显示运行中
+        VpnRuntimeState.Phase.Running ->
+            if (lastPublishedAt > 0 &&
+                System.currentTimeMillis() - lastPublishedAt > VpnRuntimeState.RUNNING_LEASE_TIMEOUT_MS
+            ) VpnRuntimeState.Phase.Error else vpnPhase
         else -> vpnPhase
     }
     val running = effectivePhase == VpnRuntimeState.Phase.Running ||
@@ -452,11 +468,28 @@ fun HomeScreen() {
                             },
                         )
                         // 连接时长 + 出口 IP（跨进程遥测快照，:core 周期发布；主进程共享文件读取）
+                        // 关键1：只在「phase 是 Running 且心跳未过期」时显示计时（:core 死后 telemetry
+                        //   是死快照，不新鲜即隐藏，避免显示「已连接 00:25」的静态 UI）。
+                        // 关键2：连续计时。uptimeSec 是「updatedAt 那一刻」的时长；用 uptimeSec +
+                        //   (now - updatedAt)/1000 推算出「此刻」的真实时长，配合 1s tick 持续重组，
+                        //   首页不再要切页才跳一下。数据仍来自内核（非本地瞎加）。
                         val tele = telemetry
-                        if (effectivePhase == VpnRuntimeState.Phase.Running && tele != null && tele.uptimeSec > 0) {
+                        val telemetryFresh = tele != null &&
+                            (System.currentTimeMillis() - tele.updatedAt) <= VpnRuntimeState.RUNNING_LEASE_TIMEOUT_MS
+                        if (effectivePhase == VpnRuntimeState.Phase.Running &&
+                            tele != null && tele.uptimeSec > 0 && telemetryFresh
+                        ) {
+                            var tickSec by remember { mutableStateOf(0L) }
+                            LaunchedEffect(tele.updatedAt) {
+                                while (true) {
+                                    kotlinx.coroutines.delay(1000L)
+                                    tickSec = (System.currentTimeMillis() - tele.updatedAt) / 1000L
+                                }
+                            }
+                            val liveUptime = tele.uptimeSec + tickSec.coerceAtLeast(0L)
                             Text(
                                 buildString {
-                                    append("已连接 ${formatUptime(tele.uptimeSec)}")
+                                    append("已连接 ${formatUptime(liveUptime)}")
                                     if (tele.publicIp.isNotBlank()) append(" · 出口 ${tele.publicIp}")
                                 },
                                 style = MaterialTheme.typography.labelSmall,
@@ -506,16 +539,6 @@ fun HomeScreen() {
                                 onClick = { showNodesPicker = true },
                             )
                         }
-                    }
-                    // 自动模式独立于负载均衡：关掉负载均衡后仍可单独开启自动优选
-                    item {
-                        SbSwitchItem(
-                            title = "自动模式",
-                            subtitle = "自动优选延迟最低的出口（可与负载均衡搭配，也可单独使用）",
-                            icon = Icons.Filled.Sync,
-                            checked = lb.autoEnabled,
-                            onCheckedChange = { store.updateLoadBalance(lb.copy(autoEnabled = it)) },
-                        )
                     }
                     item {
                         SbItem(
@@ -701,9 +724,27 @@ fun HomeScreen() {
             // ---- 订阅源 ----
             item {
                 SbGroup(title = "订阅源") {
+                    // 自动模式移到订阅区顶部（lxbox 模式：点击启用/停用，不是独立开关组）
+                    item {
+                        SbSwitchItem(
+                            title = "自动模式",
+                            subtitle = if (lb.autoEnabled) "已启用 · 自动优选延迟最低节点" else "点击启用：自动优选延迟最低节点",
+                            icon = Icons.Filled.Sync,
+                            checked = lb.autoEnabled,
+                            onCheckedChange = { store.updateLoadBalance(lb.copy(autoEnabled = it)) },
+                        )
+                    }
                     subscriptions.forEach { sub ->
                         item {
                             val subNodes = filteredNodes.filter { it.node.subscriptionId == sub.id }
+                            testFeedback?.let { fb ->
+                                Text(
+                                    fb,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                                )
+                            }
                             SubscriptionCard(
                                 sub = sub,
                                 nodes = subNodes,
@@ -731,23 +772,29 @@ fun HomeScreen() {
                                 },
                                 onTestNodes = {
                                     if (batchTestProgress == -1 && subNodes.isNotEmpty()) {
-                                        scope.launch {
-                                            batchTestProgress = 0
-                                            try {
-                                                val groupTag = proxyGroups
-                                                    .firstOrNull { it.type == "urltest" }?.tag
-                                                    ?: proxyGroups.firstOrNull { it.type == "selector" }?.tag
-                                                    ?: "lb"
-                                                val results = NodeBatchTester.testNodes(
-                                                    nodes = subNodes.map { it.node },
-                                                    groupTag = groupTag,
-                                                    onProgress = { done, total ->
-                                                        batchTestProgress = if (total == 0) 100 else done * 100 / total
-                                                    },
-                                                )
-                                                NodeBatchTester.applyResults(store, results)
-                                            } finally {
-                                                batchTestProgress = -1
+                                        if (!coreConnected) {
+                                            testFeedback = "需先启动 VPN 才能测速"
+                                        } else {
+                                            testFeedback = null
+                                            scope.launch {
+                                                batchTestProgress = 0
+                                                try {
+                                                    val groupTag = proxyGroups
+                                                        .firstOrNull { it.type == "urltest" }?.tag
+                                                        ?: proxyGroups.firstOrNull { it.type == "selector" }?.tag
+                                                        ?: "lb"
+                                                    val results = NodeBatchTester.testNodes(
+                                                        nodes = subNodes.map { it.node },
+                                                        groupTag = groupTag,
+                                                        onProgress = { done, total ->
+                                                            batchTestProgress = if (total == 0) 100 else done * 100 / total
+                                                        },
+                                                    )
+                                                    NodeBatchTester.applyResults(store, results)
+                                                    testFeedback = "测速完成 ${results.size} 节点"
+                                                } finally {
+                                                    batchTestProgress = -1
+                                                }
                                             }
                                         }
                                     }
@@ -757,6 +804,17 @@ fun HomeScreen() {
                                 onToggleNode = { node, enabled ->
                                     store.upsertProxyNode(node.copy(enabled = enabled, disabledReason = null))
                                 },
+                                onEditSubscription = { editingSub = sub },
+                                onSelectNode = if (coreConnected) { node ->
+                                    // 点击节点切换当前出口（lxbox 模式）：找 selector 组，用节点 tag 切换
+                                    val selectorGroup = proxyGroups.firstOrNull { it.type == "selector" }
+                                    if (selectorGroup != null) {
+                                        SbCommandClient.selectOutbound(
+                                            selectorGroup.tag,
+                                            SingBoxConfigGenerator.nodeTagOf(node),
+                                        )
+                                    }
+                                } else null,
                             )
                         }
                     }
@@ -1133,8 +1191,11 @@ private fun displayVpnPhase(phase: VpnRuntimeState.Phase, message: String?): Str
     VpnRuntimeState.Phase.Starting -> "启动中…"
     VpnRuntimeState.Phase.Running -> "运行中"
     VpnRuntimeState.Phase.Stopping -> "停止中…"
-    VpnRuntimeState.Phase.Error ->
-        if (message == VpnRuntimeState.STALE_MESSAGE) "状态未知，可重试" else "启动失败"
+    VpnRuntimeState.Phase.Error -> when (message) {
+        VpnRuntimeState.STALE_MESSAGE -> "状态未知，可重试"
+        VpnRuntimeState.CORE_DIED_MESSAGE -> "内核已停止，可重启"
+        else -> "启动失败"
+    }
     VpnRuntimeState.Phase.Stopped -> "已停止"
 }
 
@@ -1164,8 +1225,12 @@ private fun HomeTrafficCard() {
     // 内部独立 collect 高频流量状态，避免在 HomeScreen 顶层 collect 导致整页每 1s 重组
     val status by SbCommandClient.status.collectAsState()
     val telemetry by VpnRuntimeState.telemetry.collectAsState()
-    // 跨进程：主进程 in-process CommandClient 无数据时，用 :core 发布的共享快照
-    val effStatus = telemetry?.toStatus() ?: status
+    // 跨进程：主进程 in-process CommandClient 无数据时，用 :core 发布的共享快照。
+    // 但 :core 死后 telemetry 是死快照（updatedAt 停滞），必须看新鲜度，否则显示静态流量。
+    val liveTelemetry = telemetry?.takeIf {
+        (System.currentTimeMillis() - it.updatedAt) <= VpnRuntimeState.RUNNING_LEASE_TIMEOUT_MS
+    }
+    val effStatus = liveTelemetry?.toStatus() ?: status
     val colors = MaterialTheme.colorScheme
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -1211,6 +1276,8 @@ private fun SubscriptionCard(
     onEditNode: (com.sbai.data.ProxyNode) -> Unit,
     onDeleteNode: (String) -> Unit,
     onToggleNode: (com.sbai.data.ProxyNode, Boolean) -> Unit,
+    onEditSubscription: () -> Unit,
+    onSelectNode: ((com.sbai.data.ProxyNode) -> Unit)?,
 ) {
     val colors = MaterialTheme.colorScheme
     val used = sub.trafficUpload + sub.trafficDownload
@@ -1263,6 +1330,10 @@ private fun SubscriptionCard(
                                 Icon(Icons.Filled.Refresh, contentDescription = "更新")
                             }
                         }
+                        // 订阅设置入口：之前只有开关/展开/刷新，没有编辑入口（用户反馈无法编辑订阅）
+                        IconButton(onClick = onEditSubscription) {
+                            Icon(Icons.Filled.Settings, contentDescription = "订阅设置")
+                        }
                     }
                 }
 
@@ -1308,6 +1379,10 @@ private fun SubscriptionCard(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
+                            // 点击节点行切换当前节点（lxbox 模式：核运行时通过 selector 即时切换）
+                            .clickable(enabled = onSelectNode != null && row.node.enabled) {
+                                onSelectNode?.invoke(row.node)
+                            }
                             .padding(horizontal = 4.dp, vertical = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
@@ -1489,6 +1564,8 @@ private fun SubscriptionEditorDialog(
     var sortByLatency by remember { mutableStateOf(initial.sortByLatency) }
     var detour by remember { mutableStateOf(initial.detour) }
     var skipCertVerify by remember { mutableStateOf(initial.skipCertVerify) }
+    var blockImportRules by remember { mutableStateOf(initial.blockImportRules) }
+    var groupNodesToRuleSets by remember { mutableStateOf(initial.groupNodesToRuleSets) }
     var error by remember { mutableStateOf<String?>(null) }
 
     // 整页编辑器（不再是弹窗）；拦截系统返回/侧滑回到首页
@@ -1516,6 +1593,8 @@ private fun SubscriptionEditorDialog(
                 sortByLatency = sortByLatency && urlTestAfterUpdate,
                 detour = detour,
                 skipCertVerify = skipCertVerify,
+                blockImportRules = blockImportRules,
+                groupNodesToRuleSets = groupNodesToRuleSets,
             ),
         )
     }
@@ -1587,6 +1666,28 @@ private fun SubscriptionEditorDialog(
                         color = MaterialTheme.colorScheme.error,
                     )
                 }
+
+                // 禁止导入订阅自带的规则集/路由规则
+                SubOptionSwitch(
+                    "禁止导入订阅规则集",
+                    blockImportRules,
+                ) { blockImportRules = it }
+                Text(
+                    "开启后不使用订阅自带的 rules，只用我自己的路由/规则集。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+
+                // 把订阅节点按直连/代理/拦截分组到规则集
+                SubOptionSwitch(
+                    "订阅节点分组到规则集",
+                    groupNodesToRuleSets,
+                ) { groupNodesToRuleSets = it }
+                Text(
+                    "生成「<订阅名>直连 / 代理 / 拦截」三组，路由规则可整组引用这批节点。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
 
                 OutlinedTextField(
                     value = userAgent, onValueChange = { userAgent = it },

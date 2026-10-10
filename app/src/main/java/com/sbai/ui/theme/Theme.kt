@@ -22,7 +22,7 @@ import androidx.compose.ui.unit.sp
 import com.sbai.data.ThemeMode
 
 // Kototoro 风格：深色优先 + 冷色主调 + surfaceContainer 层级
-// 背景用深蓝灰而非纯黑，避免「乌漆麻黑」
+// 背景用偏亮蓝灰而非深黑，避免「乌漆麻黑」（用户反馈设置页深色背景太沉闷）
 private val DarkColors = darkColorScheme(
     primary = Color(0xFFA8C7FA),
     onPrimary = Color(0xFF0B3057),
@@ -34,17 +34,17 @@ private val DarkColors = darkColorScheme(
     onSecondaryContainer = Color(0xFF9FF7E8),
     tertiary = Color(0xFFDAB9FF),
     onTertiary = Color(0xFF3F1D71),
-    background = Color(0xFF131720),
+    background = Color(0xFF242B38),
     onBackground = Color(0xFFE2E5EE),
-    surface = Color(0xFF131720),
+    surface = Color(0xFF242B38),
     onSurface = Color(0xFFE2E5EE),
     surfaceVariant = Color(0xFF4A4F59),
     onSurfaceVariant = Color(0xFFC6CAD6),
-    surfaceContainerLowest = Color(0xFF0E1119),
-    surfaceContainerLow = Color(0xFF1B2028),
-    surfaceContainer = Color(0xFF20252E),
-    surfaceContainerHigh = Color(0xFF2A3039),
-    surfaceContainerHighest = Color(0xFF353B45),
+    surfaceContainerLowest = Color(0xFF1B212B),
+    surfaceContainerLow = Color(0xFF2C333F),
+    surfaceContainer = Color(0xFF343C4A),
+    surfaceContainerHigh = Color(0xFF3F4857),
+    surfaceContainerHighest = Color(0xFF4A5465),
     error = Color(0xFFFFB4AB),
     onError = Color(0xFF690005),
     errorContainer = Color(0xFF93000A),

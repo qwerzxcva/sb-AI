@@ -371,6 +371,10 @@ data class Subscription(
     val filterProtocol: String = "",
     /** L7Filter：地区关键字过滤（空 = 不过滤；匹配节点名称或 outbound server 字段） */
     val filterRegion: String = "",
+    /** 禁止导入订阅自带的规则集/路由规则（true = 只用我自己的规则集，不导入订阅的 rules） */
+    val blockImportRules: Boolean = false,
+    /** 把订阅节点按直连/代理/拦截分组到规则集（生成 <订阅名>直连/代理/拦截规则集） */
+    val groupNodesToRuleSets: Boolean = false,
 )
 
 @Serializable
@@ -501,6 +505,12 @@ data class AppSettings(
     val subscriptionDeviceModel: String = "",
     /** TUN 网络栈：system / gvisor / mixed（sing-box stack） */
     val tunStack: String = "mixed",
+
+    // ---- DNS 缓存（sing-box dns 顶层；参考 karing/nekobox 做成可改）----
+    /** 为每个 DNS 服务器独立缓存（independent_cache，默认开） */
+    val dnsIndependentCache: Boolean = true,
+    /** fakeIP 结果写入缓存（store_fakeip，默认关：更真实，开启可加速重复查询） */
+    val dnsStoreFakeip: Boolean = false,
 
     // ---- DPI 硬化：TLS 分片（参考 LxBox 016）----
     /** TLS 分片：把 ClientHello 拆成小 TCP 段（tls.fragment） */

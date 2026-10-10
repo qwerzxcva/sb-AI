@@ -92,6 +92,7 @@ import com.sbai.ui.components.RestoreBottomBarOnDispose
 import com.sbai.ui.components.SbBadge
 import com.sbai.ui.components.SbGroup
 import com.sbai.ui.components.SbItem
+import com.sbai.ui.components.SbSwitchItem
 import com.sbai.ui.theme.LocalSbStyleTokens
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
@@ -140,6 +141,12 @@ fun RouteRulesScreen() {
     val dnsRules by remember(store) {
         store.state.map { it.dnsRules }.distinctUntilChanged()
     }.collectAsState(initial = remember(store) { store.state.value.dnsRules })
+    val customHosts by remember(store) {
+        store.state.map { it.customHosts }.distinctUntilChanged()
+    }.collectAsState(initial = remember(store) { store.state.value.customHosts })
+    val settings by remember(store) {
+        store.state.map { it.settings }.distinctUntilChanged()
+    }.collectAsState(initial = remember(store) { store.state.value.settings })
     val resources by remember(store) {
         store.state.map { it.settings.resources }.distinctUntilChanged()
     }.collectAsState(initial = remember(store) { store.state.value.settings.resources })
@@ -149,12 +156,22 @@ fun RouteRulesScreen() {
     LaunchedEffect(pagerState.currentPage) { tab = pagerState.currentPage }
     LaunchedEffect(tab) { if (tab != pagerState.currentPage) pagerState.scrollToPage(tab) }
 
+    // 外层第 1 页内部「路由规则 / DNS 规则」子页状态提升到顶层，
+    // 让 Scaffold 的 FAB 能跟子页走（否则 DNS 规则子页没有创建入口）。
+    val subPagerState = rememberPagerState(pageCount = { 2 })
+    var innerSubPage by remember { mutableIntStateOf(0) }
+    LaunchedEffect(subPagerState.currentPage) { innerSubPage = subPagerState.currentPage }
+    LaunchedEffect(innerSubPage) {
+        if (innerSubPage != subPagerState.currentPage) subPagerState.scrollToPage(innerSubPage)
+    }
+
     var editingRouteRule by remember { mutableStateOf<RouteRule?>(null) }
     var editingRouteRuleSet by remember { mutableStateOf<RouteRuleSet?>(null) }
     var showRouteRuleSetManager by remember { mutableStateOf(false) }
     var editingDnsServer by remember { mutableStateOf<DnsServer?>(null) }
     var editingDnsGroup by remember { mutableStateOf<DnsGroup?>(null) }
     var editingDnsRule by remember { mutableStateOf<DnsRule?>(null) }
+    var editingHostsEntry by remember { mutableStateOf<com.sbai.data.HostsEntry?>(null) }
     var showResourcesManager by remember { mutableStateOf(false) }
 
     // 路由规则自动推导的 DNS 规则（只读展示）——缓存，避免每次重组重算
@@ -238,6 +255,17 @@ fun RouteRulesScreen() {
         ResourcesManagerScreen(onBack = { showResourcesManager = false })
         return
     }
+    editingHostsEntry?.let { entry ->
+        HostsEntryEditorDialog(
+            initial = entry,
+            onDismiss = { editingHostsEntry = null },
+            onSave = { store.upsertHostsEntry(it); editingHostsEntry = null },
+            onDelete = if (entry.host.isNotBlank()) {
+                { store.deleteHostsEntry(entry.id); editingHostsEntry = null }
+            } else null,
+        )
+        return
+    }
 
     Scaffold(
         topBar = {
@@ -246,11 +274,24 @@ fun RouteRulesScreen() {
         floatingActionButton = {
             Box(Modifier.padding(bottom = FabBottomBarClearance)) {
                 when (tab) {
-                    0 -> ExtendedFloatingActionButton(
-                        onClick = { editingRouteRule = RouteRule() },
-                        icon = { Icon(Icons.Filled.Add, contentDescription = null) },
-                        text = { Text("添加路由规则") },
-                    )
+                    0 -> {
+                        // 外层第 1 页内部再分「路由规则 / DNS 规则」两个子页，
+                        // FAB 文案跟子页走，否则 DNS 规则子页没有创建入口（用户反馈建不了 DNS 规则）
+                        val subPage = pagerState.currentPage.let { if (it == 0) innerSubPage else 0 }
+                        if (subPage == 0) {
+                            ExtendedFloatingActionButton(
+                                onClick = { editingRouteRule = RouteRule() },
+                                icon = { Icon(Icons.Filled.Add, contentDescription = null) },
+                                text = { Text("添加路由规则") },
+                            )
+                        } else {
+                            ExtendedFloatingActionButton(
+                                onClick = { editingDnsRule = DnsRule() },
+                                icon = { Icon(Icons.Filled.Add, contentDescription = null) },
+                                text = { Text("添加 DNS 规则") },
+                            )
+                        }
+                    }
                     else -> ExtendedFloatingActionButton(
                         onClick = { editingDnsServer = DnsServer() },
                         icon = { Icon(Icons.Filled.Add, contentDescription = null) },
@@ -281,13 +322,20 @@ fun RouteRulesScreen() {
                         onOpenRuleSetManager = { showRouteRuleSetManager = true },
                         stateResources = resources,
                         onOpenResourcesManager = { showResourcesManager = true },
+                        subPagerState = subPagerState,
+                        subTab = innerSubPage,
+                        onSelectSubTab = { innerSubPage = it },
                         tokens = tokens,
                     )
                     else -> PageDnsSettings(
-                        dnsServers, dnsGroups,
+                        dnsServers, dnsGroups, customHosts,
+                        cacheSettings = settings,
                         onToggleServer = { store.upsertDnsServer(it.copy(enabled = !it.enabled)) },
                         onEditServer = { editingDnsServer = it },
                         onEditGroup = { editingDnsGroup = it },
+                        onEditHosts = { editingHostsEntry = it },
+                        onDeleteHosts = { store.deleteHostsEntry(it.id) },
+                        onUpdateSettings = { store.updateSettings(it) },
                         tokens = tokens,
                     )
                 }
@@ -332,16 +380,55 @@ private fun PageRouteAndDnsRules(
     onOpenRuleSetManager: () -> Unit,
     stateResources: List<com.sbai.data.Resource>,
     onOpenResourcesManager: () -> Unit,
+    subPagerState: androidx.compose.foundation.pager.PagerState,
+    subTab: Int,
+    onSelectSubTab: (Int) -> Unit,
     tokens: com.sbai.ui.theme.SbStyleTokens,
 ) {
+    // 第 1 页内部再分两页（可滑动切换）：路由规则 / DNS 规则。
+    // 两页各自是完整高度的可拖拽列表，不再挤压在同一屏。
     Column(
         modifier = Modifier.fillMaxSize().padding(horizontal = tokens.screenHorizontalPadding),
     ) {
-        Spacer(Modifier.height(8.dp))
+        TabRow(selectedTabIndex = subTab) {
+            Tab(selected = subTab == 0, onClick = { onSelectSubTab(0) }, text = { Text("路由规则（${routeRules.size}）") })
+            Tab(selected = subTab == 1, onClick = { onSelectSubTab(1) }, text = { Text("DNS 规则（${dnsRules.size}）") })
+        }
+        HorizontalPager(state = subPagerState, modifier = Modifier.fillMaxSize()) { page ->
+            if (page == 0) {
+                RouteRulesSubPage(
+                    routeRules, routeRuleSets, autoRouteRules,
+                    onToggleRoute, onEditRoute, onDeleteRoute, onReorderRoute,
+                    onOpenRuleSetManager, stateResources, onOpenResourcesManager,
+                )
+            } else {
+                DnsRulesSubPage(
+                    dnsRules, autoDnsRules,
+                    onToggleDns, onEditDns, onDeleteDns, onReorderDns,
+                )
+            }
+        }
+    }
+}
 
-        // ---- 上：路由规则 ----
+// 第 1 页 · 子页 A：路由规则（完整高度可拖拽列表）
+@Composable
+private fun RouteRulesSubPage(
+    routeRules: List<RouteRule>,
+    routeRuleSets: List<RouteRuleSet>,
+    autoRouteRules: List<RouteRule>,
+    onToggleRoute: (RouteRule) -> Unit,
+    onEditRoute: (RouteRule) -> Unit,
+    onDeleteRoute: (RouteRule) -> Unit,
+    onReorderRoute: (List<String>) -> Unit,
+    onOpenRuleSetManager: () -> Unit,
+    stateResources: List<com.sbai.data.Resource>,
+    onOpenResourcesManager: () -> Unit,
+) {
+    Column(Modifier.fillMaxSize()) {
+        Spacer(Modifier.height(8.dp))
         Text(
-            "路由规则 · 越靠上优先级越高（长按卡片拖动排序）",
+            "越靠上优先级越高（长按卡片拖动排序）",
             style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.primary,
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
@@ -359,7 +446,7 @@ private fun PageRouteAndDnsRules(
             },
             onDragEnd = { keys -> onReorderRoute(keys.map { it.toString() }) },
             modifier = Modifier.weight(1f),
-            contentBottomPadding = 8.dp,
+            contentBottomPadding = BottomBarClearance,
             header = {
                 SbGroup(title = "") {
                     item {
@@ -373,7 +460,7 @@ private fun PageRouteAndDnsRules(
                     item {
                         SbItem(
                             title = "IP 列表资源（${stateResources.size}）",
-                            subtitle = "CHINA_IP 等资源自动注入路由；管理更新源",
+                            subtitle = "CHINA_IP 等资源自动注入路由；在路由规则内直接填 IP 远程订阅 URL 更简单",
                             icon = Icons.Filled.Settings,
                             onClick = onOpenResourcesManager,
                         )
@@ -404,12 +491,23 @@ private fun PageRouteAndDnsRules(
                 onEdit = { onEditRoute(rule) },
                 onDelete = { onDeleteRoute(rule) })
         }
+    }
+}
 
-        HorizontalDivider(Modifier.padding(vertical = 8.dp))
-
-        // ---- 下：DNS 规则 ----
+// 第 1 页 · 子页 B：DNS 规则（完整高度可拖拽列表）
+@Composable
+private fun DnsRulesSubPage(
+    dnsRules: List<DnsRule>,
+    autoDnsRules: List<DnsRule>,
+    onToggleDns: (DnsRule) -> Unit,
+    onEditDns: (DnsRule) -> Unit,
+    onDeleteDns: (DnsRule) -> Unit,
+    onReorderDns: (List<String>) -> Unit,
+) {
+    Column(Modifier.fillMaxSize()) {
+        Spacer(Modifier.height(8.dp))
         Text(
-            "DNS 规则 · 越靠上优先级越高（长按卡片拖动排序）",
+            "越靠上优先级越高（长按卡片拖动排序）",
             style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.secondary,
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
@@ -474,9 +572,14 @@ private fun PageRouteAndDnsRules(
 private fun PageDnsSettings(
     dnsServers: List<DnsServer>,
     dnsGroups: List<DnsGroup>,
+    customHosts: List<com.sbai.data.HostsEntry>,
+    cacheSettings: com.sbai.data.AppSettings,
     onToggleServer: (DnsServer) -> Unit,
     onEditServer: (DnsServer) -> Unit,
     onEditGroup: (DnsGroup) -> Unit,
+    onEditHosts: (com.sbai.data.HostsEntry) -> Unit,
+    onDeleteHosts: (com.sbai.data.HostsEntry) -> Unit,
+    onUpdateSettings: (com.sbai.data.AppSettings) -> Unit,
     tokens: com.sbai.ui.theme.SbStyleTokens,
 ) {
     LazyColumn(
@@ -559,6 +662,70 @@ private fun PageDnsSettings(
                             icon = Icons.Filled.GroupWork,
                         )
                     }
+                }
+            }
+        }
+        item { Spacer(Modifier.height(20.dp)) }
+        item {
+            Text("Hosts（${customHosts.size}）",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.tertiary,
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
+            )
+        }
+        item {
+            SbGroup(title = "") {
+                customHosts.forEach { entry ->
+                    item(key = entry.id) {
+                        SbItem(
+                            title = entry.host.ifBlank { "（空 host）" },
+                            subtitle = entry.ips.joinToString(" / ").ifBlank { "（无 IP）" },
+                            icon = Icons.Filled.Dns,
+                            onClick = { onEditHosts(entry) },
+                            trailing = {
+                                IconButton(onClick = { onDeleteHosts(entry) }) {
+                                    Icon(Icons.Filled.Delete, contentDescription = "删除",
+                                        tint = MaterialTheme.colorScheme.error)
+                                }
+                            },
+                        )
+                    }
+                }
+                item {
+                    SbItem(
+                        title = "添加 host 映射",
+                        subtitle = "静态域名 → IP，供 hosts 类型 DNS 服务器使用",
+                        icon = Icons.Filled.Add,
+                        onClick = { onEditHosts(com.sbai.data.HostsEntry()) },
+                    )
+                }
+            }
+        }
+        item { Spacer(Modifier.height(20.dp)) }
+        item {
+            Text("DNS 缓存",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.secondary,
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
+            )
+        }
+        item {
+            SbGroup(title = "") {
+                item {
+                    SbSwitchItem(
+                        title = "独立缓存（independent_cache）",
+                        subtitle = "每个 DNS 服务器独立缓存解析结果",
+                        icon = Icons.Filled.Dns,
+                        checked = cacheSettings.dnsIndependentCache,
+                    ) { onUpdateSettings(cacheSettings.copy(dnsIndependentCache = it)) }
+                }
+                item {
+                    SbSwitchItem(
+                        title = "缓存 fakeIP（store_fakeip）",
+                        subtitle = "fakeIP 结果写入缓存；关闭更真实，开启可加速重复查询",
+                        icon = Icons.Filled.Rule,
+                        checked = cacheSettings.dnsStoreFakeip,
+                    ) { onUpdateSettings(cacheSettings.copy(dnsStoreFakeip = it)) }
                 }
             }
         }
@@ -997,6 +1164,52 @@ private fun RuleSetEditorDialog(initial: RouteRuleSet, onDismiss: () -> Unit, on
             }
             Text("IP 版本（默认全选；取消任一项将生成 DNS 规则）", style = MaterialTheme.typography.labelLarge)
             Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(checked = ipv4, onCheckedChange = { ipv4 = it }); Text("IPv4"); Spacer(Modifier.padding(8.dp)); Checkbox(checked = ipv6, onCheckedChange = { ipv6 = it }); Text("IPv6") }
+            error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Hosts 条目编辑器
+// ---------------------------------------------------------------------------
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun HostsEntryEditorDialog(
+    initial: com.sbai.data.HostsEntry,
+    onDismiss: () -> Unit,
+    onSave: (com.sbai.data.HostsEntry) -> Unit,
+    onDelete: (() -> Unit)?,
+) {
+    var host by remember { mutableStateOf(initial.host) }
+    var ipsText by remember { mutableStateOf(initial.ips.joinToString("\n")) }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    BackHandler(enabled = true) { BottomBarController.show(); onDismiss() }
+    RestoreBottomBarOnDispose()
+
+    fun doSave() {
+        val h = host.trim()
+        if (h.isBlank()) { error = "host 不能为空"; return }
+        val ips = ipsText.lines().map { it.trim() }.filter { it.isNotBlank() }
+        if (ips.isEmpty()) { error = "至少填一个 IP"; return }
+        onSave(initial.copy(host = h, ips = ips))
+    }
+
+    Scaffold(topBar = {
+        TopAppBar(
+            title = { Text(if (initial.host.isBlank()) "添加 host 映射" else "编辑 host 映射") },
+            navigationIcon = { IconButton(onClick = { BottomBarController.show(); onDismiss() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回") } },
+            actions = {
+                if (onDelete != null) { IconButton(onClick = onDelete) { Icon(Icons.Filled.Delete, contentDescription = "删除", tint = MaterialTheme.colorScheme.error) } }
+                TextButton(onClick = { doSave() }) { Text("保存") }
+            },
+        )
+    }) { padding ->
+        Column(modifier = Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            OutlinedTextField(value = host, onValueChange = { host = it }, label = { Text("host（如 example.com）") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(value = ipsText, onValueChange = { ipsText = it }, label = { Text("IP（每行一个）") }, modifier = Modifier.fillMaxWidth(), minLines = 4, placeholder = { Text("1.2.3.4\n2001:db8::1") })
+            Text("保存后由「hosts」类型 DNS 服务器引用（sing-box hosts predefined）。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         }
     }

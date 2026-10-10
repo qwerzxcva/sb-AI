@@ -58,15 +58,17 @@ fun SbGlassBottomBar(
             .clip(CircleShape)
             .then(
                 if (useGlassBackdrop) {
+                    // 真实磨砂玻璃：drawBackdrop 采样底栏身后的页面内容做实时模糊，
+                    // 再叠一层低透明度底色提升可读性。透明感来自采样，不是静态色块。
                     Modifier.drawBackdrop(
                         backdrop = pageBackdrop,
                         shape = { CircleShape },
                         effects = {
-                            blur(radius = 4f)
+                            blur(radius = 8f)
                         },
                         highlight = null,
                         shadow = null,
-                    ).background(colors.surfaceContainer.copy(alpha = 0.55f))
+                    ).background(colors.surfaceContainer.copy(alpha = 0.42f))
                 } else {
                     Modifier.background(colors.surfaceContainer.copy(alpha = 0.96f))
                 }

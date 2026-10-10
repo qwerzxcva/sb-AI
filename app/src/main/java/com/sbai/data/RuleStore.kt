@@ -288,6 +288,14 @@ class RuleStore private constructor(
         s.copy(routeRuleSets = list)
     }
 
+    /** 按 tag 幂等替换/新增规则集（订阅节点分组用：同 tag 更新而非堆积重复）。 */
+    fun upsertRuleSetByTag(rs: RouteRuleSet) = update { s ->
+        val list = s.routeRuleSets.toMutableList()
+        val idx = list.indexOfFirst { it.tag == rs.tag }
+        if (idx >= 0) list[idx] = rs.copy(id = list[idx].id) else list.add(rs)
+        s.copy(routeRuleSets = list)
+    }
+
     fun deleteRuleSet(id: String) = update { s ->
         val removedTag = s.routeRuleSets.firstOrNull { it.id == id }?.tag
         s.copy(
@@ -404,9 +412,17 @@ class RuleStore private constructor(
     }
 
     fun deleteSubscription(id: String) = updateCommitted { s ->
+        // 删除订阅时，连带清理「订阅节点分组」生成的 <订阅名>直连/代理/拦截 规则集，
+        // 避免留下无节点的空分组（且这些分组 tag 会被生成器输出为 selector 引用已删节点）。
+        val subName = s.subscriptions.firstOrNull { it.id == id }?.name
+        val groupTags = if (subName.isNullOrBlank()) emptySet() else {
+            setOf("${subName}直连", "${subName}代理", "${subName}拦截")
+        }
         s.copy(
             subscriptions = s.subscriptions.filterNot { it.id == id },
             proxyNodes = s.proxyNodes.filterNot { it.subscriptionId == id },
+            routeRuleSets = if (groupTags.isEmpty()) s.routeRuleSets
+                else s.routeRuleSets.filterNot { it.tag in groupTags },
         )
     }
 

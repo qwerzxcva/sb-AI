@@ -157,6 +157,20 @@ object SingBoxConfigGenerator {
                 })
             }
 
+            // 订阅节点分组规则集（<订阅名>直连/代理/拦截）：localContent 是节点 tag JSON 数组，
+            // 生成 selector 出口组（tag 与规则集同名），路由规则按组整批引用这批节点。
+            state.routeRuleSets
+                .filter { it.enabled && it.type == RuleSetType.LOCAL }
+                .forEach { rs ->
+                    nodeGroupTags(rs)?.let { tags ->
+                        add(buildJsonObject {
+                            put("type", "selector")
+                            put("tag", rs.tag)
+                            putJsonArray("outbounds") { tags.forEach(::add) }
+                        })
+                    }
+                }
+
             outboundNodes.forEach { node ->
                 runCatching { json.parseToJsonElement(node.outboundJson).jsonObject }
                     .getOrNull()?.let { applyTlsFragment(it, state) }?.let(::add)
@@ -180,6 +194,9 @@ object SingBoxConfigGenerator {
             putJsonObject("log") {
                 put("level", state.settings.logLevel.wireName)
                 put("timestamp", true)
+                // 内核运行日志写文件，供真机断网/节点不通时直接读取定位（ColorOS logcat 按 UID 过滤抓不到）。
+                // 与 sing-box 主配置同目录，文件名固定，UI/诊断侧可读。
+                put("output", "sing-box.log")
             }
 
             putJsonObject("dns") {
@@ -191,15 +208,20 @@ object SingBoxConfigGenerator {
                 // strategy 字段兜底（降级到全局 default 策略）。sb-AI 选择直接不输出全局 strategy，
                 // 因为 per-rule ip_strategy 已覆盖所有用户配置场景；保留此字段仅会造成无谓的启动失败。
                 // 参考：~/LxBox/app/lib/services/builder/post_steps/heal_legacy_dns_strategy.dart
-                put("independent_cache", true)
+                // independent_cache 在 sing-box 1.14 已废弃；lx fork 会报 unknown field 拒启动。
+                // 一律不输出；UI 开关保留仅作记录。
                 put("final", defaultDnsTag)
             }
 
             putJsonObject("route") {
                 putJsonArray("rules") { routeRules.forEach(::add) }
                 putJsonArray("rule_set") {
-                    // 显式规则集
-                    state.routeRuleSets.filter { it.enabled && it.tag.isNotBlank() }.forEach { rs ->
+                    // 显式规则集。LOCAL 且 localContent 是节点 tag 数组的是「订阅节点分组」，
+                    // 已在 outbounds 里生成 selector 组，不是匹配规则集，必须从 rule_set 排除。
+                    state.routeRuleSets.filter {
+                        it.enabled && it.tag.isNotBlank() &&
+                            !(it.type == RuleSetType.LOCAL && nodeGroupTags(it) != null)
+                    }.forEach { rs ->
                         add(buildJsonObject {
                             put("tag", rs.tag)
                             when (rs.type) {
@@ -301,6 +323,10 @@ object SingBoxConfigGenerator {
                 putJsonObject("cache_file") {
                     put("enabled", true)
                     put("path", "cache.db")
+                    // lx 内核（sing-box-lx，无 with_clash_api/扩展 cache 字段 tag）的 cache_file
+                    // 只支持 enabled/path；store_fakeip 是新版 sing-box 才有，lx 1.14 fork 会
+                    // `unknown field "store_fakeip"` 拒绝启动（真机复现「VPN 启用不生效」根因）。
+                    // 一律不输出 store_fakeip；该设置项保留在 UI 仅作记录，不参与内核配置。
                 }
             }
         }
@@ -416,6 +442,17 @@ object SingBoxConfigGenerator {
     /** 远程 .srs 使用 binary，其余 URL 使用 source；忽略查询串和 fragment。 */
     internal fun remoteRuleSetFormat(url: String): String =
         if (url.substringBefore('#').substringBefore('?').endsWith(".srs", ignoreCase = true)) "binary" else "source"
+
+    /** 规则集的 localContent 若是「节点 tag JSON 数组」（订阅节点分组），返回 tag 列表；否则 null。 */
+    /** 规则集的 localContent 若是「节点 tag JSON 数组」（订阅节点分组），返回 tag 列表；否则 null。 */
+    private fun nodeGroupTags(rs: com.sbai.data.RouteRuleSet): List<String>? = runCatching {
+        val el = json.parseToJsonElement(rs.localContent)
+        if (el is JsonArray) {
+            val tags = el.map { it.jsonPrimitive.content }.filter { it.isNotBlank() }
+            // 空数组不算分组：否则生成空 selector（内核拒绝）且被误排除出 route.rule_set
+            tags.takeIf { it.isNotEmpty() }
+        } else null
+    }.getOrNull()
 
     /** 由 URL 生成稳定的规则集 tag */
     private fun urlRuleSetTag(url: String): String {

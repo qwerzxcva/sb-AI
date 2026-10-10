@@ -115,19 +115,22 @@ class VpnRuntimeStateFileChannelTest {
     @Test
     fun `fresh activity remains active until lease expires`() {
         val now = 100_000L
-        for (phase in listOf(VpnRuntimeState.Phase.Starting, VpnRuntimeState.Phase.Running, VpnRuntimeState.Phase.Stopping)) {
+        // Starting/Stopping 走 STALE 租约（observedState）
+        for (phase in listOf(VpnRuntimeState.Phase.Starting, VpnRuntimeState.Phase.Stopping)) {
             assertEquals(phase to null, VpnRuntimeState.observedState(phase, null, now, now + VpnRuntimeState.LEASE_TIMEOUT_MS))
             assertEquals(VpnRuntimeState.Phase.Error to VpnRuntimeState.STALE_MESSAGE,
                 VpnRuntimeState.observedState(phase, null, now, now + VpnRuntimeState.LEASE_TIMEOUT_MS + 1))
         }
+        // Running 走 RUNNING 租约（observedRunning），见专属测试
     }
 
     @Test
-    fun `stale running file becomes retryable and a restart replaces it`() {
+    fun `stale running file becomes core-died and a restart replaces it`() {
         VpnRuntimeState.publishState(dir, null, VpnRuntimeState.Phase.Running, nowMs = 100_000L)
-        VpnRuntimeState.refreshState(dir, null, 100_000L + VpnRuntimeState.LEASE_TIMEOUT_MS + 1)
+        // Running 受 RUNNING 租约约束：超过 RUNNING_LEASE_TIMEOUT_MS 未续即视为内核已死。
+        VpnRuntimeState.refreshState(dir, null, 100_000L + VpnRuntimeState.RUNNING_LEASE_TIMEOUT_MS + 1)
         assertEquals(VpnRuntimeState.Phase.Error, VpnRuntimeState.phase.value)
-        assertEquals(VpnRuntimeState.STALE_MESSAGE, VpnRuntimeState.message.value)
+        assertEquals(VpnRuntimeState.CORE_DIED_MESSAGE, VpnRuntimeState.message.value)
         assertTrue(!VpnRuntimeState.isActive())
 
         VpnRuntimeState.publishState(dir, null, VpnRuntimeState.Phase.Starting, nowMs = 200_000L)
@@ -137,6 +140,20 @@ class VpnRuntimeStateFileChannelTest {
         VpnRuntimeState.publishState(dir, null, VpnRuntimeState.Phase.Running, nowMs = 200_002L)
         VpnRuntimeState.refreshState(dir, null, 200_003L)
         assertEquals(VpnRuntimeState.Phase.Running, VpnRuntimeState.phase.value)
+    }
+
+    @Test
+    fun `fresh running stays running within lease then degrades to core-died`() {
+        val now = 100_000L
+        // 租约内：Running 原样保留
+        assertEquals(VpnRuntimeState.Phase.Running to null,
+            VpnRuntimeState.observedRunning(VpnRuntimeState.Phase.Running, null, now, now + VpnRuntimeState.RUNNING_LEASE_TIMEOUT_MS))
+        // 租约外：Running → 内核已死
+        assertEquals(VpnRuntimeState.Phase.Error to VpnRuntimeState.CORE_DIED_MESSAGE,
+            VpnRuntimeState.observedRunning(VpnRuntimeState.Phase.Running, null, now, now + VpnRuntimeState.RUNNING_LEASE_TIMEOUT_MS + 1))
+        // 非 Running 不受影响
+        assertEquals(VpnRuntimeState.Phase.Stopped to null,
+            VpnRuntimeState.observedRunning(VpnRuntimeState.Phase.Stopped, null, now, now + 999_999L))
     }
 
     @Test

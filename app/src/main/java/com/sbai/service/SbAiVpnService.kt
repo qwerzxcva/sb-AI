@@ -79,6 +79,7 @@ class SbAiVpnService : VpnService() {
         if (intent?.action == SERVICE_INTERFACE) super.onBind(intent) else null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        writeDiagnostic("onStartCommand action=${intent?.action}", null)
         when (intent?.action) {
             ACTION_START -> startVpn()
             ACTION_STOP -> stopVpn()
@@ -142,17 +143,19 @@ class SbAiVpnService : VpnService() {
                         return@withLock
                     }
                     Log.i(TAG, "startVpn: calling LibboxRuntime.setup")
+                    writeDiagnostic("calling LibboxRuntime.setup", null)
                     LibboxRuntime.setup(this@SbAiVpnService, LibboxRuntime.COMMAND_SERVER_PORT)
-                    Log.i(TAG, "startVpn: LibboxRuntime.setup completed (port=${LibboxRuntime.COMMAND_SERVER_PORT})")
+                    writeDiagnostic("LibboxRuntime.setup completed", null)
 
                     // :core 进程的 RuleStore 是首次构造时的磁盘快照，必须 reload 才能拿到 UI 刚改的配置
                     val store = RuleStore.get(this@SbAiVpnService)
                     var state = store.reload()
-                    Log.i(TAG, "startVpn: state reloaded, subscriptions=${state.subscriptions.size}")
+                    writeDiagnostic("state reloaded, subs=${state.subscriptions.size}, routeRules=${state.routeRules.size}, ruleSets=${state.routeRuleSets.size}", null)
 
                     // 配置生成 + 校验 + 自动禁用坏节点重试（有限轮次）。
                     // 参考 LxBox 009：内核拒绝的节点自动禁用，用剩余好节点让 VPN 起来。
                     var config = SingBoxConfigGenerator.generate(state)
+                    writeDiagnostic("config generated len=${config.length}", null)
                     var disabledAny = false
                     for (round in 0 until NodeAutoDisabler.MAX_ROUNDS) {
                         // 同样的：canStart 失败走明确终态，不静默消失
@@ -216,10 +219,15 @@ class SbAiVpnService : VpnService() {
                     val platform = SbPlatformInterface(this@SbAiVpnService)
                     platformInterface = platform
                     Log.i(TAG, "startVpn: creating runtime")
-                    val rt = LibboxServiceRuntime(platform) { stopVpn() }
+                    val rt = LibboxServiceRuntime(platform) {
+                        writeDiagnostic("serviceStop callback from kernel (sing-box requested stop)", null)
+                        stopVpn()
+                    }
                     runtime = rt // Own partially initialized resources before native start.
                     Log.i(TAG, "startVpn: starting runtime")
+                    writeDiagnostic("calling rt.start (native)", null)
                     rt.start(config)
+                    writeDiagnostic("rt.start returned (native ok)", null)
                     Log.i(TAG, "startVpn: runtime started successfully")
 
                     if (!canStart()) {
@@ -320,6 +328,10 @@ class SbAiVpnService : VpnService() {
                     val conns = SbCommandClient.connections.value
                     val logs = SbCommandClient.logs.value
                     val now = System.currentTimeMillis()
+                    // 每次遥测发布同时续一次 Running 心跳，让主进程能区分「:core 存活」与
+                    // 「:core 已死（phase 文件是死亡前的残留）」。主进程对 Running 启用租约检测，
+                    // 没有这条续租，正常运行的 VPN 会被误判为内核已死。
+                    VpnRuntimeState.publish(this@SbAiVpnService, VpnRuntimeState.Phase.Running, null, now)
                     val snap = VpnRuntimeState.TelemetrySnapshot(
                         uplink = st.uplink,
                         downlink = st.downlink,
@@ -364,6 +376,7 @@ class SbAiVpnService : VpnService() {
     private fun stopVpn() = requestStop()
 
     private fun requestStop(destroying: Boolean = false) {
+        writeDiagnostic("requestStop destroying=$destroying from=${Throwable().stackTrace.take(6).joinToString(" <- ") { it.className.substringAfterLast('.') + '.' + it.methodName }}", null)
         synchronized(requestLock) {
             if (destroying) destroyed = true
             if (stopRequested && !destroying) return
