@@ -1,6 +1,7 @@
 package com.sbai.service
 
 import com.sbai.data.AppState
+import com.sbai.data.TunStack
 import com.sbai.data.DnsRule
 import com.sbai.data.DnsServerType
 import com.sbai.data.LoadBalanceMode
@@ -88,17 +89,13 @@ object SingBoxConfigGenerator {
             nodeTags.size == 1 -> nodeTags[0]
             else -> "direct"
         }
-        // 统一选择器：proxy 组含 direct + auto + 全部节点，首页点选 direct/auto/节点都落在
-        // proxy 组的 selected（与 LxBox/bettbox 卡片点选一致）。auto urltest 始终生成（多节点时），
-        // 作为 proxy 组内一个可选项；不再用 autoEnabled 套层决定入口。
-        val proxyGroupTag = if (nodeTags.size > 1 && !lb.enabled) "proxy" else null
-        val autoInGroup = nodeTags.size > 1 && !lb.enabled
-        // entryTag：lb 开启走 lb/lb-selector；否则走统一选择器 proxy；单节点/无节点直连或单节点。
-        val entryTag = when {
-            lb.enabled -> finalProxyTag
-            proxyGroupTag != null -> proxyGroupTag
-            else -> finalProxyTag
-        }
+        // 自动模式与负载均衡解耦：auto（urltest 优选）可在关掉负载均衡后单独使用。
+        // 但 auto 只有在「有多个出口候选可测速」时才有意义：
+        //  - lb（urltest 组）/ proxy（多节点 selector）→ 套 auto 再优选，合理；
+        //  - lb-selector（手动）→ 套 urltest 会覆盖用户手动选择，不套；
+        //  - 单节点 / direct → 无可测速对象，不套。
+        val autoWorthWrapping = lb.autoEnabled && (finalProxyTag == "lb" || finalProxyTag == "proxy")
+        val entryTag = if (autoWorthWrapping) "auto" else finalProxyTag
 
         val dnsServers = buildDnsServers(state, entryTag)
         val defaultDnsTag = state.dnsServers.firstOrNull { it.enabled && it.tag.isNotBlank() }?.tag
@@ -114,15 +111,18 @@ object SingBoxConfigGenerator {
                         put("type", "selector")
                         put("tag", "lb-selector")
                         putJsonArray("outbounds") { lbOutbounds.forEach(::add) }
-                        put("interrupt_exist_connections", lb.interruptExistConnections)
                     })
-                } else add(buildJsonObject {
+                } else {
+                    add(buildJsonObject {
                         put("type", "urltest")
                         put("tag", "lb")
                         putJsonArray("outbounds") { lbOutbounds.forEach(::add) }
                         put("url", lb.checkUrl)
                         put("interval", lb.interval)
-                        put("tolerance", if (lb.mode == LoadBalanceMode.LATENCY) 0 else lb.toleranceMs)
+                        put(
+                            "tolerance",
+                            if (lb.mode == LoadBalanceMode.LATENCY) 0 else lb.toleranceMs,
+                        )
                         put("idle_timeout", lb.idleTimeout)
                         put("interrupt_exist_connections", lb.interruptExistConnections)
                         // fork 扩展：round_robin + balancer{pool,...} = 仅使用 N 个节点
@@ -137,52 +137,26 @@ object SingBoxConfigGenerator {
                                 }
                             }
                         }
-                })
+                    })
+                }
             } else if (nodeTags.size > 1) {
-                // 统一选择器：direct + auto + 全部节点，首页 direct/auto/节点卡片点选都改这个组的 selected。
                 add(buildJsonObject {
                     put("type", "selector")
                     put("tag", "proxy")
-                    putJsonArray("outbounds") {
-                        add("auto")
-                        add("direct")
-                        nodeTags.forEach(::add)
-                    }
-                    // 默认选中首页记下的全局出口；无效或节点已不在时退回 auto。
-                    val remembered = state.selectedOutboundTag
-                    val defaultTag = when {
-                        remembered == "auto" || remembered == "direct" -> remembered
-                        remembered in nodeTags -> remembered
-                        else -> "auto"
-                    }
-                    put("default", defaultTag)
+                    putJsonArray("outbounds") { nodeTags.forEach(::add) }
                 })
             }
 
-            // auto urltest（多节点且未开 lb 时始终生成）：在全部节点间优选，作为 proxy 组的可选项。
-            if (autoInGroup) {
+            // 自动模式独立于负载均衡：与 entryTag 同条件创建（仅为多候选出口套 urltest 优选）
+            if (autoWorthWrapping) {
                 add(buildJsonObject {
                     put("type", "urltest")
                     put("tag", "auto")
-                    putJsonArray("outbounds") { nodeTags.forEach(::add) }
+                    putJsonArray("outbounds") { add(finalProxyTag) }
                     put("url", lb.checkUrl)
                     put("interval", lb.interval)
                 })
             }
-
-            // 订阅节点分组规则集（<订阅名>直连/代理/拦截）：localContent 是节点 tag JSON 数组，
-            // 生成 selector 出口组（tag 与规则集同名），路由规则按组整批引用这批节点。
-            state.routeRuleSets
-                .filter { it.enabled && it.type == RuleSetType.LOCAL }
-                .forEach { rs ->
-                    nodeGroupTags(rs)?.let { tags ->
-                        add(buildJsonObject {
-                            put("type", "selector")
-                            put("tag", rs.tag)
-                            putJsonArray("outbounds") { tags.forEach(::add) }
-                        })
-                    }
-                }
 
             outboundNodes.forEach { node ->
                 runCatching { json.parseToJsonElement(node.outboundJson).jsonObject }
@@ -190,8 +164,7 @@ object SingBoxConfigGenerator {
             }
 
             add(buildJsonObject { put("type", "direct"); put("tag", "direct") })
-            // sing-box 1.13 已移除特殊出站 block/dns（1.11 起废弃），声明即被内核拒绝；
-            // 拦截统一使用路由动作 {"action":"reject"}。
+            add(buildJsonObject { put("type", "block"); put("tag", "block") })
         }
 
         // sing-box 1.12+：wireguard 等 endpoint 节点单独进 endpoints 数组。
@@ -207,106 +180,73 @@ object SingBoxConfigGenerator {
             putJsonObject("log") {
                 put("level", state.settings.logLevel.wireName)
                 put("timestamp", true)
-                // 内核运行日志写文件，供真机断网/节点不通时直接读取定位（ColorOS logcat 按 UID 过滤抓不到）。
-                // 与 sing-box 主配置同目录，文件名固定，UI/诊断侧可读。
-                put("output", "sing-box.log")
             }
 
             putJsonObject("dns") {
-                // 增强 DNS 配置（借鉴 FlClash）
-                put("listen", state.settings.dnsListen)
-                if (state.settings.dnsPreferH3) put("prefer_h3", true)
-                put("use_hosts", state.settings.dnsUseHosts)
-                put("use_system_hosts", state.settings.dnsUseSystemHosts)
-                if (state.settings.dnsRespectRules) put("respect_rules", true)
-                if (state.settings.dnsIpv6) put("ipv6", true)
-
-                // 默认 DNS 服务器（用于解析域名形式的节点 server）
-                putJsonArray("default_nameserver") {
-                    state.settings.dnsDefaultNameserver.forEach { add(it) }
-                }
-
-                // 增强模式（fakeip / normal / hosts）
-                if (state.settings.dnsEnhancedMode == "fakeip") {
-                    put("enhanced_mode", "fakeip")
-                    // fakeIP 配置
-                    val fakeIpServer = state.dnsServers.firstOrNull {
-                        it.enabled && it.type == DnsServerType.FAKEIP
-                    }
-                    if (fakeIpServer != null) {
-                        put("fake_ip_range", fakeIpServer.inet4Range.ifBlank { state.settings.dnsFakeIpRange })
-                        putJsonArray("fake_ip_filter") { state.settings.dnsFakeIpFilter.forEach(::add) }
-                    }
-                }
-
-                // DNS 服务器列表
                 putJsonArray("servers") { dnsServers.forEach(::add) }
-
-                // DNS 规则
                 putJsonArray("rules") { dnsRules.forEach(::add) }
-
-                // 域名 -> DNS 服务器策略（nameserver-policy）
-                if (state.settings.dnsNameserverPolicy.isNotEmpty()) {
-                    putJsonObject("nameserver_policy") {
-                        state.settings.dnsNameserverPolicy.forEach { (domain, server) ->
-                            putJsonArray(domain) { add(server) }
-                        }
-                    }
-                }
-
-                // 代理服务器 DNS 策略
-                if (state.settings.dnsProxyServerNameserverPolicy.isNotEmpty()) {
-                    putJsonObject("proxy_server_nameserver_policy") {
-                        state.settings.dnsProxyServerNameserverPolicy.forEach { (domain, server) ->
-                            putJsonArray(domain) { add(server) }
-                        }
-                    }
-                }
-
-                // Fallback DNS 服务器
-                if (state.settings.dnsFallback.isNotEmpty()) {
-                    putJsonArray("fallback") {
-                        state.settings.dnsFallback.forEach { add(it) }
-                    }
-
-                    // Fallback 过滤器（借鉴 FlClash）
-                    val filter = state.settings.dnsFallbackFilter
-                    putJsonObject("fallback_filter") {
-                        if (!filter.geoip) put("geoip", false)
-                        put("geoip_code", filter.geoipCode)
-                        if (filter.geosite.isNotEmpty()) {
-                            putJsonArray("geosite") { filter.geosite.forEach(::add) }
-                        }
-                        if (filter.ipcidr.isNotEmpty()) {
-                            putJsonArray("ipcidr") { filter.ipcidr.forEach(::add) }
-                        }
-                        if (filter.domain.isNotEmpty()) {
-                            putJsonArray("domain") { filter.domain.forEach(::add) }
-                        }
-                    }
-                }
-
+                put("strategy", state.settings.dnsStrategy)
+                put("independent_cache", true)
                 put("final", defaultDnsTag)
+                // DNS fallback（参考 FlClash/mihomo）
+                val fallbackServers = state.settings.dnsFallbackServers
+                if (fallbackServers.isNotEmpty()) {
+                    putJsonArray("fallback") { fallbackServers.forEach(::add) }
+                    // fallback-filter
+                    val filterEnabled = state.settings.dnsFallbackGeoip ||
+                        state.settings.dnsFallbackGeosite.isNotEmpty() ||
+                        state.settings.dnsFallbackIpcidr.isNotEmpty() ||
+                        state.settings.dnsFallbackDomain.isNotEmpty()
+                    if (filterEnabled) {
+                        putJsonObject("fallback-filter") {
+                            put("geoip", state.settings.dnsFallbackGeoip)
+                            if (state.settings.dnsFallbackGeoip)
+                                put("geoip-code", state.settings.dnsFallbackGeoipCode)
+                            if (state.settings.dnsFallbackGeosite.isNotEmpty())
+                                putJsonArray("geosite") { state.settings.dnsFallbackGeosite.forEach(::add) }
+                            if (state.settings.dnsFallbackIpcidr.isNotEmpty())
+                                putJsonArray("ipcidr") { state.settings.dnsFallbackIpcidr.forEach(::add) }
+                            if (state.settings.dnsFallbackDomain.isNotEmpty())
+                                putJsonArray("domain") { state.settings.dnsFallbackDomain.forEach(::add) }
+                            put("lazy-query", state.settings.dnsFallbackLazyQuery)
+                        }
+                    }
+                }
+                // fake-ip-filter（sing-box 原生支持，用于排除特定域名不走 fakeIP）
+                if (state.settings.dnsFakeipFilter.isNotEmpty()) {
+                    putJsonArray("fakeip-filter") { state.settings.dnsFakeipFilter.forEach(::add) }
+                    if (state.settings.dnsFakeipFilterMode == "whitelist")
+                        put("fakeip-filter-mode", "whitelist")
+                }
+                // fake-ip-filter-pattern（正则形式，高于 fakeip-filter）
+                if (state.settings.dnsFakeipFilterPatterns.isNotEmpty()) {
+                    putJsonArray("fakeip-filter-pattern") { state.settings.dnsFakeipFilterPatterns.forEach(::add) }
+                }
+                // nameserver-policy（按域名指定 DNS，优先级高于默认服务器）
+                val policyEntries = state.settings.dnsNameserverPolicy
+                    .filter { it.isNotBlank() && it.contains("=") }
+                    .associate { entry ->
+                        val eq = entry.indexOf('=')
+                        entry.substring(0, eq).trim() to entry.substring(eq + 1).trim()
+                    }
+                if (policyEntries.isNotEmpty()) {
+                    putJsonObject("nameserver-policy") {
+                        policyEntries.forEach { (k, v) -> put(k, v) }
+                    }
+                }
             }
 
             putJsonObject("route") {
-                // 全局模式：不输出路由规则，所有流量直接落到 final（=代理入口），实现真·全局。
-                // 规则模式：按用户路由规则走。
-                putJsonArray("rules") { if (!state.settings.globalMode) routeRules.forEach(::add) }
+                putJsonArray("rules") { routeRules.forEach(::add) }
                 putJsonArray("rule_set") {
-                    // 显式规则集。LOCAL 且 localContent 是节点 tag 数组的是「订阅节点分组」，
-                    // 已在 outbounds 里生成 selector 组，不是匹配规则集，必须从 rule_set 排除。
-                    state.routeRuleSets.filter {
-                        it.enabled && it.tag.isNotBlank() &&
-                            !(it.type == RuleSetType.LOCAL && nodeGroupTags(it) != null)
-                    }.forEach { rs ->
+                    // 显式规则集
+                    state.routeRuleSets.filter { it.enabled && it.tag.isNotBlank() }.forEach { rs ->
                         add(buildJsonObject {
                             put("tag", rs.tag)
                             when (rs.type) {
                                 RuleSetType.REMOTE -> {
                                     put("type", "remote")
-                                    // .srs 是 sing-box 二进制规则集；误标为 source 会导致下载后解析失败。
-                                    put("format", remoteRuleSetFormat(rs.url))
+                                    put("format", "source")
                                     put("url", rs.url)
                                     rs.downloadDetour?.takeIf { it.isNotBlank() }
                                         ?.let { put("download_detour", it) }
@@ -345,21 +285,12 @@ object SingBoxConfigGenerator {
                         add(buildJsonObject {
                             put("tag", tag)
                             put("type", "remote")
-                            put("format", remoteRuleSetFormat(url))
+                            put("format", "source")
                             put("url", url)
                         })
                     }
                 }
-                // 1.13 已无 block/dns 特殊出站：旧配置里 final=block/dns 会引用不存在的 tag 导致启动失败，回退到入口。
-                // 系统模式=全局时，final 强制走代理入口（entryTag），绕过所有路由规则——所有流量走代理。
-                val finalTag = state.settings.finalOutbound.trim()
-                put("final", if (state.settings.globalMode || finalTag.isEmpty() || finalTag == "block" || finalTag == "dns") entryTag else finalTag)
-                // 1.12 起 dial 字段缺少 domain_resolver 已废弃（后续版本移除）：为域名形式的节点 server
-                // 指定一个不走代理的解析器，避免「代理节点域名需要经代理解析」的循环。
-                dnsServers.firstOrNull { srv ->
-                    srv["detour"] == null &&
-                        srv["type"]?.jsonPrimitive?.content !in setOf("fakeip", "hosts")
-                }?.get("tag")?.jsonPrimitive?.content?.let { put("default_domain_resolver", it) }
+                put("final", state.settings.finalOutbound.ifBlank { entryTag })
                 put("auto_detect_interface", state.settings.autoDetectInterface)
             }
 
@@ -382,11 +313,15 @@ object SingBoxConfigGenerator {
                     put("mtu", state.settings.mtu)
                     put("auto_route", true)
                     put("strict_route", state.settings.strictRoute)
-                    // TUN 网络栈：借鉴 FlClash，支持 system/gvisor/mips/mixed
+                    // TUN 网络栈：system / gvisor / mixed / go / tsbAI（go=1.15+ 新 Go 栈，tsbAI=sb-lxf 魔改含 splice/GSO/multi_queue）
                     put("stack", state.settings.tunStack.wireName)
-                    // sing-box 1.13 已移除 inbound 上的 legacy 字段（sniff / sniff_override_destination 等），
-                    // 带上会被内核拒绝："legacy inbound fields are deprecated ... removed in sing-box 1.13.0"。
-                    // 真机复现即为 VPN 无法启动的根因。嗅探改由 route.rules 中的 {"action":"sniff"} 承担（见下方路由规则）。
+                    // tsbAI/go 栈可选 multi_queue（Linux 多队列网络引擎）
+                    if (state.settings.tunMultiQueue &&
+                        (state.settings.tunStack == TunStack.TSB_AI || state.settings.tunStack == TunStack.GO)) {
+                        put("multi_queue", true)
+                    }
+                    put("sniff", true)
+                    put("sniff_override_destination", false)
 
                     when (state.settings.perAppProxy.mode) {
                         PerAppProxyMode.INCLUDE ->
@@ -402,13 +337,37 @@ object SingBoxConfigGenerator {
                 putJsonObject("cache_file") {
                     put("enabled", true)
                     put("path", "cache.db")
-                    // lx 内核（sing-box-lx，无 with_clash_api/扩展 cache 字段 tag）的 cache_file
-                    // 只支持 enabled/path；store_fakeip 是新版 sing-box 才有，lx 1.14 fork 会
-                    // `unknown field "store_fakeip"` 拒绝启动（真机复现「VPN 启用不生效」根因）。
-                    // 一律不输出 store_fakeip；该设置项保留在 UI 仅作记录，不参与内核配置。
+                }
+            }
+
+            // sb-lxf SPEC 020 idle-suspend (root-level `lx.wg`, not inside experimental).
+            // Active only when the libbox AAR was built with `with_lx_idle_suspend`
+            // (the `lib_android_slim` profile). Idle WireGuard/Tailscale endpoints
+            // are suspended after idleSuspendDuration, and torn down after
+            // idleTeardownDuration (0 = inherit the reachable/idle threshold).
+            if (state.settings.idleSuspendDuration > 0L) {
+                putJsonObject("lx") {
+                    putJsonObject("wg") {
+                        put("idle_suspend", msToDuration(state.settings.idleSuspendDuration))
+                        if (state.settings.idleTeardownDuration > 0L) {
+                            put("idle_teardown", msToDuration(state.settings.idleTeardownDuration))
+                        }
+                    }
                 }
             }
         }
+    }
+
+    /** Convert milliseconds to a Go duration string (e.g. 600000 -> "10m"). */
+    private fun msToDuration(ms: Long): String {
+        if (ms < 1000) return "${ms}ms"
+        val sec = ms / 1000
+        if (sec < 60) return "${sec}s"
+        val min = sec / 60
+        if (min < 60) return "${min}m"
+        val h = min / 60
+        if (h < 24) return "${h}h"
+        return "${h / 24}d"
     }
 
     // ------------------------------------------------------------------
@@ -466,8 +425,7 @@ object SingBoxConfigGenerator {
                     }
                 }
                 s.detour?.takeIf { it.isNotBlank() }?.let { put("detour", it) }
-                // 1.12+ 新格式 DNS server 不再接受 address_resolver（legacy 字段），对应 dial 字段为 domain_resolver。
-                s.addressResolver?.takeIf { it.isNotBlank() }?.let { put("domain_resolver", it) }
+                s.addressResolver?.takeIf { it.isNotBlank() }?.let { put("address_resolver", it) }
                 s.clientSubnet?.takeIf { it.isNotBlank() }?.let { put("client_subnet", it) }
                 if (s.echEnabled && s.type in ECH_CAPABLE) {
                     putJsonObject("tls") {
@@ -518,21 +476,6 @@ object SingBoxConfigGenerator {
         return map
     }
 
-    /** 远程 .srs 使用 binary，其余 URL 使用 source；忽略查询串和 fragment。 */
-    internal fun remoteRuleSetFormat(url: String): String =
-        if (url.substringBefore('#').substringBefore('?').endsWith(".srs", ignoreCase = true)) "binary" else "source"
-
-    /** 规则集的 localContent 若是「节点 tag JSON 数组」（订阅节点分组），返回 tag 列表；否则 null。 */
-    /** 规则集的 localContent 若是「节点 tag JSON 数组」（订阅节点分组），返回 tag 列表；否则 null。 */
-    private fun nodeGroupTags(rs: com.sbai.data.RouteRuleSet): List<String>? = runCatching {
-        val el = json.parseToJsonElement(rs.localContent)
-        if (el is JsonArray) {
-            val tags = el.map { it.jsonPrimitive.content }.filter { it.isNotBlank() }
-            // 空数组不算分组：否则生成空 selector（内核拒绝）且被误排除出 route.rule_set
-            tags.takeIf { it.isNotEmpty() }
-        } else null
-    }.getOrNull()
-
     /** 由 URL 生成稳定的规则集 tag */
     private fun urlRuleSetTag(url: String): String {
         val hash = url.hashCode().toUInt().toString(16)
@@ -549,22 +492,6 @@ object SingBoxConfigGenerator {
                 trimmed
             }
         }.distinct()
-
-    private fun resolveRuleSetTag(entry: String): String {
-        val t = entry.trim()
-        return if (t.startsWith("http://") || t.startsWith("https://")) urlRuleSetTag(t) else t
-    }
-
-    /** 配置里实际声明的 rule_set tag 集合（显式规则集 + 资源注入 + 路由规则内联 URL）。 */
-    internal fun definedRuleSetTags(state: AppState): Set<String> = buildSet {
-        state.routeRuleSets.filter { it.enabled && it.tag.isNotBlank() }.forEach { add(it.tag) }
-        state.settings.resources
-            .filter { it.enabled && it.resType == com.sbai.data.ResourceType.CHINA_IP && it.content.isNotEmpty() }
-            .forEach { add("res-${it.id.take(8)}") }
-        addAll(inlineUrlRuleSets(state).keys)
-    }
-
-    private val ACTION_ONLY_KEYS = setOf("outbound", "action", "reject_method", "invert")
 
     private fun buildRouteRules(state: AppState, entryTag: String): List<JsonObject> {
         val rules = mutableListOf<JsonObject>()
@@ -594,21 +521,8 @@ object SingBoxConfigGenerator {
         if (chinaIpResource != null) {
             // 规则已在 rule_set 块中注入（inline format），此处无需重复；保留标记以便未来扩展
         }
-        // 引用未声明的 rule_set 会让 sing-box 直接拒绝启动（rule-set not found）。
-        // AND 规则含不存在的规则集永远无法命中 → 整条跳过；OR 规则仅去掉该引用。
-        val definedTags = definedRuleSetTags(state)
         state.routeRules.filter { it.enabled }.forEach { rule ->
-            val missing = resolveRuleSetTags(rule).filterNot { it in definedTags }
-            val effective = when {
-                missing.isEmpty() -> rule
-                rule.logic == RuleLogic.OR -> rule.copy(
-                    ruleSetTags = rule.ruleSetTags.filter { e -> resolveRuleSetTag(e) in definedTags },
-                )
-                else -> return@forEach
-            }
-            val built = buildRouteRule(effective, entryTag)
-            // 去掉引用后若已无任何匹配条件，不能退化成「匹配全部流量」的规则
-            if (missing.isEmpty() || built.keys.any { it !in ACTION_ONLY_KEYS }) rules.add(built)
+            rules.add(buildRouteRule(rule, entryTag))
         }
         return rules
     }
@@ -651,8 +565,8 @@ object SingBoxConfigGenerator {
     /** 输出 action 或 outbound（sing-box 完整动作集） */
     private fun JB.putActionOrOutbound(rule: RouteRule, entryTag: String) {
         when (rule.action) {
-            RuleAction.ROUTE_PROXY -> put("outbound", entryTag)
-            RuleAction.ROUTE_DIRECT -> put("outbound", "direct")
+            RuleAction.ROUTE_PROXY -> put("outbound", rule.outboundTag.ifBlank { entryTag })
+            RuleAction.ROUTE_DIRECT -> put("outbound", rule.outboundTag.ifBlank { "direct" })
             RuleAction.REJECT -> {
                 put("action", "reject")
                 if (rule.rejectMethod == "drop") put("reject_method", "drop")
@@ -721,19 +635,6 @@ object SingBoxConfigGenerator {
     // ------------------------------------------------------------------
 
     /** 供 UI 展示：把自动推导的 DNS 规则也算出来（只读） */
-    /** 只依赖 DNS 推导所需字段的重载，便于调用方做字段级缓存（避免订阅整个 AppState） */
-    fun autoDnsRulesFromRouteRules(
-        dnsServers: List<com.sbai.data.DnsServer>,
-        dnsGroups: List<com.sbai.data.DnsGroup>,
-        routeRules: List<com.sbai.data.RouteRule>,
-    ): List<com.sbai.data.DnsRule> = autoDnsRules(
-        AppState(
-            dnsServers = dnsServers,
-            dnsGroups = dnsGroups,
-            routeRules = routeRules,
-        )
-    )
-
     fun autoDnsRules(state: AppState): List<DnsRule> {
         val defaultDnsTag = state.dnsServers.firstOrNull { it.enabled && it.tag.isNotBlank() }?.tag
             ?: "dns-default"
@@ -814,20 +715,17 @@ object SingBoxConfigGenerator {
         val groupOfTag = state.dnsGroups.associate { it.name to it.serverTags }
 
         // 1) 用户手动创建的 DNS 规则（按列表顺序 = 优先级，必须最先匹配）
-        val dnsDefinedTags = definedRuleSetTags(state)
         state.dnsRules.filter { it.enabled }.forEach { r ->
             val server = resolveDnsTag(r.server, groupOfTag, state)
             // route 动作必须有有效 server，否则整条跳过（避免悬空引用 / 残缺规则）
             val needsServer = r.action.isBlank() || r.action == "route"
             if (needsServer && server == null) return@forEach
-            // DNS 规则为 AND 语义：引用未声明的规则集既无法命中又会导致内核拒绝配置 → 跳过
-            if (r.ruleSetTags.any { resolveRuleSetTag(it) !in dnsDefinedTags }) return@forEach
             result.add(buildJsonObject {
                 if (r.domains.isNotEmpty()) putJsonArray("domain") { r.domains.forEach(::add) }
                 if (r.domainSuffixes.isNotEmpty()) putJsonArray("domain_suffix") { r.domainSuffixes.forEach(::add) }
                 if (r.domainKeywords.isNotEmpty()) putJsonArray("domain_keyword") { r.domainKeywords.forEach(::add) }
                 if (r.domainRegexes.isNotEmpty()) putJsonArray("domain_regex") { r.domainRegexes.forEach(::add) }
-                if (r.ruleSetTags.isNotEmpty()) putJsonArray("rule_set") { r.ruleSetTags.map(::resolveRuleSetTag).distinct().forEach(::add) }
+                if (r.ruleSetTags.isNotEmpty()) putJsonArray("rule_set") { r.ruleSetTags.forEach(::add) }
                 if (r.ipCidrs.isNotEmpty()) putJsonArray("ip_cidr") { r.ipCidrs.forEach(::add) }
                 if (r.networks.isNotEmpty()) putJsonArray("network") { r.networks.forEach(::add) }
                 if (r.ports.isNotEmpty()) putJsonArray("port") { r.ports.forEach(::add) }
@@ -965,31 +863,23 @@ object SingBoxConfigGenerator {
         }
     }
 
-    /** 共享单线程池：串行校验（防 native checkConfig 并发竞争），避免每次调用新建线程池泄漏。 */
-    private val validatorExecutor = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
-        Thread(r, "config-validator").apply { isDaemon = true }
-    }
-
     /** 配置校验：调用 libbox.checkConfig；失败时返回可读错误（5 秒超时） */
     fun validate(configJson: String): String? {
         return runCatching {
             // checkConfig 是 JNI 同步调用，必须在 IO 线程执行，加超时保护
-            val task: java.util.concurrent.Callable<String?> = java.util.concurrent.Callable {
+            var result: String? = null
+            val lock = Any()
+            java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+                Thread(r, "config-validator").apply { isDaemon = true }
+            }.submit {
                 try {
                     io.nekohasekai.libbox.Libbox.checkConfig(configJson)
-                    null
+                    synchronized(lock) { result = null }
                 } catch (e: Exception) {
-                    e.message ?: "unknown error"
+                    synchronized(lock) { result = e.message ?: "unknown error" }
                 }
-            }
-            val future = validatorExecutor.submit(task)
-            try {
-                future.get(5, java.util.concurrent.TimeUnit.SECONDS)
-            } catch (t: java.util.concurrent.TimeoutException) {
-                // 超时：中断阻塞线程，共享池保证下一个校验排队串行
-                future.cancel(true)
-                throw t
-            }
+            }.get(5, java.util.concurrent.TimeUnit.SECONDS)
+            result
         }.getOrElse { e ->
             android.util.Log.e("SingBoxConfig", "checkConfig timeout/failed", e)
             if (e is java.util.concurrent.TimeoutException) "配置校验超时（可能是内核不兼容）" else e.message ?: "未知错误"
