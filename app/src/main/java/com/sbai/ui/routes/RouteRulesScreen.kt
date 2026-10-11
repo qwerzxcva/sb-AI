@@ -6,17 +6,14 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.pager.HorizontalPager
-import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -25,21 +22,17 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Dataset
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.DragIndicator
-import androidx.compose.material.icons.filled.GroupWork
-import androidx.compose.material.icons.filled.Rule
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -49,55 +42,41 @@ import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Switch
-import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import com.sbai.data.AppState
-import com.sbai.data.DnsGroup
-import com.sbai.data.DnsRule
-import com.sbai.data.DnsServer
-import com.sbai.data.DnsServerType
+import com.sbai.ui.components.BottomBarController
 import com.sbai.data.RouteRule
 import com.sbai.data.RouteRuleSet
 import com.sbai.data.RuleAction
 import com.sbai.data.RuleLogic
 import com.sbai.data.RuleSetType
 import com.sbai.data.RuleStore
-import com.sbai.service.DnsRuleJsonCodec
 import com.sbai.service.RouteRuleJsonCodec
 import com.sbai.service.SingBoxConfigGenerator
 import com.sbai.ui.components.AppPickerDialog
 import com.sbai.ui.components.BottomBarClearance
-import com.sbai.ui.components.BottomBarController
 import com.sbai.ui.components.DragDropLazyColumn
 import com.sbai.ui.components.FabBottomBarClearance
-import com.sbai.ui.components.RestoreBottomBarOnDispose
 import com.sbai.ui.components.SbBadge
+import com.sbai.ui.components.RestoreBottomBarOnDispose
 import com.sbai.ui.components.SbGroup
 import com.sbai.ui.components.SbItem
-import com.sbai.ui.components.SbSwitchItem
 import com.sbai.ui.theme.LocalSbStyleTokens
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.map
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 
 /** sb-AI kKnownNetworks：tcp / udp / icmp */
 private val NETWORK_OPTIONS = listOf("tcp", "udp", "icmp")
@@ -107,794 +86,224 @@ private val PROTOCOL_OPTIONS = listOf(
     "bittorrent", "dns", "dtls", "http", "ntp", "quic", "rdp", "ssh", "stun", "tls",
 )
 
-private val DNS_QUERY_TYPES = listOf("A", "AAAA", "CNAME", "HTTPS", "TXT", "MX", "SOA")
-private val IP_STRATEGIES = listOf("", "prefer_ipv4", "prefer_ipv6", "ipv4_only", "ipv6_only")
-private val ECH_CAPABLE = setOf(
-    DnsServerType.TLS, DnsServerType.HTTPS, DnsServerType.QUIC, DnsServerType.H3,
-)
-
-/**
- * 路由 / DNS 融合页（替代独立 DnsScreen）：
- * - Pager 第 1 页「路由/DNS 规则」：上段路由规则（可拖拽），下段 DNS 规则（手动可拖拽 + 自动只读），两段标题分隔。
- * - Pager 第 2 页「DNS 设置」：DNS 服务器 + DNS group（原 DnsScreen Tab0/Tab2）。
- */
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun RouteRulesScreen() {
     val context = LocalContext.current
     val store = remember { RuleStore.get(context) }
+    val state by store.state.collectAsState()
     val tokens = LocalSbStyleTokens.current
 
-    // 字段级订阅：本页只用 5 个字段，全量订阅会因节点等无关变化重组本页。
-    val routeRules by remember(store) {
-        store.state.map { it.routeRules }.distinctUntilChanged()
-    }.collectAsState(initial = remember(store) { store.state.value.routeRules })
-    val routeRuleSets by remember(store) {
-        store.state.map { it.routeRuleSets }.distinctUntilChanged()
-    }.collectAsState(initial = remember(store) { store.state.value.routeRuleSets })
-    val dnsServers by remember(store) {
-        store.state.map { it.dnsServers }.distinctUntilChanged()
-    }.collectAsState(initial = remember(store) { store.state.value.dnsServers })
-    val dnsGroups by remember(store) {
-        store.state.map { it.dnsGroups }.distinctUntilChanged()
-    }.collectAsState(initial = remember(store) { store.state.value.dnsGroups })
-    val dnsRules by remember(store) {
-        store.state.map { it.dnsRules }.distinctUntilChanged()
-    }.collectAsState(initial = remember(store) { store.state.value.dnsRules })
-    val customHosts by remember(store) {
-        store.state.map { it.customHosts }.distinctUntilChanged()
-    }.collectAsState(initial = remember(store) { store.state.value.customHosts })
-    val settings by remember(store) {
-        store.state.map { it.settings }.distinctUntilChanged()
-    }.collectAsState(initial = remember(store) { store.state.value.settings })
-    val resources by remember(store) {
-        store.state.map { it.settings.resources }.distinctUntilChanged()
-    }.collectAsState(initial = remember(store) { store.state.value.settings.resources })
+    var editingRule by remember { mutableStateOf<RouteRule?>(null) }
+    var editingRuleSet by remember { mutableStateOf<RouteRuleSet?>(null) }
+    var showRuleSetManager by remember { mutableStateOf(false) }
 
-    var tab by remember { mutableIntStateOf(0) }
-    val pagerState = rememberPagerState(pageCount = { 2 })
-    LaunchedEffect(pagerState.currentPage) { tab = pagerState.currentPage }
-    LaunchedEffect(tab) { if (tab != pagerState.currentPage) pagerState.scrollToPage(tab) }
-
-    // 外层第 1 页内部「路由规则 / DNS 规则」子页状态提升到顶层，
-    // 让 Scaffold 的 FAB 能跟子页走（否则 DNS 规则子页没有创建入口）。
-    val subPagerState = rememberPagerState(pageCount = { 2 })
-    var innerSubPage by remember { mutableIntStateOf(0) }
-    LaunchedEffect(subPagerState.currentPage) { innerSubPage = subPagerState.currentPage }
-    LaunchedEffect(innerSubPage) {
-        if (innerSubPage != subPagerState.currentPage) subPagerState.scrollToPage(innerSubPage)
-    }
-
-    var editingRouteRule by remember { mutableStateOf<RouteRule?>(null) }
-    var editingRouteRuleSet by remember { mutableStateOf<RouteRuleSet?>(null) }
-    var showRouteRuleSetManager by remember { mutableStateOf(false) }
-    var editingDnsServer by remember { mutableStateOf<DnsServer?>(null) }
-    var editingDnsGroup by remember { mutableStateOf<DnsGroup?>(null) }
-    var editingDnsRule by remember { mutableStateOf<DnsRule?>(null) }
-    var editingHostsEntry by remember { mutableStateOf<com.sbai.data.HostsEntry?>(null) }
-    var showResourcesManager by remember { mutableStateOf(false) }
-
-    // 路由规则自动推导的 DNS 规则（只读展示）——缓存，避免每次重组重算
-    val autoDnsRules by remember(dnsServers, dnsGroups, routeRules) {
-        derivedStateOf {
-            SingBoxConfigGenerator.autoDnsRulesFromRouteRules(dnsServers, dnsGroups, routeRules)
-        }
-    }
-    // 路由规则自动推导的路由规则（fakeIP 联动，只读展示）
-    val autoRouteRules by remember(routeRules, dnsServers, dnsGroups) {
-        derivedStateOf {
-            SingBoxConfigGenerator.autoRouteRules(
-                AppState(dnsServers = dnsServers, dnsGroups = dnsGroups, routeRules = routeRules),
-            )
-        }
-    }
-
-    // 编辑器全部为整页（二级页面），提前 return 覆盖列表页
-    editingRouteRule?.let { rule ->
+    // 规则编辑器：整页（二级页面），提前 return 覆盖列表页
+    editingRule?.let { rule ->
         RouteRuleEditorDialog(
             initial = rule,
-            dnsOptions = dnsServers.filter { it.enabled }.map { it.tag } + dnsGroups.map { it.name },
-            ruleSetTags = routeRuleSets.filter { it.enabled }.map { it.tag },
-            onDismiss = { editingRouteRule = null },
-            onSave = { store.upsertRouteRule(it); editingRouteRule = null },
-            onCreateRuleSet = { editingRouteRuleSet = RouteRuleSet() },
+            dnsOptions = state.dnsServers.filter { it.enabled }.map { it.tag } +
+                    state.dnsGroups.map { it.name },
+            outboundOptions = collectOutboundOptions(state),
+            ruleSetTags = state.routeRuleSets.filter { it.enabled }.map { it.tag },
+            onDismiss = { editingRule = null },
+            onSave = { store.upsertRouteRule(it); editingRule = null },
+            onCreateRuleSet = { editingRuleSet = RouteRuleSet() },
         )
         return
     }
-    editingRouteRuleSet?.let { rs ->
+
+    // 规则集编辑器：整页（二级页面）
+    editingRuleSet?.let { rs ->
         RuleSetEditorDialog(
             initial = rs,
-            onDismiss = { editingRouteRuleSet = null },
-            onSave = { store.upsertRuleSet(it); editingRouteRuleSet = null },
+            onDismiss = { editingRuleSet = null },
+            onSave = { store.upsertRuleSet(it); editingRuleSet = null },
             onDelete = if (rs.tag.isNotBlank()) {
-                { store.deleteRuleSet(rs.id); editingRouteRuleSet = null }
-            } else null,
-        )
-        return
-    }
-    editingDnsServer?.let { server ->
-        DnsServerEditorDialog(
-            initial = server,
-            existingServers = dnsServers.map { it.tag },
-            existingFakeipTag = dnsServers
-                .firstOrNull { it.type == DnsServerType.FAKEIP && it.id != server.id }?.tag,
-            onDismiss = { editingDnsServer = null },
-            onSave = { store.upsertDnsServer(it); editingDnsServer = null },
-            onDelete = if (server.tag.isNotBlank()) {
-                { store.deleteDnsServer(server.id); editingDnsServer = null }
-            } else null,
-        )
-        return
-    }
-    editingDnsGroup?.let { group ->
-        DnsGroupEditorDialog(
-            initial = group,
-            serverTags = dnsServers.filter { it.enabled }.map { it.tag },
-            onDismiss = { editingDnsGroup = null },
-            onSave = { store.upsertDnsGroup(it); editingDnsGroup = null },
-            onDelete = if (group.name.isNotBlank()) {
-                { store.deleteDnsGroup(group.id); editingDnsGroup = null }
-            } else null,
-        )
-        return
-    }
-    editingDnsRule?.let { rule ->
-        DnsRuleEditorDialog(
-            initial = rule,
-            serverOptions = dnsServers.filter { it.enabled }.map { it.tag } + dnsGroups.map { it.name },
-            ruleSetTags = routeRuleSets.filter { it.enabled }.map { it.tag },
-            onDismiss = { editingDnsRule = null },
-            onSave = { store.upsertDnsRule(it); editingDnsRule = null },
-            onDelete = if (rule.autoFromRouteRuleId == null && rule.name.isNotBlank()) {
-                { store.deleteDnsRule(rule.id); editingDnsRule = null }
-            } else null,
-        )
-        return
-    }
-    if (showResourcesManager) {
-        ResourcesManagerScreen(onBack = { showResourcesManager = false })
-        return
-    }
-    editingHostsEntry?.let { entry ->
-        HostsEntryEditorDialog(
-            initial = entry,
-            onDismiss = { editingHostsEntry = null },
-            onSave = { store.upsertHostsEntry(it); editingHostsEntry = null },
-            onDelete = if (entry.host.isNotBlank()) {
-                { store.deleteHostsEntry(entry.id); editingHostsEntry = null }
+                { store.deleteRuleSet(rs.id); editingRuleSet = null }
             } else null,
         )
         return
     }
 
     Scaffold(
-        topBar = {
-            TopAppBar(title = { Text("路由 / DNS") })
-        },
         floatingActionButton = {
             Box(Modifier.padding(bottom = FabBottomBarClearance)) {
-                when (tab) {
-                    0 -> {
-                        // 外层第 1 页内部再分「路由规则 / DNS 规则」两个子页，
-                        // FAB 文案跟子页走，否则 DNS 规则子页没有创建入口（用户反馈建不了 DNS 规则）
-                        val subPage = pagerState.currentPage.let { if (it == 0) innerSubPage else 0 }
-                        if (subPage == 0) {
-                            ExtendedFloatingActionButton(
-                                onClick = { editingRouteRule = RouteRule() },
-                                icon = { Icon(Icons.Filled.Add, contentDescription = null) },
-                                text = { Text("添加路由规则") },
-                            )
-                        } else {
-                            ExtendedFloatingActionButton(
-                                onClick = { editingDnsRule = DnsRule() },
-                                icon = { Icon(Icons.Filled.Add, contentDescription = null) },
-                                text = { Text("添加 DNS 规则") },
-                            )
-                        }
-                    }
-                    else -> ExtendedFloatingActionButton(
-                        onClick = { editingDnsServer = DnsServer() },
-                        icon = { Icon(Icons.Filled.Add, contentDescription = null) },
-                        text = { Text("添加 DNS") },
-                    )
-                }
+                ExtendedFloatingActionButton(
+                    onClick = { editingRule = RouteRule() },
+                    icon = { Icon(Icons.Filled.Add, contentDescription = null) },
+                    text = { Text("添加规则") },
+                )
             }
         },
     ) { padding ->
-        Column(modifier = Modifier.fillMaxSize().padding(padding)) {
-            TabRow(selectedTabIndex = tab) {
-                Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("路由/DNS 规则") })
-                Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("DNS 设置") })
-            }
-            HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { page ->
-                when (page) {
-                    0 -> PageRouteAndDnsRules(
-                        routeRules, routeRuleSets, dnsRules, autoDnsRules, autoRouteRules,
-                        dnsServers, dnsGroups,
-                        onToggleRoute = { store.upsertRouteRule(it.copy(enabled = !it.enabled)) },
-                        onEditRoute = { editingRouteRule = it },
-                        onDeleteRoute = { store.deleteRouteRule(it.id) },
-                        onReorderRoute = { ids -> store.reorderRouteRules(ids) },
-                        onToggleDns = { store.upsertDnsRule(it.copy(enabled = !it.enabled)) },
-                        onEditDns = { editingDnsRule = it },
-                        onDeleteDns = { store.deleteDnsRule(it.id) },
-                        onReorderDns = { ids -> store.reorderDnsRules(ids) },
-                        onOpenRuleSetManager = { showRouteRuleSetManager = true },
-                        stateResources = resources,
-                        onOpenResourcesManager = { showResourcesManager = true },
-                        subPagerState = subPagerState,
-                        subTab = innerSubPage,
-                        onSelectSubTab = { innerSubPage = it },
-                        tokens = tokens,
-                    )
-                    else -> PageDnsSettings(
-                        dnsServers, dnsGroups, customHosts,
-                        cacheSettings = settings,
-                        onToggleServer = { store.upsertDnsServer(it.copy(enabled = !it.enabled)) },
-                        onEditServer = { editingDnsServer = it },
-                        onEditGroup = { editingDnsGroup = it },
-                        onEditHosts = { editingHostsEntry = it },
-                        onDeleteHosts = { store.deleteHostsEntry(it.id) },
-                        onUpdateSettings = { store.updateSettings(it) },
-                        tokens = tokens,
-                    )
+        DragDropLazyColumn(
+            items = state.routeRules,
+            keyOf = { it.id },
+            onMove = { from, to ->
+                val ids = state.routeRules.map { it.id }.toMutableList()
+                if (from in ids.indices && to in ids.indices) {
+                    val moved = ids.removeAt(from)
+                    ids.add(to, moved)
+                    store.reorderRouteRules(ids)
                 }
-            }
+            },
+            onDragEnd = { keys -> store.reorderRouteRules(keys.map { it.toString() }) },
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .padding(horizontal = tokens.screenHorizontalPadding),
+            contentBottomPadding = BottomBarClearance,
+            header = {
+                Spacer(Modifier.height(16.dp))
+                // 规则集入口（不再与路由规则并列成两个有序列表，避免优先级混淆）
+                SbGroup(title = "") {
+                    item {
+                        SbItem(
+                            title = "规则集（${state.routeRuleSets.size}）",
+                            subtitle = "被路由规则按 tag 引用；本身不参与匹配顺序",
+                            icon = Icons.Filled.Dataset,
+                            onClick = { showRuleSetManager = true },
+                        )
+                    }
+                }
+                Spacer(Modifier.height(20.dp))
+                Text(
+                    "路由规则 · 越靠上优先级越高（长按卡片拖动排序）",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                )
+            },
+            footer = {
+                if (state.routeRules.isEmpty()) {
+                    SbGroup(title = "") {
+                        item {
+                            SbItem(
+                                title = "暂无路由规则",
+                                subtitle = "点右下角「添加规则」；域名/IP 一行一条，也可直接粘贴规则 JSON",
+                            )
+                        }
+                    }
+                }
+                // fakeIP 联动：DNS 服务器创建 fakeIP 时，路由页显示自动生成的 fakeIP 段规则
+                val autoRules = SingBoxConfigGenerator.autoRouteRules(state)
+                if (autoRules.isNotEmpty()) {
+                    Spacer(Modifier.height(16.dp))
+                    Text(
+                        "自动生成的规则（fakeIP 联动，只读）",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.tertiary,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                    )
+                    autoRules.forEach { rule ->
+                        SbGroup(title = "") {
+                            item {
+                                SbItem(
+                                    title = rule.name,
+                                    subtitle = "IP×${rule.ipCidrs.size} · ${rule.ipCidrs.joinToString()}",
+                                    trailing = { SbBadge("自动", MaterialTheme.colorScheme.tertiary) },
+                                )
+                            }
+                        }
+                        Spacer(Modifier.height(8.dp))
+                    }
+                }
+                Spacer(Modifier.height(24.dp))
+            },
+        ) { index, rule, isDragging ->
+            RouteRuleCard(
+                index = index + 1,
+                rule = rule,
+                isDragging = isDragging,
+                onToggle = { store.upsertRouteRule(rule.copy(enabled = !rule.enabled)) },
+                onEdit = { editingRule = rule },
+                onDelete = { store.deleteRouteRule(rule.id) },
+            )
         }
     }
 
-    if (showRouteRuleSetManager) {
+    if (showRuleSetManager) {
         RuleSetManagerDialog(
-            ruleSets = routeRuleSets,
-            onDismiss = { showRouteRuleSetManager = false },
-            onAdd = { editingRouteRuleSet = RouteRuleSet() },
-            onEdit = { editingRouteRuleSet = it },
+            ruleSets = state.routeRuleSets,
+            onDismiss = { showRuleSetManager = false },
+            onAdd = { editingRuleSet = RouteRuleSet() },
+            onEdit = { editingRuleSet = it },
             onDelete = { store.deleteRuleSet(it.id) },
             onToggle = { store.upsertRuleSet(it.copy(enabled = !it.enabled)) },
         )
     }
 }
 
-// ---------------------------------------------------------------------------
-// 第 1 页：路由规则（上）+ DNS 规则（下），两段各占一半、独立拖拽排序
-// ---------------------------------------------------------------------------
-
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun PageRouteAndDnsRules(
-    routeRules: List<RouteRule>,
-    routeRuleSets: List<RouteRuleSet>,
-    dnsRules: List<DnsRule>,
-    autoDnsRules: List<DnsRule>,
-    autoRouteRules: List<RouteRule>,
-    dnsServers: List<DnsServer>,
-    dnsGroups: List<DnsGroup>,
-    onToggleRoute: (RouteRule) -> Unit,
-    onEditRoute: (RouteRule) -> Unit,
-    onDeleteRoute: (RouteRule) -> Unit,
-    onReorderRoute: (List<String>) -> Unit,
-    onToggleDns: (DnsRule) -> Unit,
-    onEditDns: (DnsRule) -> Unit,
-    onDeleteDns: (DnsRule) -> Unit,
-    onReorderDns: (List<String>) -> Unit,
-    onOpenRuleSetManager: () -> Unit,
-    stateResources: List<com.sbai.data.Resource>,
-    onOpenResourcesManager: () -> Unit,
-    subPagerState: androidx.compose.foundation.pager.PagerState,
-    subTab: Int,
-    onSelectSubTab: (Int) -> Unit,
-    tokens: com.sbai.ui.theme.SbStyleTokens,
+private fun RouteRuleCard(
+    index: Int,
+    rule: RouteRule,
+    isDragging: Boolean,
+    onToggle: () -> Unit,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit,
 ) {
-    // 第 1 页内部再分两页（可滑动切换）：路由规则 / DNS 规则。
-    // 两页各自是完整高度的可拖拽列表，不再挤压在同一屏。
-    Column(
-        modifier = Modifier.fillMaxSize().padding(horizontal = tokens.screenHorizontalPadding),
-    ) {
-        TabRow(selectedTabIndex = subTab) {
-            Tab(selected = subTab == 0, onClick = { onSelectSubTab(0) }, text = { Text("路由规则（${routeRules.size}）") })
-            Tab(selected = subTab == 1, onClick = { onSelectSubTab(1) }, text = { Text("DNS 规则（${dnsRules.size}）") })
-        }
-        HorizontalPager(state = subPagerState, modifier = Modifier.fillMaxSize()) { page ->
-            if (page == 0) {
-                RouteRulesSubPage(
-                    routeRules, routeRuleSets, autoRouteRules,
-                    onToggleRoute, onEditRoute, onDeleteRoute, onReorderRoute,
-                    onOpenRuleSetManager, stateResources, onOpenResourcesManager,
-                )
-            } else {
-                DnsRulesSubPage(
-                    dnsRules, autoDnsRules,
-                    onToggleDns, onEditDns, onDeleteDns, onReorderDns,
-                )
-            }
-        }
-    }
-}
-
-// 第 1 页 · 子页 A：路由规则（完整高度可拖拽列表）
-@Composable
-private fun RouteRulesSubPage(
-    routeRules: List<RouteRule>,
-    routeRuleSets: List<RouteRuleSet>,
-    autoRouteRules: List<RouteRule>,
-    onToggleRoute: (RouteRule) -> Unit,
-    onEditRoute: (RouteRule) -> Unit,
-    onDeleteRoute: (RouteRule) -> Unit,
-    onReorderRoute: (List<String>) -> Unit,
-    onOpenRuleSetManager: () -> Unit,
-    stateResources: List<com.sbai.data.Resource>,
-    onOpenResourcesManager: () -> Unit,
-) {
-    Column(Modifier.fillMaxSize()) {
-        Spacer(Modifier.height(8.dp))
-        Text(
-            "越靠上优先级越高（长按卡片拖动排序）",
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
-        )
-        DragDropLazyColumn(
-            items = routeRules,
-            keyOf = { it.id },
-            onMove = { from, to ->
-                val ids = routeRules.map { it.id }.toMutableList()
-                if (from in ids.indices && to in ids.indices) {
-                    val moved = ids.removeAt(from)
-                    ids.add(to, moved)
-                    onReorderRoute(ids)
-                }
-            },
-            onDragEnd = { keys -> onReorderRoute(keys.map { it.toString() }) },
-            modifier = Modifier.weight(1f),
-            contentBottomPadding = BottomBarClearance,
-            header = {
-                SbGroup(title = "") {
-                    item {
-                        SbItem(
-                            title = "规则集（${routeRuleSets.size}）",
-                            subtitle = "被路由规则按 tag 引用；本身不参与匹配顺序",
-                            icon = Icons.Filled.Dataset,
-                            onClick = onOpenRuleSetManager,
-                        )
-                    }
-                    item {
-                        SbItem(
-                            title = "IP 列表 / 资源（${stateResources.size}）",
-                            subtitle = "China IP、GeoIP、Hosts、规则集。启用的 China IP 会自动直连",
-                            icon = Icons.Filled.Settings,
-                            onClick = onOpenResourcesManager,
-                        )
-                    }
-                    if (routeRules.isEmpty()) {
-                        item {
-                            SbItem(
-                                title = "暂无路由规则",
-                                subtitle = "点右下角「添加路由规则」；域名/IP 一行一条",
-                            )
-                        }
-                    }
-                    if (autoRouteRules.isNotEmpty()) {
-                        item {
-                            SbItem(
-                                title = "自动 · fakeIP 段（只读）",
-                                subtitle = autoRouteRules.first().ipCidrs.joinToString(),
-                                trailing = { SbBadge("自动", MaterialTheme.colorScheme.tertiary) },
-                            )
-                        }
-                    }
-                }
-            },
-            footer = { Spacer(Modifier.height(12.dp)) },
-        ) { index, rule, isDragging ->
-            RouteRuleCard(index + 1, rule, isDragging,
-                onToggle = { onToggleRoute(rule) },
-                onEdit = { onEditRoute(rule) },
-                onDelete = { onDeleteRoute(rule) })
-        }
-    }
-}
-
-// 第 1 页 · 子页 B：DNS 规则（完整高度可拖拽列表）
-@Composable
-private fun DnsRulesSubPage(
-    dnsRules: List<DnsRule>,
-    autoDnsRules: List<DnsRule>,
-    onToggleDns: (DnsRule) -> Unit,
-    onEditDns: (DnsRule) -> Unit,
-    onDeleteDns: (DnsRule) -> Unit,
-    onReorderDns: (List<String>) -> Unit,
-) {
-    Column(Modifier.fillMaxSize()) {
-        Spacer(Modifier.height(8.dp))
-        Text(
-            "越靠上优先级越高（长按卡片拖动排序）",
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.secondary,
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
-        )
-        DragDropLazyColumn(
-            items = dnsRules,
-            keyOf = { it.id },
-            onMove = { from, to ->
-                val ids = dnsRules.map { it.id }.toMutableList()
-                if (from in ids.indices && to in ids.indices) {
-                    val moved = ids.removeAt(from)
-                    ids.add(to, moved)
-                    onReorderDns(ids)
-                }
-            },
-            onDragEnd = { keys -> onReorderDns(keys.map { it.toString() }) },
-            modifier = Modifier.weight(1f),
-            contentBottomPadding = BottomBarClearance,
-            header = {
-                if (dnsRules.isEmpty()) {
-                    SbGroup(title = "") {
-                        item {
-                            SbItem(
-                                title = "暂无手动 DNS 规则",
-                                subtitle = "路由规则指定的 DNS 会自动生成规则（见下方）",
-                                icon = Icons.Filled.Rule,
-                            )
-                        }
-                    }
-                }
-            },
-            footer = {
-                if (autoDnsRules.isNotEmpty()) {
-                    Text(
-                        "自动生成的规则（由路由规则推导，只读）",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.tertiary,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
-                    )
-                    autoDnsRules.forEach { rule ->
-                        AutoDnsRuleRow(rule)
-                        Spacer(Modifier.height(6.dp))
-                    }
-                }
-                Spacer(Modifier.height(20.dp))
-            },
-        ) { _, rule, isDragging ->
-            ManualDnsRuleRow(rule, isDragging,
-                onToggle = { onToggleDns(rule) },
-                onEdit = { onEditDns(rule) },
-                onDelete = { onDeleteDns(rule) })
-            Spacer(Modifier.height(8.dp))
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// 第 2 页：DNS 服务器 + DNS group
-// ---------------------------------------------------------------------------
-
-@Composable
-private fun PageDnsSettings(
-    dnsServers: List<DnsServer>,
-    dnsGroups: List<DnsGroup>,
-    customHosts: List<com.sbai.data.HostsEntry>,
-    cacheSettings: com.sbai.data.AppSettings,
-    onToggleServer: (DnsServer) -> Unit,
-    onEditServer: (DnsServer) -> Unit,
-    onEditGroup: (DnsGroup) -> Unit,
-    onEditHosts: (com.sbai.data.HostsEntry) -> Unit,
-    onDeleteHosts: (com.sbai.data.HostsEntry) -> Unit,
-    onUpdateSettings: (com.sbai.data.AppSettings) -> Unit,
-    tokens: com.sbai.ui.theme.SbStyleTokens,
-) {
-    LazyColumn(
-        modifier = Modifier.fillMaxSize().padding(horizontal = tokens.screenHorizontalPadding),
-        contentPadding = PaddingValues(bottom = BottomBarClearance),
-    ) {
-        item { Spacer(Modifier.height(16.dp)) }
-        item {
-            Text("DNS 服务器（${dnsServers.size}）",
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
-            )
-        }
-        item {
-            SbGroup(title = "") {
-                dnsServers.forEach { server ->
-                    item {
-                        SbItem(
-                            title = server.tag.ifBlank { "（未命名）" },
-                            subtitle = buildString {
-                                append(server.type.wireName)
-                                if (server.address.isNotBlank()) append(" · ${server.address}")
-                                server.detour?.let { append(" · 出口:$it") } ?: append(" · 无出口")
-                            },
-                            icon = Icons.Filled.Dns,
-                            onClick = { onEditServer(server) },
-                            trailing = {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    if (server.echEnabled) {
-                                        SbBadge("ECH", MaterialTheme.colorScheme.tertiary)
-                                        Spacer(Modifier.size(6.dp))
-                                    }
-                                    server.clientSubnet?.takeIf { it.isNotBlank() }?.let {
-                                        SbBadge("ECS", MaterialTheme.colorScheme.secondary)
-                                        Spacer(Modifier.size(6.dp))
-                                    }
-                                    Switch(checked = server.enabled, onCheckedChange = { onToggleServer(server) })
-                                }
-                            },
-                        )
-                    }
-                }
-                if (dnsServers.isEmpty()) {
-                    item {
-                        SbItem(
-                            title = "暂无 DNS 服务器",
-                            subtitle = "添加后可在路由规则 / DNS 规则中引用；出口可留空",
-                            icon = Icons.Filled.Dns,
-                        )
-                    }
-                }
-            }
-        }
-        item { Spacer(Modifier.height(20.dp)) }
-        item {
-            Text("DNS Group（${dnsGroups.size}）",
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.secondary,
-                modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
-            )
-        }
-        item {
-            SbGroup(title = "") {
-                dnsGroups.forEach { group ->
-                    item {
-                        SbItem(
-                            title = group.name.ifBlank { "（未命名）" },
-                            subtitle = group.serverTags.joinToString().ifBlank { "（空 group）" },
-                            icon = Icons.Filled.GroupWork,
-                            onClick = { onEditGroup(group) },
-                        )
-                    }
-                }
-                if (dnsGroups.isEmpty()) {
-                    item {
-                        SbItem(
-                            title = "暂无 DNS Group",
-                            subtitle = "group 是一组 DNS 的命名集合，供路由/DNS 规则引用",
-                            icon = Icons.Filled.GroupWork,
-                        )
-                    }
-                }
-            }
-        }
-        item { Spacer(Modifier.height(20.dp)) }
-        item {
-            Text("Hosts（${customHosts.size}）",
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.tertiary,
-                modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
-            )
-        }
-        item {
-            SbGroup(title = "") {
-                customHosts.forEach { entry ->
-                    item(key = entry.id) {
-                        SbItem(
-                            title = entry.host.ifBlank { "（空 host）" },
-                            subtitle = entry.ips.joinToString(" / ").ifBlank { "（无 IP）" },
-                            icon = Icons.Filled.Dns,
-                            onClick = { onEditHosts(entry) },
-                            trailing = {
-                                IconButton(onClick = { onDeleteHosts(entry) }) {
-                                    Icon(Icons.Filled.Delete, contentDescription = "删除",
-                                        tint = MaterialTheme.colorScheme.error)
-                                }
-                            },
-                        )
-                    }
-                }
-                item {
-                    SbItem(
-                        title = "添加 host 映射",
-                        subtitle = "静态域名 → IP，供 hosts 类型 DNS 服务器使用",
-                        icon = Icons.Filled.Add,
-                        onClick = { onEditHosts(com.sbai.data.HostsEntry()) },
-                    )
-                }
-            }
-        }
-        item { Spacer(Modifier.height(20.dp)) }
-        item {
-            Text("DNS 缓存",
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.secondary,
-                modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
-            )
-        }
-        item {
-            SbGroup(title = "") {
-                item {
-                    SbSwitchItem(
-                        title = "独立缓存（independent_cache）",
-                        subtitle = "每个 DNS 服务器独立缓存解析结果",
-                        icon = Icons.Filled.Dns,
-                        checked = cacheSettings.dnsIndependentCache,
-                    ) { onUpdateSettings(cacheSettings.copy(dnsIndependentCache = it)) }
-                }
-                item {
-                    SbSwitchItem(
-                        title = "缓存 fakeIP（store_fakeip）",
-                        subtitle = "fakeIP 结果写入缓存；关闭更真实，开启可加速重复查询",
-                        icon = Icons.Filled.Rule,
-                        checked = cacheSettings.dnsStoreFakeip,
-                    ) { onUpdateSettings(cacheSettings.copy(dnsStoreFakeip = it)) }
-                }
-            }
-        }
-// ---- 高级（fallback / fakeIP / nameserver-policy，参考 FlClash / Bettbox）----
-        item {
-            Text("DNS 高级",
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
-            )
-        }
-        item {
-            SbGroup(title = "Fallback DNS（${cacheSettings.dnsFallback.size}）") {
-                item {
-                    Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
-                        Text("主 DNS 未命中时回退到这些服务器", style = MaterialTheme.typography.labelLarge)
-                        Text("当 dnsNameserver 的解析结果判定为污染（fallback-filter）时自动切换",
-                            style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Spacer(Modifier.height(4.dp))
-                        var text by remember { mutableStateOf(cacheSettings.dnsFallback.joinToString("\n")) }
-                        OutlinedTextField(
-                            value = text, onValueChange = { text = it },
-                            modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp), maxLines = 20, textStyle = MaterialTheme.typography.bodySmall,
-                        )
-                        Spacer(Modifier.height(4.dp))
-                        val cnt = text.lines().count { it.trim().isNotEmpty() }
-                        Text("$cnt / 20 · 每行一个 DNS 地址（如 1.1.1.1 / https://dns.google/dns-query）",
-                            style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Spacer(Modifier.height(4.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            OutlinedButton(onClick = { onUpdateSettings(cacheSettings.copy(dnsFallback = text.lines().map { it.trim() }.filter { it.isNotEmpty() }.take(20))) }) { Text("保存服务器") }
-                            TextButton(onClick = { text = ""; onUpdateSettings(cacheSettings.copy(dnsFallback = emptyList())) }) { Text("清空") }
-                        }
-                    }
-                }
-            }
-        }
-        item { SbSpacer() }
-        item {
-            SbGroup(title = "Fallback Filter") {
-                item {
-                    Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
-                        SbSwitchItem(title = "GeoIP 污染检测",
-                            subtitle = "非 ${cacheSettings.dnsFallbackFilter.geoipCode} IP 视为污染（参考 Clash fallback-filter.geoip）",
-                            checked = cacheSettings.dnsFallbackFilter.geoip) { onUpdateSettings(cacheSettings.copy(dnsFallbackFilter = cacheSettings.dnsFallbackFilter.copy(geoip = it))) }
-                        Spacer(Modifier.height(4.dp))
-                        OutlinedTextField(value = cacheSettings.dnsFallbackFilter.geoipCode,
-                            onValueChange = { onUpdateSettings(cacheSettings.copy(dnsFallbackFilter = cacheSettings.dnsFallbackFilter.copy(geoipCode = it.trim().uppercase()))) },
-                            label = { Text("GeoIP 代码（默认 CN）") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                        Spacer(Modifier.height(8.dp))
-                        var geositeText by remember { mutableStateOf(cacheSettings.dnsFallbackFilter.geosite.joinToString("\n")) }
-                        Text("命中这些 geosite 时使用 fallback（如 gfw）", style = MaterialTheme.typography.labelSmall)
-                        OutlinedTextField(value = geositeText, onValueChange = { geositeText = it },
-                            modifier = Modifier.fillMaxWidth().heightIn(min = 32.dp), maxLines = 20, textStyle = MaterialTheme.typography.bodySmall)
-                        Spacer(Modifier.height(4.dp))
-                        val gc = geositeText.lines().count { it.trim().isNotEmpty() }
-                        Text("$gc 条 · 示例：gfw、google、youtube", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Spacer(Modifier.height(8.dp))
-                        var ipcidrText by remember { mutableStateOf(cacheSettings.dnsFallbackFilter.ipcidr.joinToString("\n")) }
-                        Text("命中这些 IP 段时认为污染（如 240.0.0.0/4）", style = MaterialTheme.typography.labelSmall)
-                        OutlinedTextField(value = ipcidrText, onValueChange = { ipcidrText = it },
-                            modifier = Modifier.fillMaxWidth().heightIn(min = 32.dp), maxLines = 20, textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace))
-                        Spacer(Modifier.height(4.dp))
-                        val ic = ipcidrText.lines().count { it.trim().isNotEmpty() }
-                        Text("$ic 条", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Spacer(Modifier.height(8.dp))
-                        var domainText by remember { mutableStateOf(cacheSettings.dnsFallbackFilter.domain.joinToString("\n")) }
-                        Text("命中这些域名时跳过 fallback（直连），用主 DNS 结果", style = MaterialTheme.typography.labelSmall)
-                        OutlinedTextField(value = domainText, onValueChange = { domainText = it },
-                            modifier = Modifier.fillMaxWidth().heightIn(min = 32.dp), maxLines = 20, textStyle = MaterialTheme.typography.bodySmall)
-                        Spacer(Modifier(height = 4.dp))
-                        val dc = domainText.lines().count { it.trim().isNotEmpty() }
-                        Text("$dc 条", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Spacer(Modifier(height = 8.dp))
-                        OutlinedButton(onClick = { onUpdateSettings(cacheSettings.copy(dnsFallbackFilter = cacheSettings.dnsFallbackFilter.copy(geosite = geositeText.lines().map { it.trim() }.filter { it.isNotEmpty() }, ipcidr = ipcidrText.lines().map { it.trim() }.filter { it.isNotEmpty() }, domain = domainText.lines().map { it.trim() }.filter { it.isNotEmpty() }))) }) { Text("保存 filter") }
-                    }
-                }
-            }
-        }
-        item { SbSpacer() }
-        item {
-            SbGroup(title = "fakeIP 配置") {
-                item {
-                    Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
-                        Text("fakeIP 模式（enhanced_mode）", style = MaterialTheme.typography.labelLarge)
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            listOf("fakeip", "redir-host", "mapping").forEach { m ->
-                                FilterChip(selected = cacheSettings.dnsEnhancedMode == m, onClick = { onUpdateSettings(cacheSettings.copy(dnsEnhancedMode = m)) }, label = { Text(m) })
-                            }
-                        }
-                        Spacer(Modifier.height(4.dp))
-                        OutlinedTextField(value = cacheSettings.dnsFakeIpRange,
-                            onValueChange = { onUpdateSettings(cacheSettings.copy(dnsFakeIpRange = it.trim())) },
-                            label = { Text("fakeIP 范围（默认 198.18.0.1/16）") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                        Spacer(Modifier(height = 4.dp))
-                        var fakeipText by remember { mutableStateOf(cacheSettings.dnsFakeIpFilter.joinToString("\n")) }
-                        Text("fakeIP 排除域名（不走 fakeIP，返回真实 IP）", style = MaterialTheme.typography.labelSmall)
-                        OutlinedTextField(value = fakeipText, onValueChange = { fakeipText = it },
-                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp), maxLines = 50, textStyle = MaterialTheme.typography.bodySmall)
-                        Spacer(Modifier(height = 4.dp))
-                        val fc = fakeipText.lines().count { it.trim().isNotEmpty() }
-                        Text("$fc 条 · 示例：+.local / stun.* / mysql.*", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Spacer(Modifier(height = 4.dp))
-                        OutlinedButton(onClick = { onUpdateSettings(cacheSettings.copy(dnsFakeIpFilter = fakeipText.lines().map { it.trim() }.filter { it.isNotEmpty() })) }) { Text("保存 fakeIP") }
-                    }
-                }
-            }
-        }
-        item { SbSpacer() }
-        item {
-            SbGroup(title = "nameserver-policy") {
-                item {
-                    Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
-                        Text("按域名指定 DNS 服务器（key=value，每行一条）", style = MaterialTheme.typography.labelLarge)
-                        Text("格式："*.lan"=dns-local；优先级高于默认 DNS；支持通配符 / geosite:",
-                            style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Spacer(Modifier(height = 4.dp))
-                        var policyText by remember { mutableStateOf(cacheSettings.dnsNameserverPolicy.map { "${it.key}=${it.value}" }.joinToString("\n")) }
-                        OutlinedTextField(value = policyText, onValueChange = { policyText = it },
-                            modifier = Modifier.fillMaxWidth().heightIn(min = 96.dp), minLines = 5, maxLines = 100,
-                            textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace))
-                        Spacer(Modifier(height = 4.dp))
-                        val pc = policyText.lines().count { it.trim().isNotEmpty() && "=" in it }
-                        Text("$pc 条策略", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Spacer(Modifier(height = 8.dp))
-                        OutlinedButton(onClick = {
-                            val policies = policyText.lines().map { it.trim() }.filter { it.isNotEmpty() && "=" in it }
-                                .associate { line -> val parts = line.split("="); parts.first() to parts.drop(1).joinToString("=") }
-                            onUpdateSettings(cacheSettings.copy(dnsNameserverPolicy = policies))
-                        }) { Text("保存策略") }
-                    }
-                }
-            }
-        }
-        item { Spacer(Modifier.height(24.dp)) }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// 卡片 / 汇总函数（复用原逻辑）
-// ---------------------------------------------------------------------------
-
-@Composable
-private fun RouteRuleCard(index: Int, rule: RouteRule, isDragging: Boolean,
-    onToggle: () -> Unit, onEdit: () -> Unit, onDelete: () -> Unit) {
     SbGroup(title = "") {
         item {
             Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Filled.DragIndicator, contentDescription = "长按拖动排序",
-                        tint = if (isDragging) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(20.dp))
+                    Icon(
+                        Icons.Filled.DragIndicator,
+                        contentDescription = "长按拖动排序",
+                        tint = if (isDragging) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp),
+                    )
                     Spacer(Modifier.size(8.dp))
-                    Text("#$index", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                    Text(
+                        "#$index",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
                     Spacer(Modifier.size(8.dp))
-                    ActionBadge(rule.action)
+                    ActionBadge(rule.action, rule.outboundTag)
                     Spacer(Modifier.size(8.dp))
-                    Text(rule.name.ifBlank { ruleSummary(rule) }, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f), maxLines = 1)
+                    Text(
+                        rule.name.ifBlank { ruleSummary(rule) },
+                        style = MaterialTheme.typography.bodyLarge,
+                        modifier = Modifier.weight(1f),
+                        maxLines = 1,
+                    )
                     Switch(checked = rule.enabled, onCheckedChange = { onToggle() })
                 }
-                Text(ruleSummary(rule), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 3, modifier = Modifier.padding(start = 36.dp))
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 28.dp)) {
+
+                Text(
+                    ruleSummary(rule),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 3,
+                    modifier = Modifier.padding(start = 36.dp),
+                )
+
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(start = 28.dp),
+                ) {
                     SbBadge(rule.logic.displayName, MaterialTheme.colorScheme.tertiary)
-                    if (rule.invert) { Spacer(Modifier.size(6.dp)); SbBadge("invert", MaterialTheme.colorScheme.tertiary) }
-                    rule.dnsTag?.let { Spacer(Modifier.size(6.dp)); SbBadge("DNS:$it", MaterialTheme.colorScheme.secondary) }
-                    if (!rule.ipv4 || !rule.ipv6) { Spacer(Modifier.size(6.dp)); SbBadge(if (rule.ipv4) "仅IPv4" else "仅IPv6", MaterialTheme.colorScheme.secondary) }
+                    if (rule.invert) {
+                        Spacer(Modifier.size(6.dp))
+                        SbBadge("invert", MaterialTheme.colorScheme.tertiary)
+                    }
+                    rule.dnsTag?.let {
+                        Spacer(Modifier.size(6.dp))
+                        SbBadge("DNS:$it", MaterialTheme.colorScheme.secondary)
+                    }
+                    if (!rule.ipv4 || !rule.ipv6) {
+                        Spacer(Modifier.size(6.dp))
+                        SbBadge(if (rule.ipv4) "仅IPv4" else "仅IPv6", MaterialTheme.colorScheme.secondary)
+                    }
                     Spacer(Modifier.weight(1f))
                     TextButton(onClick = onEdit) { Text("编辑") }
-                    IconButton(onClick = onDelete) { Icon(Icons.Filled.Delete, contentDescription = "删除", tint = MaterialTheme.colorScheme.error) }
+                    IconButton(onClick = onDelete) {
+                        Icon(Icons.Filled.Delete, contentDescription = "删除", tint = MaterialTheme.colorScheme.error)
+                    }
                 }
             }
         }
@@ -903,17 +312,50 @@ private fun RouteRuleCard(index: Int, rule: RouteRule, isDragging: Boolean,
 }
 
 @Composable
-private fun ActionBadge(action: RuleAction) {
-    val (label, color) = when (action) {
-        RuleAction.ROUTE_PROXY -> "代理" to MaterialTheme.colorScheme.primary
-        RuleAction.ROUTE_DIRECT -> "直连" to MaterialTheme.colorScheme.secondary
-        RuleAction.REJECT -> "拦截" to MaterialTheme.colorScheme.error
-        RuleAction.SNIFF -> "嗅探" to MaterialTheme.colorScheme.tertiary
-        RuleAction.RESOLVE -> "解析" to MaterialTheme.colorScheme.tertiary
-        RuleAction.HIJACK_DNS -> "劫持DNS" to MaterialTheme.colorScheme.tertiary
-        RuleAction.ROUTE_OPTIONS -> "路由选项" to MaterialTheme.colorScheme.tertiary
+private fun ActionBadge(action: RuleAction, target: String = "") {
+    val label = when (action) {
+        RuleAction.ROUTE_PROXY -> if (target.isBlank()) "代理" else "代理:$target"
+        RuleAction.ROUTE_DIRECT -> if (target.isBlank()) "直连" else "直连:$target"
+        RuleAction.REJECT -> "拦截"
+        RuleAction.SNIFF -> "嗅探"
+        RuleAction.RESOLVE -> "解析"
+        RuleAction.HIJACK_DNS -> "劫持DNS"
+        RuleAction.ROUTE_OPTIONS -> "路由选项"
+    }
+    val color = when (action) {
+        RuleAction.ROUTE_PROXY -> MaterialTheme.colorScheme.primary
+        RuleAction.ROUTE_DIRECT -> MaterialTheme.colorScheme.secondary
+        RuleAction.REJECT -> MaterialTheme.colorScheme.error
+        else -> MaterialTheme.colorScheme.tertiary
     }
     SbBadge(label, color)
+}
+
+/** 收集当前可用的 outbound 选项（节点 tag + 组 tag + 内置 tag），逻辑与 SingBoxConfigGenerator 保持一致 */
+private fun collectOutboundOptions(state: com.sbai.data.AppState): List<String> {
+    val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+    val nodeTags = state.proxyNodes.filter { it.enabled && it.outboundJson.isNotBlank() }.mapNotNull { node ->
+        runCatching {
+            json.parseToJsonElement(node.outboundJson).jsonObject["tag"]?.jsonPrimitive?.content
+        }.getOrNull()
+    }.filter { it.isNotBlank() }
+
+    val lb = state.loadBalance
+    val result = nodeTags.toMutableList()
+    if (lb.enabled) {
+        result.add(if (lb.mode == com.sbai.data.LoadBalanceMode.MANUAL) "lb-selector" else "lb")
+    }
+    if (!lb.enabled && nodeTags.size > 1) result.add("proxy")
+    val finalProxyTag = when {
+        lb.enabled && lb.mode == com.sbai.data.LoadBalanceMode.MANUAL -> "lb-selector"
+        lb.enabled -> "lb"
+        nodeTags.size > 1 -> "proxy"
+        else -> "direct"
+    }
+    if (lb.autoEnabled && (finalProxyTag == "lb" || finalProxyTag == "proxy")) result.add("auto")
+    result.add("direct")
+    result.add("block")
+    return result.distinct()
 }
 
 private fun ruleSummary(rule: RouteRule): String = buildList {
@@ -928,68 +370,8 @@ private fun ruleSummary(rule: RouteRule): String = buildList {
     if (rule.ports.isNotEmpty()) add("port:${rule.ports.joinToString()}")
 }.joinToString(" ").ifBlank { "（空规则 = 匹配全部）" }
 
-@Composable
-private fun ManualDnsRuleRow(rule: DnsRule, isDragging: Boolean,
-    onToggle: () -> Unit, onEdit: () -> Unit, onDelete: () -> Unit) {
-    SbGroup(title = "") {
-        item {
-            Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Filled.DragIndicator, contentDescription = "长按拖动排序",
-                        tint = if (isDragging) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(20.dp))
-                    Spacer(Modifier.size(8.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(rule.name.ifBlank { dnsRuleSummary(rule) }, style = MaterialTheme.typography.titleSmall, maxLines = 1)
-                        Text("→ ${rule.server.ifBlank { "（未指定）" }}${if (rule.ipStrategy.isNotBlank()) " · ${rule.ipStrategy}" else ""}",
-                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
-                    }
-                    Switch(checked = rule.enabled, onCheckedChange = { onToggle() })
-                }
-                Text(dnsRuleSummary(rule), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, modifier = Modifier.padding(start = 36.dp))
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 28.dp)) {
-                    if (rule.disableCache) SbBadge("禁缓存", MaterialTheme.colorScheme.tertiary)
-                    rule.rewriteTtl?.let { Spacer(Modifier.size(6.dp)); SbBadge("TTL=$it", MaterialTheme.colorScheme.tertiary) }
-                    Spacer(Modifier.weight(1f))
-                    TextButton(onClick = onEdit) { Text("编辑") }
-                    IconButton(onClick = onDelete) { Icon(Icons.Filled.Delete, contentDescription = "删除", tint = MaterialTheme.colorScheme.error) }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun AutoDnsRuleRow(rule: DnsRule) {
-    SbGroup(title = "") {
-        item {
-            Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text(rule.name, style = MaterialTheme.typography.titleSmall, maxLines = 1)
-                    Text("${dnsRuleSummary(rule)} → ${rule.server}" +
-                        if (rule.ipStrategy.isNotBlank()) " · ${rule.ipStrategy}" else "",
-                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2)
-                }
-                SbBadge("自动", MaterialTheme.colorScheme.tertiary)
-            }
-        }
-    }
-}
-
-private fun dnsRuleSummary(rule: DnsRule): String = buildList {
-    if (rule.domains.isNotEmpty()) add("域名×${rule.domains.size}")
-    if (rule.domainSuffixes.isNotEmpty()) add("后缀×${rule.domainSuffixes.size}")
-    if (rule.domainKeywords.isNotEmpty()) add("关键词×${rule.domainKeywords.size}")
-    if (rule.domainRegexes.isNotEmpty()) add("正则×${rule.domainRegexes.size}")
-    if (rule.ruleSetTags.isNotEmpty()) add("规则集[${rule.ruleSetTags.joinToString()}]")
-    if (rule.ipCidrs.isNotEmpty()) add("IP×${rule.ipCidrs.size}")
-    if (rule.networks.isNotEmpty()) add("network:${rule.networks.joinToString()}")
-    if (rule.ports.isNotEmpty()) add("port:${rule.ports.joinToString()}")
-    if (rule.queryTypes.isNotEmpty()) add("type:${rule.queryTypes.joinToString()}")
-}.joinToString(" ").ifBlank { "（匹配全部查询）" }
-
 // ---------------------------------------------------------------------------
-// 路由规则编辑器（二级页面，全量字段）
+// 路由规则编辑器（sb-AI 全量字段，按类别折叠）
 // ---------------------------------------------------------------------------
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
@@ -997,6 +379,7 @@ private fun dnsRuleSummary(rule: DnsRule): String = buildList {
 private fun RouteRuleEditorDialog(
     initial: RouteRule,
     dnsOptions: List<String>,
+    outboundOptions: List<String>,
     ruleSetTags: List<String>,
     onDismiss: () -> Unit,
     onSave: (RouteRule) -> Unit,
@@ -1004,6 +387,7 @@ private fun RouteRuleEditorDialog(
 ) {
     var name by remember { mutableStateOf(initial.name) }
     var action by remember { mutableStateOf(initial.action) }
+    var outboundTag by remember { mutableStateOf(initial.outboundTag) }
     var domains by remember { mutableStateOf(initial.domains.joinToString("\n")) }
     var suffixes by remember { mutableStateOf(initial.domainSuffixes.joinToString("\n")) }
     var keywords by remember { mutableStateOf(initial.domainKeywords.joinToString("\n")) }
@@ -1036,16 +420,16 @@ private fun RouteRuleEditorDialog(
     var ipv4 by remember { mutableStateOf(initial.ipv4) }
     var ipv6 by remember { mutableStateOf(initial.ipv6) }
     var dnsTag by remember { mutableStateOf(initial.dnsTag ?: "") }
-    var showAppPicker by remember { mutableStateOf(false) }
     var showJsonPaste by remember { mutableStateOf(false) }
     var jsonError by remember { mutableStateOf<String?>(null) }
+    var showAppPicker by remember { mutableStateOf(false) }
 
     val isBlock = action == RuleAction.REJECT
     val hasDomains = listOf(domains, suffixes, keywords, regexes).any { it.isNotBlank() }
     val ipOnly = !hasDomains && (ipCidrs.isNotBlank() || sets.isNotBlank())
 
     fun applyAll(r: RouteRule) {
-        name = r.name; action = r.action
+        name = r.name; action = r.action; outboundTag = r.outboundTag
         domains = r.domains.joinToString("\n"); suffixes = r.domainSuffixes.joinToString("\n")
         keywords = r.domainKeywords.joinToString("\n"); regexes = r.domainRegexes.joinToString("\n")
         ipCidrs = r.ipCidrs.joinToString("\n"); sets = r.ruleSetTags.joinToString("\n")
@@ -1064,29 +448,51 @@ private fun RouteRuleEditorDialog(
         dnsTag = r.dnsTag ?: ""
     }
 
+    // 保存逻辑（整页顶部按钮用）
     fun doSave() {
-        onSave(initial.copy(
-            name = name.trim(), action = action,
-            domains = domains.toLines(), domainSuffixes = suffixes.toLines(),
-            domainKeywords = keywords.toLines(), domainRegexes = regexes.toLines(),
-            ipCidrs = ipCidrs.toLines(), ruleSetTags = sets.toLines(),
-            networks = networks.toList().sorted(), protocols = protocols.toList().sorted(),
-            ports = ports.toLines().mapNotNull { it.toIntOrNull() }, portRanges = portRanges.toLines(),
-            sourceIpCidrs = sourceIpCidrs.toLines(), sourcePorts = sourcePorts.toLines().mapNotNull { it.toIntOrNull() },
-            sourcePortRanges = sourcePortRanges.toLines(),
-            packageNames = packageNames.toLines(), processNames = processNames.toLines(),
-            processPaths = processPaths.toLines(), users = users.toLines(),
-            userIds = userIds.toLines().mapNotNull { it.toIntOrNull() },
-            networkTypes = networkTypes.toList().sorted(),
-            wifiSsids = wifiSsids.toLines(), wifiBssids = wifiBssids.toLines(),
-            inbounds = inbounds.toLines(), clashMode = clashMode.trim(),
-            sourceIpIsPrivate = sourceIpIsPrivate, ipIsPrivate = ipIsPrivate,
-            networkIsExpensive = networkIsExpensive, rejectMethod = rejectMethod,
-            logic = logic, invert = invert, ipv4 = ipv4, ipv6 = ipv6,
-            dnsTag = dnsTag.ifBlank { null },
-        ))
+        onSave(
+            initial.copy(
+                name = name.trim(),
+                action = action,
+                outboundTag = outboundTag.trim(),
+                domains = domains.toLines(),
+                domainSuffixes = suffixes.toLines(),
+                domainKeywords = keywords.toLines(),
+                domainRegexes = regexes.toLines(),
+                ipCidrs = ipCidrs.toLines(),
+                ruleSetTags = sets.toLines(),
+                networks = networks.toList().sorted(),
+                protocols = protocols.toList().sorted(),
+                ports = ports.toLines().mapNotNull { it.toIntOrNull() },
+                portRanges = portRanges.toLines(),
+                sourceIpCidrs = sourceIpCidrs.toLines(),
+                sourcePorts = sourcePorts.toLines().mapNotNull { it.toIntOrNull() },
+                sourcePortRanges = sourcePortRanges.toLines(),
+                packageNames = packageNames.toLines(),
+                processNames = processNames.toLines(),
+                processPaths = processPaths.toLines(),
+                users = users.toLines(),
+                userIds = userIds.toLines().mapNotNull { it.toIntOrNull() },
+                networkTypes = networkTypes.toList().sorted(),
+                wifiSsids = wifiSsids.toLines(),
+                wifiBssids = wifiBssids.toLines(),
+                inbounds = inbounds.toLines(),
+                clashMode = clashMode.trim(),
+                sourceIpIsPrivate = sourceIpIsPrivate,
+                ipIsPrivate = ipIsPrivate,
+                networkIsExpensive = networkIsExpensive,
+                rejectMethod = rejectMethod,
+                logic = logic,
+                invert = invert,
+                ipv4 = ipv4,
+                ipv6 = ipv6,
+                dnsTag = dnsTag.ifBlank { null },
+            ),
+        )
     }
 
+    // 整页编辑器（不再是弹窗）：TopAppBar 返回 + 顶部保存
+    // #6：拦截系统返回/侧滑退出，回到路由列表而不是首页
     BackHandler(enabled = true) { BottomBarController.show(); onDismiss() }
     RestoreBottomBarOnDispose()
 
@@ -1094,153 +500,419 @@ private fun RouteRuleEditorDialog(
         topBar = {
             TopAppBar(
                 title = { Text(if (initial.name.isBlank() && initial.domains.isEmpty()) "添加路由规则" else "编辑路由规则") },
-                navigationIcon = { IconButton(onClick = { BottomBarController.show(); onDismiss() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回") } },
-                actions = { TextButton(onClick = { doSave() }) { Text("保存") } },
+                navigationIcon = {
+                    IconButton(onClick = { BottomBarController.show(); onDismiss() }) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                    }
+                },
+                actions = {
+                    TextButton(onClick = { doSave() }) { Text("保存") }
+                },
             )
         },
     ) { padding ->
-        Column(modifier = Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("规则名称（可选）") }, singleLine = true, modifier = Modifier.weight(1f))
+                OutlinedTextField(
+                    value = name, onValueChange = { name = it },
+                    label = { Text("规则名称（可选）") }, singleLine = true,
+                    modifier = Modifier.weight(1f),
+                )
                 Spacer(Modifier.size(8.dp))
-                IconButton(onClick = { showJsonPaste = true }) { Icon(Icons.Filled.ContentPaste, contentDescription = "粘贴 JSON") }
-            }
-            Text("动作", style = MaterialTheme.typography.labelLarge)
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { RuleAction.entries.forEach { a -> FilterChip(selected = action == a, onClick = { action = a }, label = { Text(a.displayName) }) } }
-            if (isBlock) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("拦截方式：", style = MaterialTheme.typography.labelLarge)
-                    Spacer(Modifier.size(8.dp))
-                    FilterChip(selected = rejectMethod == "default", onClick = { rejectMethod = "default" }, label = { Text("拒绝") })
-                    Spacer(Modifier.size(6.dp))
-                    FilterChip(selected = rejectMethod == "drop", onClick = { rejectMethod = "drop" }, label = { Text("丢弃") })
+                // 小图标按钮（不占宽度），名称框获得更多空间
+                IconButton(onClick = { showJsonPaste = true }) {
+                    Icon(Icons.Filled.ContentPaste, contentDescription = "粘贴 JSON")
                 }
             }
-            EditorSection("域名") { MultiLineField("域名（一行一条）", domains) { domains = it }; MultiLineField("域名后缀（一行一条）", suffixes) { suffixes = it }; MultiLineField("域名关键词（一行一条）", keywords) { keywords = it }; MultiLineField("域名正则（一行一条）", regexes) { regexes = it } }
-            EditorSection("目标 IP / 规则集") { MultiLineField("目标 IP / CIDR（一行一条）", ipCidrs) { ipCidrs = it }; MultiLineField("规则集 tag 或 URL（一行一条；URL 自动建远程规则集）", sets) { sets = it }; TextButton(onClick = onCreateRuleSet) { Text("＋ 新建规则集") }; Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(checked = ipIsPrivate, onCheckedChange = { ipIsPrivate = it }); Text("目标 IP 是私有地址（ip_is_private）") } }
-            EditorSection("源（发起方）") { MultiLineField("源 IP / CIDR（一行一条）", sourceIpCidrs) { sourceIpCidrs = it }; MultiLineField("源端口（一行一个）", sourcePorts) { sourcePorts = it }; MultiLineField("源端口段（一行一条，如 8000:9000）", sourcePortRanges) { sourcePortRanges = it }; Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(checked = sourceIpIsPrivate, onCheckedChange = { sourceIpIsPrivate = it }); Text("源 IP 是私有地址") } }
-            EditorSection("传输") {
-                Text("network（可多选：tcp / udp / icmp）", style = MaterialTheme.typography.labelLarge)
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { NETWORK_OPTIONS.forEach { opt -> FilterChip(selected = opt in networks, onClick = { networks = if (opt in networks) networks - opt else networks + opt }, label = { Text(opt) }) } }
-                Text("protocol（可多选，依赖 sniff）", style = MaterialTheme.typography.labelLarge)
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { PROTOCOL_OPTIONS.forEach { opt -> FilterChip(selected = opt in protocols, onClick = { protocols = if (opt in protocols) protocols - opt else protocols + opt }, label = { Text(opt) }) } }
-                MultiLineField("目标端口（一行一个）", ports) { ports = it }
-                MultiLineField("目标端口段（一行一条，如 8000:9000）", portRanges) { portRanges = it }
-            }
-            EditorSection("应用 / 进程") {
-                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text("应用包名（${packageNames.toLines().size}）", style = MaterialTheme.typography.labelLarge)
-                        Text("无需 root：通过 Android VPN API 解析连接归属 UID", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
-                        if (packageNames.isNotBlank()) Text(packageNames.toLines().take(3).joinToString(", ") + if (packageNames.toLines().size > 3) " …" else "", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2)
+
+                Text("动作", style = MaterialTheme.typography.labelLarge)
+                // 7 个动作放不下 segmented 按钮，改用 FlowRow 多选 chips（单选）
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    RuleAction.entries.forEach { a ->
+                        FilterChip(
+                            selected = action == a,
+                            onClick = { action = a },
+                            label = { Text(a.displayName) },
+                        )
                     }
-                    Button(onClick = { showAppPicker = true }) { Text("选择应用") }
                 }
-                Text("sb-AI 不集成 root：Android 上「应用包名」即进程身份（VPN API 解析 UID），无需进程名/路径/user 字段。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (isBlock) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("拦截方式：", style = MaterialTheme.typography.labelLarge)
+                        Spacer(Modifier.size(8.dp))
+                        FilterChip(selected = rejectMethod == "default", onClick = { rejectMethod = "default" }, label = { Text("拒绝") })
+                        Spacer(Modifier.size(6.dp))
+                        FilterChip(selected = rejectMethod == "drop", onClick = { rejectMethod = "drop" }, label = { Text("丢弃") })
+                    }
+                }
+
+                // 路由目标 (outbound tag)：proxy/direct 动作下可选特定出口，留空则跟随默认
+                if (action in setOf(RuleAction.ROUTE_PROXY, RuleAction.ROUTE_DIRECT)) {
+                    Text("路由目标 (outbound)（可选，留空 = 跟随默认）", style = MaterialTheme.typography.labelLarge)
+                    OutboundDropdown(
+                        value = outboundTag,
+                        options = outboundOptions,
+                        onChange = { outboundTag = it },
+                    )
+                    Text(
+                        "留空时：代理动作 → 用入口 tag（单节点/自动/负载均衡）；直连动作 → direct。填写后可定向到具体节点或 LB 组。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+
+                EditorSection("域名") {
+                    MultiLineField("域名（一行一条）", domains) { domains = it }
+                    MultiLineField("域名后缀（一行一条）", suffixes) { suffixes = it }
+                    MultiLineField("域名关键词（一行一条）", keywords) { keywords = it }
+                    MultiLineField("域名正则（一行一条）", regexes) { regexes = it }
+                }
+
+                EditorSection("目标 IP / 规则集") {
+                    MultiLineField("目标 IP / CIDR（一行一条）", ipCidrs) { ipCidrs = it }
+                    MultiLineField("规则集 tag 或 URL（一行一条；URL 自动建远程规则集）", sets) { sets = it }
+                    TextButton(onClick = onCreateRuleSet) { Text("＋ 新建规则集") }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = ipIsPrivate, onCheckedChange = { ipIsPrivate = it })
+                        Text("目标 IP 是私有地址（ip_is_private）")
+                    }
+                }
+
+                EditorSection("源（发起方）") {
+                    Text(
+                        "源 IP / 源端口在 Android 无 root 时不生效（内核无法匹配发起方）；sb-AI 不集成 root，保留仅用于导入/导出兼容。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    MultiLineField("源 IP / CIDR（一行一条，需 root）", sourceIpCidrs) { sourceIpCidrs = it }
+                    MultiLineField("源端口（一行一个，需 root）", sourcePorts) { sourcePorts = it }
+                    MultiLineField("源端口段（一行一条，如 8000:9000，需 root）", sourcePortRanges) { sourcePortRanges = it }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = sourceIpIsPrivate, onCheckedChange = { sourceIpIsPrivate = it })
+                        Text("源 IP 是私有地址")
+                    }
+                }
+
+                EditorSection("传输") {
+                    Text("network（可多选：tcp / udp / icmp）", style = MaterialTheme.typography.labelLarge)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        NETWORK_OPTIONS.forEach { opt ->
+                            FilterChip(
+                                selected = opt in networks,
+                                onClick = { networks = if (opt in networks) networks - opt else networks + opt },
+                                label = { Text(opt) },
+                            )
+                        }
+                    }
+                    Text("protocol（可多选，依赖 sniff）", style = MaterialTheme.typography.labelLarge)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        PROTOCOL_OPTIONS.forEach { opt ->
+                            FilterChip(
+                                selected = opt in protocols,
+                                onClick = { protocols = if (opt in protocols) protocols - opt else protocols + opt },
+                                label = { Text(opt) },
+                            )
+                        }
+                    }
+                    MultiLineField("目标端口（一行一个）", ports) { ports = it }
+                    MultiLineField("目标端口段（一行一条，如 8000:9000）", portRanges) { portRanges = it }
+                }
+
+                EditorSection("应用 / 进程") {
+                    // 应用包名：改为选择器（不再手动复制粘贴包名）
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                "应用包名（${packageNames.toLines().size}）",
+                                style = MaterialTheme.typography.labelLarge,
+                            )
+                            Text(
+                                "无需 root：通过 Android VPN API 解析连接归属 UID",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.secondary,
+                            )
+                            if (packageNames.isNotBlank()) {
+                                Text(
+                                    packageNames.toLines().take(3).joinToString(", ") +
+                                        if (packageNames.toLines().size > 3) " …" else "",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 2,
+                                )
+                            }
+                        }
+                        Button(onClick = { showAppPicker = true }) { Text("选择应用") }
+                    }
+
+                    // sb-AI 不集成 root / Magisk 功能：进程级字段（process_name / process_path /
+                    // user / user_id）在 Android 无 root 时不生效，UI 不暴露。
+                    // Android 上包名即进程身份，使用应用包名选择器即可等价替代。
+                }
+
+                EditorSection("网络环境") {
+                    Text("网络类型（可多选）", style = MaterialTheme.typography.labelLarge)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf("wifi", "cellular", "ethernet").forEach { opt ->
+                            FilterChip(
+                                selected = opt in networkTypes,
+                                onClick = { networkTypes = if (opt in networkTypes) networkTypes - opt else networkTypes + opt },
+                                label = { Text(opt) },
+                            )
+                        }
+                    }
+                    MultiLineField("WiFi SSID（一行一条）", wifiSsids) { wifiSsids = it }
+                    MultiLineField("WiFi BSSID（一行一条）", wifiBssids) { wifiBssids = it }
+                    MultiLineField("入站 tag（一行一条）", inbounds) { inbounds = it }
+                    OutlinedTextField(
+                        value = clashMode, onValueChange = { clashMode = it },
+                        label = { Text("Clash 模式（可选，如 rule/global/direct）") },
+                        singleLine = true, modifier = Modifier.fillMaxWidth(),
+                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = networkIsExpensive, onCheckedChange = { networkIsExpensive = it })
+                        Text("计费网络（network_is_expensive）")
+                    }
+                }
+
+                EditorSection("逻辑运算") {
+                    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                        RuleLogic.entries.forEachIndexed { i, l ->
+                            SegmentedButton(
+                                selected = logic == l,
+                                onClick = { logic = l },
+                                shape = SegmentedButtonDefaults.itemShape(index = i, count = RuleLogic.entries.size),
+                            ) { Text(if (l == RuleLogic.AND) "AND" else "OR") }
+                        }
+                    }
+                    Text(
+                        if (logic == RuleLogic.AND) {
+                            "AND：上面所有字段类别都要满足（sing-box 单条 rule 的默认语义）"
+                        } else {
+                            "OR：各类别条件中任一类满足即命中"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = invert, onCheckedChange = { invert = it })
+                        Text("invert（对整体取反）")
+                    }
+                }
+
+                EditorSection("IP 版本（影响 DNS 解析策略，默认全选）") {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = ipv4, onCheckedChange = { ipv4 = it })
+                        Text("IPv4")
+                        Spacer(Modifier.padding(8.dp))
+                        Checkbox(checked = ipv6, onCheckedChange = { ipv6 = it })
+                        Text("IPv6")
+                    }
+                }
+
+                if (!isBlock && !ipOnly) {
+                    EditorSection("DNS 联动") {
+                        DnsDropdown(value = dnsTag, options = dnsOptions, onChange = { dnsTag = it })
+                        Text(
+                            "选择 DNS / DNS group 后将自动为本规则生成一条 DNS 规则；" +
+                                "若同时取消 IPv4/IPv6 之一，也只生成一条合并规则。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                } else if (isBlock) {
+                    Text("拦截类规则不生成 DNS 联动规则。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                } else {
+                    Text("纯 IP / 远程规则集规则不生成 DNS 联动规则。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             }
-            EditorSection("网络环境") {
-                Text("网络类型（可多选）", style = MaterialTheme.typography.labelLarge)
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { listOf("wifi", "cellular", "ethernet").forEach { opt -> FilterChip(selected = opt in networkTypes, onClick = { networkTypes = if (opt in networkTypes) networkTypes - opt else networkTypes + opt }, label = { Text(opt) }) } }
-                MultiLineField("WiFi SSID（一行一条）", wifiSsids) { wifiSsids = it }
-                MultiLineField("WiFi BSSID（一行一条）", wifiBssids) { wifiBssids = it }
-                MultiLineField("入站 tag（一行一条）", inbounds) { inbounds = it }
-                OutlinedTextField(value = clashMode, onValueChange = { clashMode = it }, label = { Text("Clash 模式（可选，如 rule/global/direct）") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(checked = networkIsExpensive, onCheckedChange = { networkIsExpensive = it }); Text("计费网络（network_is_expensive）") }
-            }
-            EditorSection("逻辑运算") {
-                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) { RuleLogic.entries.forEachIndexed { i, l -> SegmentedButton(selected = logic == l, onClick = { logic = l }, shape = SegmentedButtonDefaults.itemShape(index = i, count = RuleLogic.entries.size)) { Text(if (l == RuleLogic.AND) "AND" else "OR") } } }
-                Text(if (logic == RuleLogic.AND) "AND：上面所有字段类别都要满足（sing-box 单条 rule 的默认语义）" else "OR：各类别条件中任一类满足即命中", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(checked = invert, onCheckedChange = { invert = it }); Text("invert（对整体取反）") }
-            }
-            EditorSection("IP 版本（影响 DNS 解析策略，默认全选）") {
-                Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(checked = ipv4, onCheckedChange = { ipv4 = it }); Text("IPv4"); Spacer(Modifier.padding(8.dp)); Checkbox(checked = ipv6, onCheckedChange = { ipv6 = it }); Text("IPv6") }
-            }
-            if (!isBlock && !ipOnly) {
-                EditorSection("DNS 联动") { DnsDropdown(value = dnsTag, options = dnsOptions, onChange = { dnsTag = it }); Text("选择 DNS / DNS group 后将自动为本规则生成一条 DNS 规则；若同时取消 IPv4/IPv6 之一，也只生成一条合并规则。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-            } else if (isBlock) {
-                Text("拦截类规则不生成 DNS 联动规则。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            } else {
-                Text("纯 IP / 远程规则集规则不生成 DNS 联动规则。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        }
     }
 
-    if (showJsonPaste) JsonPasteDialog(onDismiss = { showJsonPaste = false }, onApply = { text ->
-        when (val r = RouteRuleJsonCodec.fromJson(text)) {
-            is RouteRuleJsonCodec.ParseResult.Success -> { applyAll(r.rule.copy(id = initial.id)); jsonError = null; showJsonPaste = false }
-            is RouteRuleJsonCodec.ParseResult.Failure -> jsonError = r.message
-        }
-    }, error = jsonError)
-    if (showAppPicker) AppPickerDialog(title = "选择应用", selected = packageNames.toLines().toSet(), onDismiss = { showAppPicker = false }, onSave = { pkgs -> packageNames = pkgs.joinToString("\n"); showAppPicker = false })
+    if (showJsonPaste) {
+        JsonPasteDialog(
+            onDismiss = { showJsonPaste = false },
+            onApply = { text ->
+                when (val r = RouteRuleJsonCodec.fromJson(text)) {
+                    is RouteRuleJsonCodec.ParseResult.Success -> {
+                        applyAll(r.rule.copy(id = initial.id))
+                        jsonError = null
+                        showJsonPaste = false
+                    }
+                    is RouteRuleJsonCodec.ParseResult.Failure -> jsonError = r.message
+                }
+            },
+            error = jsonError,
+        )
+    }
+
+    if (showAppPicker) {
+        AppPickerDialog(
+            title = "选择应用",
+            selected = packageNames.toLines().toSet(),
+            onDismiss = { showAppPicker = false },
+            onSave = { pkgs ->
+                packageNames = pkgs.joinToString("\n")
+                showAppPicker = false
+            },
+        )
+    }
 }
 
+/** 编辑器内的可折叠分类区块 */
 @Composable
 private fun EditorSection(title: String, content: @Composable () -> Unit) {
+    var expanded by remember { mutableStateOf(true) }
     Column(Modifier.fillMaxWidth()) {
-        Text(title, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(vertical = 4.dp))
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { content() }
-    }
-}
-
-@Composable
-private fun MultiLineField(label: String, value: String, onChange: (String) -> Unit) {
-    OutlinedTextField(value = value, onValueChange = onChange, label = { Text(label) }, modifier = Modifier.fillMaxWidth(), minLines = 2)
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun DnsDropdown(value: String, options: List<String>, onChange: (String) -> Unit) {
-    var expanded by remember { mutableStateOf(false) }
-    ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
-        OutlinedTextField(value = value.ifBlank { "（不指定）" }, onValueChange = {}, readOnly = true, label = { Text("DNS / DNS group（可选）") }, trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) }, modifier = Modifier.menuAnchor().fillMaxWidth())
-        ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            DropdownMenuItem(text = { Text("（不指定）") }, onClick = { onChange(""); expanded = false })
-            options.forEach { opt -> DropdownMenuItem(text = { Text(opt) }, onClick = { onChange(opt); expanded = false }) }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                title,
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(onClick = { expanded = !expanded }) {
+                Text(if (expanded) "收起" else "展开")
+            }
+        }
+        if (expanded) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                content()
+            }
         }
     }
 }
 
+/** 编辑/粘贴 sing-box route rule JSON 片段（sb-AI 风格），解析后回填表单 */
 @Composable
-private fun JsonPasteDialog(onDismiss: () -> Unit, onApply: (String) -> Unit, error: String?) {
+private fun JsonPasteDialog(
+    onDismiss: () -> Unit,
+    onApply: (String) -> Unit,
+    error: String?,
+) {
     var text by remember { mutableStateOf("") }
-    AlertDialog(onDismissRequest = onDismiss, title = { Text("编辑 / 粘贴规则 JSON") }, modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp), text = {
-        Column {
-            Text("可直接输入或粘贴 route.rules 里的单个规则对象（也支持含 rules 的数组 / 完整 route 配置）：", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(Modifier.height(8.dp))
-            OutlinedTextField(value = text, onValueChange = { text = it }, modifier = Modifier.fillMaxWidth().height(220.dp), textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace))
-            error?.let { Spacer(Modifier.height(6.dp)); Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
-        }
-    }, confirmButton = { TextButton(onClick = { onApply(text) }, enabled = text.isNotBlank()) { Text("解析并回填") } }, dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } })
-}
-
-// ---------------------------------------------------------------------------
-// 规则集
-// ---------------------------------------------------------------------------
-
-@Composable
-private fun RuleSetManagerDialog(ruleSets: List<RouteRuleSet>, onDismiss: () -> Unit, onAdd: () -> Unit, onEdit: (RouteRuleSet) -> Unit, onDelete: (RouteRuleSet) -> Unit, onToggle: (RouteRuleSet) -> Unit) {
-    AlertDialog(onDismissRequest = onDismiss, title = { Text("规则集") }, text = {
-        Column(modifier = Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text("规则集是被路由规则引用的资源，本身没有匹配顺序；优先级由引用它的路由规则在列表中的位置决定。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            ruleSets.forEach { rs ->
-                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text(rs.tag.ifBlank { "（未命名）" }, style = MaterialTheme.typography.titleSmall)
-                        Text(buildString { append(if (rs.type == RuleSetType.REMOTE) "remote" else "local"); if (!rs.ipv4 || !rs.ipv6) append(if (rs.ipv4) " · 仅IPv4" else " · 仅IPv6") }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    Switch(checked = rs.enabled, onCheckedChange = { onToggle(rs) })
-                    TextButton(onClick = { onEdit(rs) }) { Text("编辑") }
-                    IconButton(onClick = { onDelete(rs) }) { Icon(Icons.Filled.Delete, contentDescription = "删除", tint = MaterialTheme.colorScheme.error) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("编辑 / 粘贴规则 JSON") },
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 4.dp),
+        text = {
+            Column {
+                Text(
+                    "可直接输入或粘贴 route.rules 里的单个规则对象（也支持含 rules 的数组 / 完整 route 配置）：",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 200.dp, max = 440.dp),
+                    textStyle = MaterialTheme.typography.bodySmall.copy(
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                    ),
+                    placeholder = { Text("{\"domain_suffix\":[\"example.com\"],\"network\":[\"tcp\"],\"outbound\":\"proxy\"}") },
+                )
+                error?.let {
+                    Spacer(Modifier.height(6.dp))
+                    Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                 }
             }
-            if (ruleSets.isEmpty()) Text("暂无规则集。", color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-    }, confirmButton = { TextButton(onClick = onAdd) { Icon(Icons.Filled.Add, contentDescription = null); Text("添加规则集") } }, dismissButton = { TextButton(onClick = onDismiss) { Text("关闭") } })
+        },
+        confirmButton = { TextButton(onClick = { onApply(text) }, enabled = text.isNotBlank()) { Text("解析并回填") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
+}
+
+// ---------------------------------------------------------------------------
+// 规则集：管理对话框 + 编辑器
+// ---------------------------------------------------------------------------
+
+@Composable
+private fun RuleSetManagerDialog(
+    ruleSets: List<RouteRuleSet>,
+    onDismiss: () -> Unit,
+    onAdd: () -> Unit,
+    onEdit: (RouteRuleSet) -> Unit,
+    onDelete: (RouteRuleSet) -> Unit,
+    onToggle: (RouteRuleSet) -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("规则集") },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(
+                    "规则集是被路由规则引用的资源，本身没有匹配顺序；" +
+                        "优先级由引用它的路由规则在列表中的位置决定。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                ruleSets.forEach { rs ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(rs.tag.ifBlank { "（未命名）" }, style = MaterialTheme.typography.titleSmall)
+                            Text(
+                                buildString {
+                                    append(if (rs.type == RuleSetType.REMOTE) "remote" else "local")
+                                    if (!rs.ipv4 || !rs.ipv6) append(if (rs.ipv4) " · 仅IPv4" else " · 仅IPv6")
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Switch(checked = rs.enabled, onCheckedChange = { onToggle(rs) })
+                        TextButton(onClick = { onEdit(rs) }) { Text("编辑") }
+                        IconButton(onClick = { onDelete(rs) }) {
+                            Icon(Icons.Filled.Delete, contentDescription = "删除", tint = MaterialTheme.colorScheme.error)
+                        }
+                    }
+                }
+                if (ruleSets.isEmpty()) {
+                    Text("暂无规则集。", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onAdd) {
+                Icon(Icons.Filled.Add, contentDescription = null)
+                Text("添加规则集")
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("关闭") } },
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun RuleSetEditorDialog(initial: RouteRuleSet, onDismiss: () -> Unit, onSave: (RouteRuleSet) -> Unit, onDelete: (() -> Unit)?) {
+private fun RuleSetEditorDialog(
+    initial: RouteRuleSet,
+    onDismiss: () -> Unit,
+    onSave: (RouteRuleSet) -> Unit,
+    onDelete: (() -> Unit)?,
+) {
     var tag by remember { mutableStateOf(initial.tag) }
     var type by remember { mutableStateOf(initial.type) }
     var url by remember { mutableStateOf(initial.url) }
@@ -1251,6 +923,7 @@ private fun RuleSetEditorDialog(initial: RouteRuleSet, onDismiss: () -> Unit, on
     var typeExpanded by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
 
+    // 整页编辑器（不再是弹窗）
     BackHandler(enabled = true) { BottomBarController.show(); onDismiss() }
     RestoreBottomBarOnDispose()
 
@@ -1260,345 +933,130 @@ private fun RuleSetEditorDialog(initial: RouteRuleSet, onDismiss: () -> Unit, on
             val ok = runCatching { Json.parseToJsonElement(localContent).jsonObject }.isSuccess
             if (localContent.isNotBlank() && !ok) { error = "本地规则集 JSON 无效"; return }
         }
-        onSave(initial.copy(tag = tag.trim(), type = type, url = url.trim(), localContent = localContent, downloadDetour = detour.ifBlank { null }, ipv4 = ipv4, ipv6 = ipv6))
+        onSave(
+            initial.copy(
+                tag = tag.trim(), type = type, url = url.trim(),
+                localContent = localContent,
+                downloadDetour = detour.ifBlank { null },
+                ipv4 = ipv4, ipv6 = ipv6,
+            ),
+        )
     }
 
-    Scaffold(topBar = {
-        TopAppBar(
-            title = { Text(if (initial.tag.isBlank()) "添加规则集" else "编辑规则集") },
-            navigationIcon = { IconButton(onClick = { BottomBarController.show(); onDismiss() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回") } },
-            actions = {
-                if (onDelete != null) { IconButton(onClick = onDelete) { Icon(Icons.Filled.Delete, contentDescription = "删除", tint = MaterialTheme.colorScheme.error) } }
-                TextButton(onClick = { doSave() }) { Text("保存") }
-            },
-        )
-    }) { padding ->
-        Column(modifier = Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            OutlinedTextField(value = tag, onValueChange = { tag = it }, label = { Text("tag（路由规则按此引用）") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-            ExposedDropdownMenuBox(expanded = typeExpanded, onExpandedChange = { typeExpanded = it }) {
-                OutlinedTextField(value = if (type == RuleSetType.REMOTE) "remote" else "local", onValueChange = {}, readOnly = true, label = { Text("类型") }, trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(typeExpanded) }, modifier = Modifier.menuAnchor().fillMaxWidth())
-                ExposedDropdownMenu(expanded = typeExpanded, onDismissRequest = { typeExpanded = false }) {
-                    DropdownMenuItem(text = { Text("remote（远程规则集，含 IP 规则集）") }, onClick = { type = RuleSetType.REMOTE; typeExpanded = false })
-                    DropdownMenuItem(text = { Text("local（内联）") }, onClick = { type = RuleSetType.LOCAL; typeExpanded = false })
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text(if (initial.tag.isBlank()) "添加规则集" else "编辑规则集") },
+                navigationIcon = {
+                    IconButton(onClick = { BottomBarController.show(); onDismiss() }) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                    }
+                },
+                actions = {
+                    if (onDelete != null) {
+                        IconButton(onClick = onDelete) {
+                            Icon(Icons.Filled.Delete, contentDescription = "删除", tint = MaterialTheme.colorScheme.error)
+                        }
+                    }
+                    TextButton(onClick = { doSave() }) { Text("保存") }
+                },
+            )
+        },
+    ) { padding ->
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 20.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                OutlinedTextField(
+                    value = tag, onValueChange = { tag = it },
+                    label = { Text("tag（路由规则按此引用）") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+                )
+
+                ExposedDropdownMenuBox(expanded = typeExpanded, onExpandedChange = { typeExpanded = it }) {
+                    OutlinedTextField(
+                        value = if (type == RuleSetType.REMOTE) "remote" else "local",
+                        onValueChange = {}, readOnly = true, label = { Text("类型") },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(typeExpanded) },
+                        modifier = Modifier.menuAnchor().fillMaxWidth(),
+                    )
+                    ExposedDropdownMenu(expanded = typeExpanded, onDismissRequest = { typeExpanded = false }) {
+                        DropdownMenuItem(text = { Text("remote（远程规则集，含 IP 规则集）") }, onClick = { type = RuleSetType.REMOTE; typeExpanded = false })
+                        DropdownMenuItem(text = { Text("local（内联）") }, onClick = { type = RuleSetType.LOCAL; typeExpanded = false })
+                    }
                 }
-            }
-            if (type == RuleSetType.REMOTE) {
-                OutlinedTextField(value = url, onValueChange = { url = it }, label = { Text("URL") }, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(value = detour, onValueChange = { detour = it }, label = { Text("download_detour（可选）") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-            } else {
-                OutlinedTextField(value = localContent, onValueChange = { localContent = it }, label = { Text("规则集 JSON（source 格式）") }, modifier = Modifier.fillMaxWidth(), minLines = 4, placeholder = { Text("{\"version\":3,\"rules\":[...]}") })
-            }
-            Text("IP 版本（默认全选；取消任一项将生成 DNS 规则）", style = MaterialTheme.typography.labelLarge)
-            Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(checked = ipv4, onCheckedChange = { ipv4 = it }); Text("IPv4"); Spacer(Modifier.padding(8.dp)); Checkbox(checked = ipv6, onCheckedChange = { ipv6 = it }); Text("IPv6") }
-            error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-        }
-    }
-}
 
-// ---------------------------------------------------------------------------
-// Hosts 条目编辑器
-// ---------------------------------------------------------------------------
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun HostsEntryEditorDialog(
-    initial: com.sbai.data.HostsEntry,
-    onDismiss: () -> Unit,
-    onSave: (com.sbai.data.HostsEntry) -> Unit,
-    onDelete: (() -> Unit)?,
-) {
-    var host by remember { mutableStateOf(initial.host) }
-    var ipsText by remember { mutableStateOf(initial.ips.joinToString("\n")) }
-    var error by remember { mutableStateOf<String?>(null) }
-
-    BackHandler(enabled = true) { BottomBarController.show(); onDismiss() }
-    RestoreBottomBarOnDispose()
-
-    fun doSave() {
-        val h = host.trim()
-        if (h.isBlank()) { error = "host 不能为空"; return }
-        val ips = ipsText.lines().map { it.trim() }.filter { it.isNotBlank() }
-        if (ips.isEmpty()) { error = "至少填一个 IP"; return }
-        onSave(initial.copy(host = h, ips = ips))
-    }
-
-    Scaffold(topBar = {
-        TopAppBar(
-            title = { Text(if (initial.host.isBlank()) "添加 host 映射" else "编辑 host 映射") },
-            navigationIcon = { IconButton(onClick = { BottomBarController.show(); onDismiss() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回") } },
-            actions = {
-                if (onDelete != null) { IconButton(onClick = onDelete) { Icon(Icons.Filled.Delete, contentDescription = "删除", tint = MaterialTheme.colorScheme.error) } }
-                TextButton(onClick = { doSave() }) { Text("保存") }
-            },
-        )
-    }) { padding ->
-        Column(modifier = Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            OutlinedTextField(value = host, onValueChange = { host = it }, label = { Text("host（如 example.com）") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(value = ipsText, onValueChange = { ipsText = it }, label = { Text("IP（每行一个）") }, modifier = Modifier.fillMaxWidth(), minLines = 4, placeholder = { Text("1.2.3.4\n2001:db8::1") })
-            Text("保存后由「hosts」类型 DNS 服务器引用（sing-box hosts predefined）。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// DNS 服务器编辑器
-// ---------------------------------------------------------------------------
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun DnsServerEditorDialog(initial: DnsServer, existingServers: List<String>, existingFakeipTag: String?,
-    onDismiss: () -> Unit, onSave: (DnsServer) -> Unit, onDelete: (() -> Unit)?) {
-    var tag by remember { mutableStateOf(initial.tag) }
-    var type by remember { mutableStateOf(initial.type) }
-    var address by remember { mutableStateOf(initial.address) }
-    var detour by remember { mutableStateOf(initial.detour ?: "") }
-    var resolver by remember { mutableStateOf(initial.addressResolver ?: "") }
-    var clientSubnet by remember { mutableStateOf(initial.clientSubnet ?: "") }
-    var echEnabled by remember { mutableStateOf(initial.echEnabled) }
-    var echConfig by remember { mutableStateOf(initial.echConfig ?: "") }
-    var inet4Range by remember { mutableStateOf(initial.inet4Range) }
-    var inet6Range by remember { mutableStateOf(initial.inet6Range) }
-    var typeExpanded by remember { mutableStateOf(false) }
-    var resolverExpanded by remember { mutableStateOf(false) }
-
-    val needsAddress = type !in setOf(DnsServerType.LOCAL, DnsServerType.HOSTS, DnsServerType.FAKEIP)
-    val supportsEch = type in ECH_CAPABLE
-    val hasOtherFakeip = existingFakeipTag != null && existingFakeipTag != initial.tag
-
-    BackHandler(enabled = true) { BottomBarController.show(); onDismiss() }
-    RestoreBottomBarOnDispose()
-
-    fun doSave() {
-        if (tag.isBlank()) return
-        if (type == DnsServerType.FAKEIP && hasOtherFakeip) return
-        onSave(initial.copy(tag = tag.trim(), type = type, address = address.trim(), detour = detour.ifBlank { null },
-            addressResolver = resolver.ifBlank { null }, clientSubnet = clientSubnet.ifBlank { null },
-            echEnabled = echEnabled && supportsEch, echConfig = echConfig.ifBlank { null },
-            inet4Range = inet4Range.trim(), inet6Range = inet6Range.trim()))
-    }
-
-    Scaffold(topBar = {
-        TopAppBar(
-            title = { Text(if (initial.tag.isBlank()) "添加 DNS" else "编辑 DNS") },
-            navigationIcon = { IconButton(onClick = { BottomBarController.show(); onDismiss() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回") } },
-            actions = {
-                if (onDelete != null) { IconButton(onClick = onDelete) { Icon(Icons.Filled.Delete, contentDescription = "删除", tint = MaterialTheme.colorScheme.error) } }
-                TextButton(onClick = { doSave() }, enabled = tag.isNotBlank() && !(type == DnsServerType.FAKEIP && hasOtherFakeip)) { Text("保存") }
-            },
-        )
-    }) { padding ->
-        Column(modifier = Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            OutlinedTextField(value = tag, onValueChange = { tag = it }, label = { Text("tag（唯一标识）") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-            ExposedDropdownMenuBox(expanded = typeExpanded, onExpandedChange = { typeExpanded = it }) {
-                OutlinedTextField(value = type.wireName, onValueChange = {}, readOnly = true, label = { Text("类型") }, trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(typeExpanded) }, modifier = Modifier.menuAnchor().fillMaxWidth())
-                ExposedDropdownMenu(expanded = typeExpanded, onDismissRequest = { typeExpanded = false }) { DnsServerType.entries.forEach { t -> DropdownMenuItem(text = { Text(t.wireName) }, onClick = { type = t; typeExpanded = false }) } }
-            }
-            if (needsAddress) OutlinedTextField(value = address, onValueChange = { address = it }, label = { Text("地址（如 223.5.5.5 / tls://1.1.1.1 / https://dns.google/dns-query）") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(value = detour, onValueChange = { detour = it }, label = { Text("出口（可选，留空 = 不指定）") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-            ExposedDropdownMenuBox(expanded = resolverExpanded, onExpandedChange = { resolverExpanded = it }) {
-                OutlinedTextField(value = resolver.ifBlank { "（不使用）" }, onValueChange = {}, readOnly = true, label = { Text("address_resolver（可选）") }, trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(resolverExpanded) }, modifier = Modifier.menuAnchor().fillMaxWidth())
-                ExposedDropdownMenu(expanded = resolverExpanded, onDismissRequest = { resolverExpanded = false }) {
-                    DropdownMenuItem(text = { Text("（不使用）") }, onClick = { resolver = ""; resolverExpanded = false })
-                    existingServers.filter { it != tag }.forEach { s -> DropdownMenuItem(text = { Text(s) }, onClick = { resolver = s; resolverExpanded = false }) }
+                if (type == RuleSetType.REMOTE) {
+                    OutlinedTextField(value = url, onValueChange = { url = it }, label = { Text("URL") }, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(value = detour, onValueChange = { detour = it }, label = { Text("download_detour（可选）") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                } else {
+                    OutlinedTextField(
+                        value = localContent, onValueChange = { localContent = it },
+                        label = { Text("规则集 JSON（source 格式）") }, modifier = Modifier.fillMaxWidth(), minLines = 4,
+                        placeholder = { Text("{\"version\":3,\"rules\":[...]}") },
+                    )
                 }
-            }
-            OutlinedTextField(value = clientSubnet, onValueChange = { clientSubnet = it }, label = { Text("ECS client_subnet（可选，如 1.0.1.0/24 或 auto）") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-            if (supportsEch) {
+
+                Text("IP 版本（默认全选；取消任一项将生成 DNS 规则）", style = MaterialTheme.typography.labelLarge)
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Switch(checked = echEnabled, onCheckedChange = { echEnabled = it })
-                    Spacer(Modifier.size(8.dp))
-                    Column { Text("ECH（Encrypted Client Hello）", style = MaterialTheme.typography.titleSmall); Text("仅 tls/https/quic/h3 支持", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                    Checkbox(checked = ipv4, onCheckedChange = { ipv4 = it })
+                    Text("IPv4")
+                    Spacer(Modifier.padding(8.dp))
+                    Checkbox(checked = ipv6, onCheckedChange = { ipv6 = it })
+                    Text("IPv6")
                 }
-                if (echEnabled) OutlinedTextField(value = echConfig, onValueChange = { echConfig = it }, label = { Text("ECH config（可选，PEM / echconfiglist）") }, modifier = Modifier.fillMaxWidth(), minLines = 2)
+                error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             }
-            if (type == DnsServerType.FAKEIP) {
-                if (hasOtherFakeip) Text("已存在 fakeIP「$existingFakeipTag」，sing-box 只允许一个 fakeIP。请先删除或改为编辑它。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-                OutlinedTextField(value = inet4Range, onValueChange = { inet4Range = it }, label = { Text("IPv4 段（可选，默认 10.0.0.0/8）") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(value = inet6Range, onValueChange = { inet6Range = it }, label = { Text("IPv6 段（可选，默认 fc00::/18）") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+    }
+}
+
+@Composable
+private fun MultiLineField(label: String, value: String, onChange: (String) -> Unit) {
+    OutlinedTextField(value = value, onValueChange = onChange, label = { Text(label) }, modifier = Modifier.fillMaxWidth(), minLines = 2)
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun OutboundDropdown(value: String, options: List<String>, onChange: (String) -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    val merged = listOf("" to "【自动跟随】") + options.map { it to it }
+    Box {
+        TextButton(onClick = { expanded = true }) {
+            Text(if (value.isBlank()) "选择路由目标…" else value)
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            merged.forEach { (tag, label) ->
+                DropdownMenuItem(
+                    text = { Text(label) },
+                    onClick = { onChange(tag); expanded = false },
+                )
             }
         }
     }
 }
 
-// ---------------------------------------------------------------------------
-// DNS group 编辑器
-// ---------------------------------------------------------------------------
-
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun DnsGroupEditorDialog(initial: DnsGroup, serverTags: List<String>, onDismiss: () -> Unit,
-    onSave: (DnsGroup) -> Unit, onDelete: (() -> Unit)?) {
-    var name by remember { mutableStateOf(initial.name) }
-    var selected by remember { mutableStateOf(initial.serverTags.toSet()) }
-
-    BackHandler(enabled = true) { BottomBarController.show(); onDismiss() }
-    RestoreBottomBarOnDispose()
-
-    Scaffold(topBar = {
-        TopAppBar(
-            title = { Text(if (initial.name.isBlank()) "添加 DNS group" else "编辑 DNS group") },
-            navigationIcon = { IconButton(onClick = { BottomBarController.show(); onDismiss() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回") } },
-            actions = {
-                if (onDelete != null) { IconButton(onClick = onDelete) { Icon(Icons.Filled.Delete, contentDescription = "删除", tint = MaterialTheme.colorScheme.error) } }
-                TextButton(onClick = { if (name.isNotBlank()) { onSave(initial.copy(name = name.trim(), serverTags = selected.toList().sorted())); onDismiss() } }) { Text("保存") }
-            },
+private fun DnsDropdown(value: String, options: List<String>, onChange: (String) -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
+        OutlinedTextField(
+            value = value.ifBlank { "（不指定）" },
+            onValueChange = {}, readOnly = true,
+            label = { Text("DNS / DNS group（可选）") },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
+            modifier = Modifier.menuAnchor().fillMaxWidth(),
         )
-    }) { padding ->
-        Column(modifier = Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("group 名称") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-            Text("成员 DNS", style = MaterialTheme.typography.labelLarge)
-            if (serverTags.isEmpty()) Text("尚无可用 DNS，请先添加。", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            else FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { serverTags.forEach { tag -> FilterChip(selected = tag in selected, onClick = { selected = if (tag in selected) selected - tag else selected + tag }, label = { Text(tag) }) } }
+        ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            DropdownMenuItem(text = { Text("（不指定）") }, onClick = { onChange(""); expanded = false })
+            options.forEach { opt ->
+                DropdownMenuItem(text = { Text(opt) }, onClick = { onChange(opt); expanded = false })
+            }
         }
     }
-}
-
-// ---------------------------------------------------------------------------
-// DNS 规则编辑器
-// ---------------------------------------------------------------------------
-
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
-@Composable
-private fun DnsRuleEditorDialog(initial: DnsRule, serverOptions: List<String>, ruleSetTags: List<String>,
-    onDismiss: () -> Unit, onSave: (DnsRule) -> Unit, onDelete: (() -> Unit)?) {
-    var name by remember { mutableStateOf(initial.name) }
-    var domains by remember { mutableStateOf(initial.domains.joinToString("\n")) }
-    var suffixes by remember { mutableStateOf(initial.domainSuffixes.joinToString("\n")) }
-    var keywords by remember { mutableStateOf(initial.domainKeywords.joinToString("\n")) }
-    var regexes by remember { mutableStateOf(initial.domainRegexes.joinToString("\n")) }
-    var ipCidrs by remember { mutableStateOf(initial.ipCidrs.joinToString("\n")) }
-    var sets by remember { mutableStateOf(initial.ruleSetTags.joinToString("\n")) }
-    var networks by remember { mutableStateOf(initial.networks.joinToString("\n")) }
-    var portsText by remember { mutableStateOf(initial.ports.joinToString("\n")) }
-    var queryTypes by remember { mutableStateOf(initial.queryTypes.toSet()) }
-    var server by remember { mutableStateOf(initial.server) }
-    var ipStrategy by remember { mutableStateOf(initial.ipStrategy) }
-    var disableCache by remember { mutableStateOf(initial.disableCache) }
-    var rewriteTtl by remember { mutableStateOf(initial.rewriteTtl?.toString() ?: "") }
-    var clientSubnet by remember { mutableStateOf(initial.clientSubnet ?: "") }
-    var ruleAction by remember { mutableStateOf(initial.action.ifBlank { "route" }) }
-    var rcode by remember { mutableStateOf(initial.rcode) }
-    var answers by remember { mutableStateOf(initial.answers.joinToString("\n")) }
-    var ns by remember { mutableStateOf(initial.ns.joinToString("\n")) }
-    var extra by remember { mutableStateOf(initial.extra.joinToString("\n")) }
-    var timeout by remember { mutableStateOf(initial.timeout) }
-    var serverExpanded by remember { mutableStateOf(false) }
-    var strategyExpanded by remember { mutableStateOf(false) }
-    var error by remember { mutableStateOf<String?>(null) }
-    var showJsonPaste by remember { mutableStateOf(false) }
-    var jsonError by remember { mutableStateOf<String?>(null) }
-
-    fun applyAll(r: DnsRule) {
-        name = r.name
-        domains = r.domains.joinToString("\n"); suffixes = r.domainSuffixes.joinToString("\n")
-        keywords = r.domainKeywords.joinToString("\n"); regexes = r.domainRegexes.joinToString("\n")
-        ipCidrs = r.ipCidrs.joinToString("\n"); sets = r.ruleSetTags.joinToString("\n")
-        networks = r.networks.joinToString("\n"); portsText = r.ports.joinToString("\n")
-        queryTypes = r.queryTypes.toSet(); server = r.server
-        ipStrategy = r.ipStrategy; disableCache = r.disableCache
-        rewriteTtl = r.rewriteTtl?.toString() ?: ""
-        clientSubnet = r.clientSubnet ?: ""
-        ruleAction = r.action.ifBlank { "route" }; rcode = r.rcode
-        answers = r.answers.joinToString("\n"); ns = r.ns.joinToString("\n")
-        extra = r.extra.joinToString("\n"); timeout = r.timeout
-    }
-
-    BackHandler(enabled = true) { BottomBarController.show(); onDismiss() }
-    RestoreBottomBarOnDispose()
-
-    fun doSave() {
-        if (ruleAction == "route" && server.isBlank()) { error = "route 动作必须选择目标 DNS / group"; return }
-        onSave(initial.copy(name = name.trim(), domains = domains.toLines(), domainSuffixes = suffixes.toLines(),
-            domainKeywords = keywords.toLines(), domainRegexes = regexes.toLines(),
-            ipCidrs = ipCidrs.toLines(), ruleSetTags = sets.toLines(),
-            networks = networks.toLines(), ports = portsText.toLines().mapNotNull { it.toIntOrNull() },
-            queryTypes = queryTypes.toList().sorted(), server = server, ipStrategy = ipStrategy,
-            disableCache = disableCache, rewriteTtl = rewriteTtl.toIntOrNull(),
-            clientSubnet = clientSubnet.ifBlank { null }, action = ruleAction, rcode = rcode,
-            answers = answers.toLines(), ns = ns.toLines(), extra = extra.toLines(), timeout = timeout.trim()))
-    }
-
-    Scaffold(topBar = {
-        TopAppBar(
-            title = { Text(if (initial.autoFromRouteRuleId != null) "DNS 规则（自动）" else if (initial.name.isBlank()) "添加 DNS 规则" else "编辑 DNS 规则") },
-            navigationIcon = { IconButton(onClick = { BottomBarController.show(); onDismiss() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回") } },
-            actions = {
-                if (onDelete != null) { IconButton(onClick = onDelete) { Icon(Icons.Filled.Delete, contentDescription = "删除", tint = MaterialTheme.colorScheme.error) } }
-                TextButton(onClick = { doSave() }) { Text("保存") }
-            },
-        )
-    }) { padding ->
-        Column(modifier = Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            if (initial.autoFromRouteRuleId != null) Text("此规则由路由规则自动生成，只读；如需自定义请创建手动规则（手动规则优先级更高）。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary)
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("规则名称") }, singleLine = true, modifier = Modifier.weight(1f))
-                Spacer(Modifier.size(8.dp))
-                Button(onClick = { showJsonPaste = true }) { Icon(Icons.Filled.ContentPaste, contentDescription = null); Text("粘贴 JSON") }
-            }
-            MultiLineField("域名（一行一条）", domains) { domains = it }
-            MultiLineField("域名后缀（一行一条）", suffixes) { suffixes = it }
-            MultiLineField("域名关键词（一行一条）", keywords) { keywords = it }
-            MultiLineField("域名正则（一行一条）", regexes) { regexes = it }
-            MultiLineField("IP / CIDR（一行一条）", ipCidrs) { ipCidrs = it }
-            MultiLineField("规则集 tag（一行一条）${if (ruleSetTags.isNotEmpty()) "，已有：${ruleSetTags.joinToString()}" else ""}", sets) { sets = it }
-            MultiLineField("network（一行一条，tcp/udp/icmp）", networks) { networks = it }
-            MultiLineField("端口（一行一个）", portsText) { portsText = it }
-            Text("查询类型（可多选）", style = MaterialTheme.typography.labelLarge)
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { DNS_QUERY_TYPES.forEach { qt -> FilterChip(selected = qt in queryTypes, onClick = { queryTypes = if (qt in queryTypes) queryTypes - qt else queryTypes + qt }, label = { Text(qt) }) } }
-            Text("动作", style = MaterialTheme.typography.labelLarge)
-            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                listOf("route" to "路由", "route-options" to "改写应答", "reject" to "拒绝", "pre-defined" to "预定义")
-                    .forEachIndexed { i, (v, label) -> SegmentedButton(selected = ruleAction == v, onClick = { ruleAction = v }, shape = SegmentedButtonDefaults.itemShape(index = i, count = 4)) { Text(label) } }
-            }
-            if (ruleAction == "route") {
-                ExposedDropdownMenuBox(expanded = serverExpanded, onExpandedChange = { serverExpanded = it }) {
-                    OutlinedTextField(value = server.ifBlank { "（必选）" }, onValueChange = {}, readOnly = true, label = { Text("目标 DNS / group") }, trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(serverExpanded) }, modifier = Modifier.menuAnchor().fillMaxWidth())
-                    ExposedDropdownMenu(expanded = serverExpanded, onDismissRequest = { serverExpanded = false }) { serverOptions.forEach { opt -> DropdownMenuItem(text = { Text(opt) }, onClick = { server = opt; serverExpanded = false }) } }
-                }
-            }
-            if (ruleAction == "reject" || ruleAction == "route-options") {
-                Text("rcode", style = MaterialTheme.typography.labelLarge)
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { listOf("success", "refused", "formerror", "notimp", "nxdomain").forEach { rc -> FilterChip(selected = rcode == rc, onClick = { rcode = if (rcode == rc) "" else rc }, label = { Text(rc) }) } }
-            }
-            if (ruleAction == "route-options") {
-                MultiLineField("覆盖应答 A 记录（一行一个 IPv4）", answers) { answers = it }
-                MultiLineField("覆盖应答 NS 记录（一行一条）", ns) { ns = it }
-                MultiLineField("覆盖应答 EXTRA 记录（一行一条）", extra) { extra = it }
-            }
-            if (ruleAction == "route" || ruleAction == "route-options") {
-                ExposedDropdownMenuBox(expanded = strategyExpanded, onExpandedChange = { strategyExpanded = it }) {
-                    OutlinedTextField(value = ipStrategy.ifBlank { "（不设置）" }, onValueChange = {}, readOnly = true, label = { Text("IP 解析策略（可选）") }, trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(strategyExpanded) }, modifier = Modifier.menuAnchor().fillMaxWidth())
-                    ExposedDropdownMenu(expanded = strategyExpanded, onDismissRequest = { strategyExpanded = false }) { IP_STRATEGIES.forEach { s -> DropdownMenuItem(text = { Text(if (s.isBlank()) "（不设置）" else s) }, onClick = { ipStrategy = s; strategyExpanded = false }) } }
-                }
-            }
-            Row(verticalAlignment = Alignment.CenterVertically) { Switch(checked = disableCache, onCheckedChange = { disableCache = it }); Spacer(Modifier.size(8.dp)); Text("禁用缓存（disable_cache）") }
-            OutlinedTextField(value = rewriteTtl, onValueChange = { rewriteTtl = it }, label = { Text("rewrite_ttl（秒，可选）") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(value = clientSubnet, onValueChange = { clientSubnet = it }, label = { Text("本条规则 ECS client_subnet（可选）") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(value = timeout, onValueChange = { timeout = it }, label = { Text("查询超时（如 4s，可选）") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-            error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-        }
-    }
-
-    if (showJsonPaste) DnsJsonPasteDialog(onDismiss = { showJsonPaste = false }, onApply = { text ->
-        when (val r = DnsRuleJsonCodec.fromJson(text)) {
-            is DnsRuleJsonCodec.ParseResult.Success -> { applyAll(r.rule.copy(id = initial.id, autoFromRouteRuleId = initial.autoFromRouteRuleId)); jsonError = null; showJsonPaste = false }
-            is DnsRuleJsonCodec.ParseResult.Failure -> jsonError = r.message
-        }
-    }, error = jsonError)
-}
-
-@Composable
-private fun DnsJsonPasteDialog(onDismiss: () -> Unit, onApply: (String) -> Unit, error: String?) {
-    var text by remember { mutableStateOf("") }
-    AlertDialog(onDismissRequest = onDismiss, title = { Text("粘贴 DNS 规则 JSON 片段") }, modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp), text = {
-        Column {
-            Text("只需 dns.rules 里的单个规则对象，例如：\n{\"domain_suffix\":[\"example.com\"],\"server\":\"dns-remote\"}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(Modifier.height(8.dp))
-            OutlinedTextField(value = text, onValueChange = { text = it }, modifier = Modifier.fillMaxWidth().height(220.dp), textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace))
-            error?.let { Spacer(Modifier.height(6.dp)); Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
-        }
-    }, confirmButton = { TextButton(onClick = { onApply(text) }, enabled = text.isNotBlank()) { Text("解析并回填") } }, dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } })
 }
 
 private fun String.toLines(): List<String> =
