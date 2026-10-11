@@ -1005,12 +1005,7 @@ private fun RouteRuleEditorDialog(
                     }
                     Button(onClick = { showAppPicker = true }) { Text("选择应用") }
                 }
-                Text("⚠ 以下进程级字段需要 root 才能在 Android 生效（无 root 时规则不会命中）：", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-                MultiLineField("进程名 process_name（需 root）", processNames) { processNames = it }
-                MultiLineField("进程路径 process_path（需 root）", processPaths) { processPaths = it }
-                MultiLineField("用户名 user（需 root）", users) { users = it }
-                MultiLineField("用户 ID user_id（需 root）", userIds) { userIds = it }
-                Text("无 root 请改用「应用包名」——Android 上包名即进程身份，效果等价。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("sb-AI 不集成 root：Android 上「应用包名」即进程身份（VPN API 解析 UID），无需进程名/路径/user 字段。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             EditorSection("网络环境") {
                 Text("网络类型（可多选）", style = MaterialTheme.typography.labelLarge)
