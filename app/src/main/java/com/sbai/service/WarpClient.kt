@@ -63,10 +63,9 @@ class WarpClient {
     private fun postReg(body: String): Pair<String, String> {
         val errors = mutableListOf<String>()
         for (host in API_HOSTS) {
-            var conn: HttpURLConnection? = null
             try {
                 val url = URL("$host/$VERSION/reg")
-                conn = url.openConnection() as HttpURLConnection
+                val conn = url.openConnection() as HttpURLConnection
                 conn.requestMethod = "POST"
                 conn.connectTimeout = TIMEOUT_MS
                 conn.readTimeout = TIMEOUT_MS
@@ -91,8 +90,6 @@ class WarpClient {
                 throw e  // HTTP 响应是终局，不换 host
             } catch (e: Exception) {
                 errors.add("$host: ${e.message}")
-            } finally {
-                conn?.disconnect()
             }
         }
         throw WarpException("network error: ${errors.joinToString("; ")}")
