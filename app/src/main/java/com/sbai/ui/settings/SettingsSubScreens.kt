@@ -62,6 +62,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -145,13 +146,15 @@ fun SettingsKernelScreen(navController: NavHostController) {
                         Column(Modifier.padding(16.dp)) {
                             Text("MTU", style = MaterialTheme.typography.labelLarge)
                             Spacer(Modifier.height(8.dp))
+                            var mtuDraft by remember(settings.mtu) { mutableStateOf(settings.mtu.toString()) }
                             OutlinedTextField(
-                                value = settings.mtu.toString(),
-                                onValueChange = { v -> v.toIntOrNull()?.let { n -> store.updateSettings(settings.copy(mtu = n)) } },
+                                value = mtuDraft,
+                                onValueChange = { mtuDraft = it },
                                 label = { Text("MTU（默认 1500）") },
                                 singleLine = true,
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                modifier = Modifier.fillMaxWidth(),
+                                modifier = Modifier.fillMaxWidth()
+                                    .onFocusChanged { if (!it.isFocused) mtuDraft.toIntOrNull()?.let { n -> store.updateSettings(settings.copy(mtu = n)) } },
                             )
                         }
                     }
@@ -179,21 +182,25 @@ fun SettingsKernelScreen(navController: NavHostController) {
                         Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
                             Text("TUN 地址段", style = MaterialTheme.typography.labelLarge)
                             Spacer(Modifier.height(8.dp))
+                            var tunAddressDraft by remember(settings.tunAddress) { mutableStateOf(settings.tunAddress) }
                             OutlinedTextField(
-                                value = settings.tunAddress,
-                                onValueChange = { store.updateSettings(settings.copy(tunAddress = it.trim())) },
+                                value = tunAddressDraft,
+                                onValueChange = { tunAddressDraft = it },
                                 label = { Text("IPv4 段（如 172.18.0.1/30）") },
                                 singleLine = true,
-                                modifier = Modifier.fillMaxWidth(),
+                                modifier = Modifier.fillMaxWidth()
+                                    .onFocusChanged { if (!it.isFocused) store.updateSettings(settings.copy(tunAddress = tunAddressDraft.trim())) },
                             )
                             Spacer(Modifier.height(8.dp))
+                            var tunAddress6Draft by remember(settings.tunAddress6) { mutableStateOf(settings.tunAddress6) }
                             OutlinedTextField(
-                                value = settings.tunAddress6,
-                                onValueChange = { store.updateSettings(settings.copy(tunAddress6 = it.trim())) },
+                                value = tunAddress6Draft,
+                                onValueChange = { tunAddress6Draft = it },
                                 label = { Text("IPv6 段（如 fdfe:dcba:9876::1/126）") },
                                 singleLine = true,
                                 enabled = settings.ipv6Route,
-                                modifier = Modifier.fillMaxWidth(),
+                                modifier = Modifier.fillMaxWidth()
+                                    .onFocusChanged { if (!it.isFocused) store.updateSettings(settings.copy(tunAddress6 = tunAddress6Draft.trim())) },
                             )
                         }
                     }
@@ -220,13 +227,15 @@ fun SettingsKernelScreen(navController: NavHostController) {
                     }
                     item {
                         Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                            var draft by remember(settings.tlsFragmentFallbackDelay) { mutableStateOf(settings.tlsFragmentFallbackDelay) }
                             OutlinedTextField(
-                                value = settings.tlsFragmentFallbackDelay,
-                                onValueChange = { store.updateSettings(settings.copy(tlsFragmentFallbackDelay = it.trim())) },
+                                value = draft,
+                                onValueChange = { draft = it },
                                 label = { Text("回退延迟（如 500ms）") },
                                 singleLine = true,
                                 enabled = settings.tlsFragment,
-                                modifier = Modifier.fillMaxWidth(),
+                                modifier = Modifier.fillMaxWidth()
+                                    .onFocusChanged { if (!it.isFocused) store.updateSettings(settings.copy(tlsFragmentFallbackDelay = draft.trim())) },
                             )
                         }
                     }

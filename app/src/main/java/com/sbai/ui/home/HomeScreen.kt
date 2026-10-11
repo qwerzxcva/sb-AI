@@ -346,18 +346,19 @@ fun HomeScreen() {
     val vpnMessage by VpnRuntimeState.message.collectAsState()
     // 跨进程遥测快照（连接时长/出口IP/流量），由 :core 周期发布、上方轮询刷新
     val telemetry by VpnRuntimeState.telemetry.collectAsState()
-    // 卡死检测：Starting/Stopping 超过 90s 视为已回退 Stopped（服务崩溃/被杀场景）
-    var lastPublishedAt by remember { mutableStateOf(0L) }
-    // 1s 时钟心跳：驱动 effectivePhase 的租约判断每秒重算。否则 :core 死后
-    // lastPublishedAt 过期但 Compose 无新状态可订阅，页面不会自动重绘——
-    // 必须切页（触发 recomposition）才刷新，正是用户报的「切回去才看到已停止」。
-    var clockTick by remember { mutableIntStateOf(0) }
     // 时钟只在状态可能随时间过期时才需要（Starting/Stopping/Running）；
     // Stopped/Error 每秒触发整页重组是卡顿来源，此时间隔放宽到 15s。
     val needClock = vpnPhase == VpnRuntimeState.Phase.Starting ||
         vpnPhase == VpnRuntimeState.Phase.Stopping ||
         vpnPhase == VpnRuntimeState.Phase.Running
-    LaunchedEffect(needClock) {
+    // 时钟心跳与 effectivePhase 计算封装到独立 produceState，避免整页重组。
+    // 只有 effectivePhase 真正变化（Starting → Stopped、Running → Error）时才通知订阅者。
+    val effectivePhase by produceState(
+        initialValue = vpnPhase,
+        vpnPhase,
+        needClock,
+    ) {
+        var lastPublishedAt = 0L
         while (true) {
             withContext(Dispatchers.IO) {
                 VpnRuntimeState.refreshFromDisk(context)
@@ -365,22 +366,22 @@ fun HomeScreen() {
                 RuleStore.get(context).refreshFromDisk()
                 lastPublishedAt = VpnRuntimeState.lastPublishedAt(context)
             }
-            clockTick = clockTick + 1
+            val newPhase = when (vpnPhase) {
+                VpnRuntimeState.Phase.Starting, VpnRuntimeState.Phase.Stopping ->
+                    if (lastPublishedAt > 0 &&
+                        System.currentTimeMillis() - lastPublishedAt > VpnRuntimeState.STUCK_TIMEOUT_MS
+                    ) VpnRuntimeState.Phase.Stopped else vpnPhase
+                VpnRuntimeState.Phase.Running ->
+                    if (lastPublishedAt > 0 &&
+                        System.currentTimeMillis() - lastPublishedAt > VpnRuntimeState.RUNNING_LEASE_TIMEOUT_MS
+                    ) VpnRuntimeState.Phase.Error else vpnPhase
+                else -> vpnPhase
+            }
+            if (newPhase != value) {
+                value = newPhase
+            }
             delay(if (needClock) 1000L else 15_000L)
         }
-    }
-    @Suppress("UNUSED_EXPRESSION") clockTick
-    val effectivePhase = when (vpnPhase) {
-        VpnRuntimeState.Phase.Starting, VpnRuntimeState.Phase.Stopping ->
-            if (lastPublishedAt > 0 &&
-                System.currentTimeMillis() - lastPublishedAt > VpnRuntimeState.STUCK_TIMEOUT_MS
-            ) VpnRuntimeState.Phase.Stopped else vpnPhase
-        // Running 过期（:core 死后心跳停续）→ 视为内核已死，不再显示运行中
-        VpnRuntimeState.Phase.Running ->
-            if (lastPublishedAt > 0 &&
-                System.currentTimeMillis() - lastPublishedAt > VpnRuntimeState.RUNNING_LEASE_TIMEOUT_MS
-            ) VpnRuntimeState.Phase.Error else vpnPhase
-        else -> vpnPhase
     }
     val running = effectivePhase == VpnRuntimeState.Phase.Running ||
         effectivePhase == VpnRuntimeState.Phase.Starting
