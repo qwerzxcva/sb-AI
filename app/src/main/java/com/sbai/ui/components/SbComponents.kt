@@ -1,11 +1,9 @@
 package com.sbai.ui.components
 
-import android.os.Build
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -36,13 +34,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.BlurEffect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
-import androidx.compose.ui.graphics.TileMode
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.sbai.ui.theme.LocalSbStyleTokens
 
@@ -75,95 +69,6 @@ class SbGroupScope internal constructor() {
     fun item(key: Any?, content: @Composable () -> Unit) { items += key to content }
 }
 
-/**
- * 选择卡片：标题 + 说明，选中用主色容器。负载均衡模式卡的样式，供全站点选复用。
- */
-@Composable
-fun SbChoiceCard(
-    title: String,
-    subtitle: String,
-    selected: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val colors = MaterialTheme.colorScheme
-    Surface(
-        onClick = onClick,
-        modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        color = if (selected) colors.primaryContainer else colors.surfaceContainer,
-    ) {
-        Column(Modifier.padding(16.dp)) {
-            Text(
-                title,
-                style = MaterialTheme.typography.titleSmall,
-                color = if (selected) colors.onPrimaryContainer else colors.onSurface,
-            )
-            Text(
-                subtitle,
-                style = MaterialTheme.typography.bodySmall,
-                color = if (selected) colors.onPrimaryContainer.copy(alpha = 0.75f) else colors.onSurfaceVariant,
-            )
-        }
-    }
-}
-
-/**
- * 液态玻璃选择卡片：标题 + 说明，选中用主色容器。使用玻璃磨砂效果。
- */
-@Composable
-fun GlassChoiceCard(
-    title: String,
-    subtitle: String,
-    selected: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val colors = MaterialTheme.colorScheme
-    val backgroundColor = if (selected) {
-        colors.primaryContainer.copy(alpha = 0.92f)
-    } else {
-        colors.surfaceContainer.copy(alpha = 0.90f)
-    }
-    val shape = RoundedCornerShape(16.dp)
-
-    Box(
-        modifier = modifier
-            .fillMaxWidth()
-            .clip(shape)
-            .clickable(onClick = onClick)
-            .then(
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    Modifier.graphicsLayer {
-                        val px = 12.dp.toPx()  // 降低模糊半径
-                        renderEffect = BlurEffect(px, px, TileMode.Clamp)
-                    }.background(backgroundColor)
-                        .border(
-                            width = 1.dp,
-                            color = if (selected) colors.primary.copy(alpha = 0.5f) else colors.outline.copy(alpha = 0.2f),
-                            shape = shape,
-                        )
-                } else {
-                    Modifier.background(backgroundColor)
-                }
-            )
-            .padding(16.dp),
-    ) {
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(
-                title,
-                style = MaterialTheme.typography.titleSmall,
-                color = if (selected) colors.onPrimaryContainer else colors.onSurface,
-            )
-            Text(
-                subtitle,
-                style = MaterialTheme.typography.bodySmall,
-                color = if (selected) colors.onPrimaryContainer.copy(alpha = 0.75f) else colors.onSurfaceVariant,
-            )
-        }
-    }
-}
-
 /** 分节标签 + 分组卡片列表（Kototoro SettingsPreferenceGroup 的移植） */
 @Composable
 fun SbGroup(
@@ -176,8 +81,8 @@ fun SbGroup(
         if (title.isNotBlank()) {
             Text(
                 text = title,
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.onSurface,
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
             )
         }
@@ -242,9 +147,9 @@ fun SbItem(
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
-            Text(title, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface)
+            Text(title, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface)
             if (subtitle != null) {
-                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
         if (trailing != null) {
@@ -287,7 +192,7 @@ fun SbItemWithBadge(
         }
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(title, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface)
+                Text(title, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface)
                 if (badge != null) {
                     Spacer(Modifier.width(8.dp))
                     Box(
@@ -301,7 +206,7 @@ fun SbItemWithBadge(
                 }
             }
             if (subtitle != null) {
-                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }
@@ -353,9 +258,9 @@ fun SbCollapsibleGroup(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text(title, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface)
+                    Text(title, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface)
                     if (summary != null) {
-                        Text(summary, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(summary, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
                 Icon(
@@ -385,50 +290,6 @@ fun SbBadge(text: String, color: Color) {
             .padding(horizontal = 8.dp, vertical = 3.dp),
     ) {
         Text(text, style = MaterialTheme.typography.labelSmall, color = color)
-    }
-}
-
-/**
- * 液态玻璃分组容器：使用玻璃磨砂效果。
- */
-@Composable
-fun GlassGroup(
-    title: String,
-    modifier: Modifier = Modifier,
-    content: SbGroupScope.() -> Unit,
-) {
-    val scope = SbGroupScope().apply(content)
-    Column(modifier = modifier.fillMaxWidth()) {
-        if (title.isNotBlank()) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-            )
-        }
-        val tokens = LocalSbStyleTokens.current
-        
-        GlassSurface(
-            modifier = Modifier.fillMaxWidth(),
-            cornerRadius = tokens.settingsGroupOuterCornerRadius,
-        ) {
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(tokens.settingsItemGap),
-            ) {
-                scope.items.forEachIndexed { index, (itemKey, itemContent) ->
-                    val actualKey = itemKey ?: index
-                    androidx.compose.runtime.key(actualKey) {
-                        Box(
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            itemContent()
-                        }
-                    }
-                }
-            }
-        }
     }
 }
 
