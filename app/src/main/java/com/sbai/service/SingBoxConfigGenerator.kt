@@ -263,11 +263,6 @@ object SingBoxConfigGenerator {
                     }
                 }
 
-                // 上游 DNS 服务器
-                putJsonArray("nameserver") {
-                    state.settings.dnsNameserver.forEach { add(it) }
-                }
-
                 // Fallback DNS 服务器
                 if (state.settings.dnsFallback.isNotEmpty()) {
                     putJsonArray("fallback") {
