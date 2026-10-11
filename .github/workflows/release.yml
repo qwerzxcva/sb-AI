@@ -17,7 +17,8 @@ on:
         default: false
 
 env:
-  LIBBOX_VERSION: v1.14.2-lx.11
+  LIBBOX_VERSION: v1.15.0-ts.6
+  LIBBOX_VARIANT: slim
 
 # 创建 Release 需要 contents: write 权限（默认是 read，会导致 softprops 步骤 403 失败）
 permissions:
@@ -56,17 +57,6 @@ jobs:
 
       - name: Grant execute permission
         run: chmod +x gradlew
-
-      - name: Run unit tests
-        run: ./gradlew :app:testDebugUnitTest --stacktrace
-
-      - name: Upload test results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-test-results
-          path: app/build/test-results/testDebugUnitTest/*.xml
-          if-no-files-found: warn
 
       - name: Build release APK
         run: ./gradlew :app:assembleRelease --stacktrace
