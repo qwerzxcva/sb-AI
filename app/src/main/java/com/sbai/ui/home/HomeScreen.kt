@@ -651,9 +651,120 @@ fun HomeScreen() {
                 }
             }
 
-            // ---- 订阅源（每张卡片、每个节点都是独立懒加载行，避免整组一起重绘） ----
-            item { Text("订阅源", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) }
-            run {
+            // ---- 节点源（合并订阅源 + 本地源；参考 Bettbox 节点源结构）----
+            item {
+                SbGroup(title = "节点源 (${subscriptions.size} 条订阅 + ${standaloneNodes} 本地节点)") {
+                    var localExpanded by remember { mutableStateOf(true) }
+                    item {
+                        SbItem(
+                            title = "本地源 (${standaloneNodes})",
+                            subtitle = if (localExpanded) "点击收起" else "点击展开",
+                            icon = if (localExpanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                            onClick = { localExpanded = !localExpanded },
+                        )
+                    }
+                    if (localExpanded) {
+                    // 搜索过滤（订阅节点在订阅卡片内展开，这里只列手动/剪贴板导入的独立节点）
+                    item {
+                        Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
+                            OutlinedTextField(
+                                value = nodeFilterQuery,
+                                onValueChange = { nodeFilterQuery = it },
+                                label = { Text("搜索（名称/地区）") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth(),
+                                trailingIcon = {
+                                    if (nodeFilterQuery.isNotBlank()) {
+                                        IconButton(onClick = { nodeFilterQuery = "" }) {
+                                            Icon(Icons.Filled.Close, contentDescription = "清除", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
+                                    }
+                                },
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                FilterChip(
+                                    selected = nodeFilterNoDelay,
+                                    onClick = { nodeFilterNoDelay = !nodeFilterNoDelay },
+                                    label = { Text("无延迟") },
+                                )
+                                SingleChoiceSegmentedButtonRow {
+                                    SegmentedButton(
+                                        selected = nodeSortMode == NodeSortMode.NAME_ASC,
+                                        onClick = { nodeSortMode = if (nodeSortMode == NodeSortMode.NAME_ASC) NodeSortMode.LATENCY_ASC else NodeSortMode.NAME_ASC },
+                                        shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
+                                    ) { Text("名称↑") }
+                                    SegmentedButton(
+                                        selected = nodeSortMode == NodeSortMode.LATENCY_ASC,
+                                        onClick = { nodeSortMode = if (nodeSortMode == NodeSortMode.LATENCY_ASC) NodeSortMode.NAME_ASC else NodeSortMode.LATENCY_ASC },
+                                        shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
+                                    ) { Text("延迟↑") }
+                                }
+                            }
+                        }
+                    }
+                    // 独立节点（subscriptionId==null，即 WARP / 手动添加 / 剪贴板导入）：
+                    for (row in filteredStandaloneNodes) {
+                        item(key = "standalone-${row.node.id}") {
+                            StandaloneNodeRow(
+                                node = row.node,
+                                subtitle = row.subtitle,
+                                testing = testingNodeId == row.node.id,
+                                onToggle = {
+                                    store.upsertProxyNode(row.node.copy(enabled = !row.node.enabled, disabledReason = null))
+                                },
+                                onTest = { testSingleNode(row.node) },
+                                onClick = { editingNode = row.node },
+                                onDelete = { store.deleteProxyNode(row.node.id) },
+                            )
+                        }
+                    }
+                    item {
+                        SbItem(
+                            title = "获取 WARP（免费隧道）",
+                            subtitle = "一键注册 Cloudflare WARP，生成 WireGuard 节点",
+                            icon = Icons.Filled.CloudDownload,
+                            onClick = { showWarpDialog = true },
+                        )
+                    }
+                    item {
+                        SbItem(
+                            title = "手动添加节点",
+                            subtitle = "粘贴 sing-box outbound JSON",
+                            icon = Icons.Filled.Add,
+                            onClick = { editingNode = ProxyNode() },
+                        )
+                    }
+                    item {
+                        SbItem(
+                            title = "从剪贴板导入",
+                            subtitle = "解析分享链接（vless/vmess/trojan/ss/hysteria2/wireguard）",
+                            icon = Icons.Filled.ContentPaste,
+                            onClick = {
+                                val clip = clipboardText(context)
+                                if (clip.isNullOrBlank()) {
+                                    importResult = "剪贴板为空"
+                                } else {
+                                    val parsed = com.sbai.service.ShareLinkParser.parseSubscription(clip)
+                                    if (parsed.isEmpty()) {
+                                        importResult = "未识别到可解析的节点链接"
+                                    } else {
+                                        parsed.forEach { p ->
+                                            store.upsertProxyNode(ProxyNode(name = p.name, outboundJson = p.outboundJson))
+                                        }
+                                        importResult = "已导入 ${parsed.size} 个节点"
+                                    }
+                                }
+                            },
+                        )
+                    }
+                    importResult?.let { msg ->
+                        item {
+                            SbItem(title = "导入结果", subtitle = msg)
+                        }
+                    }
+                    }
+                    // 订阅源
                     // 测速/切换反馈只显示一次（在订阅列表顶部），不在每个卡片上方重复
                     if (testFeedback != null) {
                         item {
@@ -829,148 +940,9 @@ fun HomeScreen() {
                             }
                         }
                 }
+                }
             }
             item { SbSpacer() }
-
-            // ---- 节点 ----
-            // 批量测速面板：对所有启用节点逐个 URLTest，结果回填（参考 LxBox 009 列表测速）
-            if (coreConnected && proxyNodes.any { it.enabled }) {
-                item {
-                    SbItem(
-                        title = if (batchTestProgress in 0..99) "批量测速中… ${batchTestProgress}%" else "批量测速（所有节点）",
-                        subtitle = "逐个节点 URLTest，并发 6，结果回填到节点延迟",
-                        icon = Icons.Filled.Bolt,
-                        onClick = {
-                            if (batchTestProgress == -1) {
-                                scope.launch {
-                                    batchTestProgress = 0
-                                    try {
-                                        val groupTag = proxyGroups
-                                            .firstOrNull { it.type == "urltest" }?.tag
-                                            ?: proxyGroups.firstOrNull { it.type == "selector" }?.tag
-                                            ?: "lb"
-                                        val results = NodeBatchTester.testNodes(
-                                            nodes = proxyNodes,
-                                            groupTag = groupTag,
-                                            onProgress = { done, total ->
-                                                batchTestProgress = if (total == 0) 100 else done * 100 / total
-                                            },
-                                        )
-                                        NodeBatchTester.applyResults(store, results)
-                                    } finally {
-                                        batchTestProgress = -1
-                                    }
-                                }
-                            }
-                        },
-                    )
-                    Spacer(Modifier.height(8.dp))
-                }
-            }
-            item {
-                SbGroup(title = "本地源（${standaloneNodes}）") {
-                    // 搜索过滤（订阅节点在订阅卡片内展开，这里只列手动/剪贴板导入的独立节点）
-                    item {
-                        Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
-                            OutlinedTextField(
-                                value = nodeFilterQuery,
-                                onValueChange = { nodeFilterQuery = it },
-                                label = { Text("搜索（名称/地区）") },
-                                singleLine = true,
-                                modifier = Modifier.fillMaxWidth(),
-                                trailingIcon = {
-                                    if (nodeFilterQuery.isNotBlank()) {
-                                        IconButton(onClick = { nodeFilterQuery = "" }) {
-                                            Icon(Icons.Filled.Close, contentDescription = "清除", tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        }
-                item { Spacer(Modifier.height(120.dp)) }
-                                    }
-                                },
-                            )
-                            Spacer(Modifier.height(4.dp))
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                FilterChip(
-                                    selected = nodeFilterNoDelay,
-                                    onClick = { nodeFilterNoDelay = !nodeFilterNoDelay },
-                                    label = { Text("无延迟") },
-                                )
-                                SingleChoiceSegmentedButtonRow {
-                                    SegmentedButton(
-                                        selected = nodeSortMode == NodeSortMode.NAME_ASC,
-                                        onClick = { nodeSortMode = if (nodeSortMode == NodeSortMode.NAME_ASC) NodeSortMode.LATENCY_ASC else NodeSortMode.NAME_ASC },
-                                        shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
-                                    ) { Text("名称↑") }
-                                    SegmentedButton(
-                                        selected = nodeSortMode == NodeSortMode.LATENCY_ASC,
-                                        onClick = { nodeSortMode = if (nodeSortMode == NodeSortMode.LATENCY_ASC) NodeSortMode.NAME_ASC else NodeSortMode.LATENCY_ASC },
-                                        shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
-                                    ) { Text("延迟↑") }
-                                }
-                            }
-                        }
-                    }
-                    // 独立节点（subscriptionId==null，即 WARP / 手动添加 / 剪贴板导入）：
-                    for (row in filteredStandaloneNodes) {
-                        item(key = "standalone-${row.node.id}") {
-                            StandaloneNodeRow(
-                                node = row.node,
-                                subtitle = row.subtitle,
-                                testing = testingNodeId == row.node.id,
-                                onToggle = {
-                                    store.upsertProxyNode(row.node.copy(enabled = !row.node.enabled, disabledReason = null))
-                                },
-                                onTest = { testSingleNode(row.node) },
-                                onClick = { editingNode = row.node },
-                                onDelete = { store.deleteProxyNode(row.node.id) },
-                            )
-                        }
-                    }
-                    item {
-                        SbItem(
-                            title = "获取 WARP（免费隧道）",
-                            subtitle = "一键注册 Cloudflare WARP，生成 WireGuard 节点",
-                            icon = Icons.Filled.CloudDownload,
-                            onClick = { showWarpDialog = true },
-                        )
-                    }
-                    item {
-                        SbItem(
-                            title = "手动添加节点",
-                            subtitle = "粘贴 sing-box outbound JSON",
-                            icon = Icons.Filled.Add,
-                            onClick = { editingNode = ProxyNode() },
-                        )
-                    }
-                    item {
-                        SbItem(
-                            title = "从剪贴板导入",
-                            subtitle = "解析分享链接（vless/vmess/trojan/ss/hysteria2/wireguard）",
-                            icon = Icons.Filled.ContentPaste,
-                            onClick = {
-                                val clip = clipboardText(context)
-                                if (clip.isNullOrBlank()) {
-                                    importResult = "剪贴板为空"
-                                } else {
-                                    val parsed = com.sbai.service.ShareLinkParser.parseSubscription(clip)
-                                    if (parsed.isEmpty()) {
-                                        importResult = "未识别到可解析的节点链接"
-                                    } else {
-                                        parsed.forEach { p ->
-                                            store.upsertProxyNode(ProxyNode(name = p.name, outboundJson = p.outboundJson))
-                                        }
-                                        importResult = "已导入 ${parsed.size} 个节点"
-                                    }
-                                }
-                            },
-                        )
-                    }
-                    importResult?.let { msg ->
-                        item {
-                            SbItem(title = "导入结果", subtitle = msg)
-                        }
-                    }
-                }
-            }
         }
     }
 
