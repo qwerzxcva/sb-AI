@@ -823,7 +823,7 @@ class SingBoxConfigGeneratorTest {
 
     @Test
     fun `tun stack from settings`() {
-        val cfg = parse(AppState(settings = com.sbai.data.AppSettings(tunStack = "gvisor")))
+        val cfg = parse(AppState(settings = com.sbai.data.AppSettings(tunStack = com.sbai.data.TunStack.GVISOR)))
         assertEquals("gvisor", cfg["inbounds"]!!.jsonArray.first().jsonObject["stack"]!!.jsonPrimitive.content)
     }
 

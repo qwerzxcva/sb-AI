@@ -159,15 +159,15 @@ fun SettingsKernelScreen(navController: NavHostController) {
                         Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
                             Text("TUN 网络栈", style = MaterialTheme.typography.labelLarge)
                             Spacer(Modifier.height(8.dp))
-                            val stacks = listOf(
-                                Triple("system", "system", "系统协议栈"),
-                                Triple("gvisor", "gVisor", "用户态协议栈，兼容性最好"),
-                                Triple("mixed", "mixed", "系统 TCP + gVisor UDP"),
-                            )
-                            stacks.forEach { (stack, title, subtitle) ->
+                            com.sbai.data.TunStack.entries.forEach { stack ->
                                 com.sbai.ui.components.SbChoiceCard(
-                                    title = title,
-                                    subtitle = subtitle,
+                                    title = stack.displayName,
+                                    subtitle = when (stack) {
+                                        com.sbai.data.TunStack.SYSTEM -> "系统协议栈"
+                                        com.sbai.data.TunStack.GVISOR -> "用户态协议栈，兼容性最好"
+                                        com.sbai.data.TunStack.MIPS -> "Clash 兼容栈（仅 sb-lxf 内核）"
+                                        com.sbai.data.TunStack.MIXED -> "系统 TCP + gVisor UDP"
+                                    },
                                     selected = settings.tunStack == stack,
                                     onClick = { store.updateSettings(settings.copy(tunStack = stack)) },
                                     modifier = Modifier.padding(vertical = 3.dp),

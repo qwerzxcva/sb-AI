@@ -226,6 +226,19 @@ object SingBoxConfigGenerator {
                     state.settings.dnsDefaultNameserver.forEach { add(it) }
                 }
 
+                // 增强模式（fakeip / normal / hosts）
+                if (state.settings.dnsEnhancedMode == "fakeip") {
+                    put("enhanced_mode", "fakeip")
+                    // fakeIP 配置
+                    val fakeIpServer = state.dnsServers.firstOrNull {
+                        it.enabled && it.type == DnsServerType.FAKEIP
+                    }
+                    if (fakeIpServer != null) {
+                        put("fake_ip_range", fakeIpServer.inet4Range.ifBlank { state.settings.dnsFakeIpRange })
+                        putJsonArray("fake_ip_filter") { state.settings.dnsFakeIpFilter.forEach(::add) }
+                    }
+                }
+
                 // DNS 服务器列表
                 putJsonArray("servers") { dnsServers.forEach(::add) }
 
