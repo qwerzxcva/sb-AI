@@ -95,6 +95,8 @@ import com.sbai.service.SingBoxConfigGenerator
 import com.sbai.service.SubscriptionManager
 import com.sbai.ui.components.SbBadge
 import com.sbai.ui.components.SbChoiceCard
+import com.sbai.ui.components.GlassChoiceCard
+import com.sbai.ui.components.GlassSurface
 import com.sbai.ui.components.RestoreBottomBarOnDispose
 import com.sbai.ui.components.SbGroup
 import com.sbai.ui.components.SbItem
@@ -525,15 +527,14 @@ fun HomeScreen() {
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
                         // 系统模式卡：规则 / 全局（切换改 route.final + 是否输出路由规则，重启生效）
-                        androidx.compose.material3.Surface(
+                        GlassSurface(
                             modifier = Modifier.fillMaxWidth(),
-                            shape = MaterialTheme.shapes.large,
-                            color = MaterialTheme.colorScheme.surfaceContainer,
+                            cornerRadius = 24.dp,
                         ) {
                             Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                 Text("系统模式", style = MaterialTheme.typography.labelMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                SbChoiceCard(
+                                GlassChoiceCard(
                                     title = "规则",
                                     subtitle = "按路由规则决定直连、代理或拦截",
                                     selected = !globalMode,
@@ -542,7 +543,7 @@ fun HomeScreen() {
                                         testFeedback = if (coreRunning) "已切换为规则模式，重启 VPN 后生效" else null
                                     },
                                 )
-                                SbChoiceCard(
+                                GlassChoiceCard(
                                     title = "全局",
                                     subtitle = "所有流量都走当前出口",
                                     selected = globalMode,
@@ -563,28 +564,34 @@ fun HomeScreen() {
                 val liveSelected = proxyGroups.firstOrNull { it.tag == "proxy" }?.selected
                     ?.takeIf { it.isNotBlank() }
                 val effectiveSelected = liveSelected ?: selectedOutbound.ifBlank { "auto" }
-                SbGroup(title = "全局出口") {
-                    item {
-                        Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            SbChoiceCard(
-                                title = "自动",
-                                subtitle = "在全部节点里选延迟最低的",
-                                selected = effectiveSelected == "auto",
-                                onClick = { selectGlobalOutbound("auto") },
+                GlassSurface(
+                    modifier = Modifier.fillMaxWidth(),
+                    cornerRadius = 24.dp,
+                ) {
+                    Column(
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text("全局出口", style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.onSurface)
+                        GlassChoiceCard(
+                            title = "自动",
+                            subtitle = "在全部节点里选延迟最低的",
+                            selected = effectiveSelected == "auto",
+                            onClick = { selectGlobalOutbound("auto") },
+                        )
+                        GlassChoiceCard(
+                            title = "直连",
+                            subtitle = "不走代理",
+                            selected = effectiveSelected == "direct",
+                            onClick = { selectGlobalOutbound("direct") },
+                        )
+                        if (!coreConnected) {
+                            Text(
+                                "VPN 未运行：选择已记下，启动后生效",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
-                            SbChoiceCard(
-                                title = "直连",
-                                subtitle = "不走代理",
-                                selected = effectiveSelected == "direct",
-                                onClick = { selectGlobalOutbound("direct") },
-                            )
-                            if (!coreConnected) {
-                                Text(
-                                    "VPN 未运行：选择已记下，启动后生效",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
                         }
                     }
                 }

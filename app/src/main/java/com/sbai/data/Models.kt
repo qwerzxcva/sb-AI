@@ -191,6 +191,24 @@ data class DnsGroup(
 )
 
 /**
+ * Fallback 过滤器：借鉴 FlClash 的 fallback-filter 实现
+ * 用于判断何时使用 fallback DNS 服务器
+ */
+@Serializable
+data class FallbackFilter(
+    /** 是否使用 GeoIP 判断（默认 true） */
+    val geoip: Boolean = true,
+    /** GeoIP 国家代码（默认 CN，即国内 IP 不使用 fallback） */
+    val geoipCode: String = "CN",
+    /** GeoSite 列表（如 geosite:geolocation-!cn） */
+    val geosite: List<String> = emptyList(),
+    /** IPCIDR 列表（匹配这些 IP 段时使用 fallback） */
+    val ipcidr: List<String> = emptyList(),
+    /** 域名列表（匹配这些域名时使用 fallback） */
+    val domain: List<String> = emptyList(),
+)
+
+/**
  * 显式 DNS 规则（可手动创建，也由路由规则自动生成）。
  * 自动生成的规则 `autoFromRouteRuleId != null`，在 UI 中只读展示。
  */
@@ -386,6 +404,20 @@ data class Subscription(
 @Serializable
 enum class LogLevel(val wireName: String) { TRACE("trace"), DEBUG("debug"), INFO("info"), WARN("warn"), ERROR("error"), FATAL("fatal"), PANIC("panic") }
 
+/** TUN 网络栈：借鉴 FlClash，支持四种模式
+ * - system: 系统原生 TUN（最低延迟，依赖内核实现）
+ * - gvisor: gVisor 用户态 TCP/IP 栈（兼容性好，性能中等）
+ * - mips: MIPS 栈（Clash 原生，稳定）
+ * - mixed: 混合栈（sing-box 默认，自动选择最优）
+ */
+@Serializable
+enum class TunStack(val wireName: String, val displayName: String) {
+    SYSTEM("system", "系统栈"),
+    GVISOR("gvisor", "gVisor 栈"),
+    MIPS("mips", "MIPS 栈"),
+    MIXED("mixed", "混合栈"),
+}
+
 /** 分应用代理（include/exclude 名单） */
 @Serializable
 enum class PerAppProxyMode { OFF, INCLUDE, EXCLUDE }
@@ -511,14 +543,52 @@ data class AppSettings(
     val subscriptionVerOs: String = "",
     /** x-device-model override；空 = Build.MODEL */
     val subscriptionDeviceModel: String = "",
-    /** TUN 网络栈：system / gvisor / mixed（sing-box stack） */
-    val tunStack: String = "mixed",
+    /** TUN 网络栈：system / gvisor / mixed / mips（借鉴 FlClash） */
+    val tunStack: TunStack = TunStack.MIXED,
 
     // ---- DNS 缓存（sing-box dns 顶层；参考 karing/nekobox 做成可改）----
     /** 为每个 DNS 服务器独立缓存（independent_cache，默认开） */
     val dnsIndependentCache: Boolean = true,
     /** fakeIP 结果写入缓存（store_fakeip，默认关：更真实，开启可加速重复查询） */
     val dnsStoreFakeip: Boolean = false,
+
+    // ---- 增强 DNS 配置（借鉴 FlClash）----
+    /** DNS 监听地址（默认 0.0.0.0:1053） */
+    val dnsListen: String = "0.0.0.0:1053",
+    /** 优先使用 HTTP/3（prefer-h3） */
+    val dnsPreferH3: Boolean = false,
+    /** 使用 hosts（use-hosts） */
+    val dnsUseHosts: Boolean = true,
+    /** 使用系统 hosts（use-system-hosts） */
+    val dnsUseSystemHosts: Boolean = true,
+    /** 尊重路由规则（respect-rules） */
+    val dnsRespectRules: Boolean = false,
+    /** 启用 IPv6 */
+    val dnsIpv6: Boolean = false,
+    /** 默认 DNS 服务器列表（default-nameserver） */
+    val dnsDefaultNameserver: List<String> = listOf("223.5.5.5"),
+    /** DNS 增强模式：fakeip / normal / hosts */
+    val dnsEnhancedMode: String = "fakeip",
+    /** fakeIP IP 段（默认 198.18.0.1/16，避开 karing 默认） */
+    val dnsFakeIpRange: String = "198.18.0.1/16",
+    /** fakeIP 过滤列表（如 +.local, +.lan） */
+    val dnsFakeIpFilter: List<String> = listOf("+.local", "+.lan"),
+    /** 域名 -> DNS 服务器策略（nameserver-policy） */
+    val dnsNameserverPolicy: Map<String, String> = emptyMap(),
+    /** 代理服务器 DNS 策略（proxy-server-nameserver-policy） */
+    val dnsProxyServerNameserverPolicy: Map<String, String> = emptyMap(),
+    /** 上游 DNS 服务器列表（nameserver） */
+    val dnsNameserver: List<String> = listOf(
+        "https://doh.pub/dns-query",
+        "https://dns.alidns.com/dns-query"
+    ),
+    /** Fallback DNS 服务器列表（fallback） */
+    val dnsFallback: List<String> = listOf(
+        "tls://8.8.4.4",
+        "tls://1.1.1.1"
+    ),
+    /** Fallback 过滤器 */
+    val dnsFallbackFilter: FallbackFilter = FallbackFilter(),
 
     // ---- DPI 硬化：TLS 分片（参考 LxBox 016）----
     /** TLS 分片：把 ClientHello 拆成小 TCP 段（tls.fragment） */

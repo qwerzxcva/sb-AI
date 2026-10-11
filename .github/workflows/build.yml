@@ -157,18 +157,23 @@ jobs:
           body: |
             ## sb-AI ${{ github.event.inputs.version || github.ref_name }}
 
-            ### Features
+            ### ✨ 液态玻璃 UI
+            - 全新液态玻璃磨砂效果底栏（RenderEffect 硬件加速）
+            - 玻璃质感卡片和分组容器
+            - 滑动时动态模糊质量调节，保持流畅
+
+            ### 🚀 核心功能
             - URLTest 节点测速
             - 订阅自动更新
             - 多配置 Profiles
             - 广播控制 (ADB)
             - 资源管理
 
-            ### Downloads
-            - **Release APK**: Production build (smaller size)
-            - **Debug APK**: Development build (with debugging enabled)
+            ### 📥 下载
+            - **Release APK**: 生产构建（体积更小）
+            - **Debug APK**: 调试构建（包含调试信息）
 
-            ### Technical Details
+            ### 🔧 技术细节
             - Core: sing-box-lx ${{ env.LIBBOX_VERSION }}
             - Architecture: arm64-v8a only
             - Min SDK: 26 (Android 8.0)

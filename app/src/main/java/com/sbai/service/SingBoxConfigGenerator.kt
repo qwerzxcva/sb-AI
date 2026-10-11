@@ -82,6 +82,7 @@ object SingBoxConfigGenerator {
         val lb = state.loadBalance
 
         val finalProxyTag = when {
+            lb.enabled && lb.mode == LoadBalanceMode.MANUAL -> "lb-selector"
             lb.enabled -> "lb"
             nodeTags.size > 1 -> "proxy"
             nodeTags.size == 1 -> nodeTags[0]
@@ -108,13 +109,20 @@ object SingBoxConfigGenerator {
         val outbounds = buildJsonArray {
             if (lb.enabled) {
                 val lbOutbounds = lb.outbounds.filter { it in nodeTags }.ifEmpty { nodeTags }
-                add(buildJsonObject {
+                if (lb.mode == LoadBalanceMode.MANUAL) {
+                    add(buildJsonObject {
+                        put("type", "selector")
+                        put("tag", "lb-selector")
+                        putJsonArray("outbounds") { lbOutbounds.forEach(::add) }
+                        put("interrupt_exist_connections", lb.interruptExistConnections)
+                    })
+                } else add(buildJsonObject {
                         put("type", "urltest")
                         put("tag", "lb")
                         putJsonArray("outbounds") { lbOutbounds.forEach(::add) }
                         put("url", lb.checkUrl)
                         put("interval", lb.interval)
-                        put("tolerance", lb.toleranceMs)
+                        put("tolerance", if (lb.mode == LoadBalanceMode.LATENCY) 0 else lb.toleranceMs)
                         put("idle_timeout", lb.idleTimeout)
                         put("interrupt_exist_connections", lb.interruptExistConnections)
                         // fork 扩展：round_robin + balancer{pool,...} = 仅使用 N 个节点
@@ -205,16 +213,84 @@ object SingBoxConfigGenerator {
             }
 
             putJsonObject("dns") {
+                // 增强 DNS 配置（借鉴 FlClash）
+                put("listen", state.settings.dnsListen)
+                if (state.settings.dnsPreferH3) put("prefer_h3", true)
+                put("use_hosts", state.settings.dnsUseHosts)
+                put("use_system_hosts", state.settings.dnsUseSystemHosts)
+                if (state.settings.dnsRespectRules) put("respect_rules", true)
+                if (state.settings.dnsIpv6) put("ipv6", true)
+
+                // 默认 DNS 服务器（用于解析域名形式的节点 server）
+                putJsonArray("default_nameserver") {
+                    state.settings.dnsDefaultNameserver.forEach { add(it) }
+                }
+
+                // 增强模式（fakeip / normal / hosts）
+                if (state.settings.dnsEnhancedMode == "fakeip") {
+                    put("enhanced_mode", "fakeip")
+                    // fakeIP 配置
+                    val fakeIpServer = state.dnsServers.firstOrNull { 
+                        it.enabled && it.type == DnsServerType.FAKEIP 
+                    }
+                    if (fakeIpServer != null) {
+                        put("fake_ip_range", fakeIpServer.inet4Range.ifBlank { state.settings.dnsFakeIpRange })
+                        put("fake_ip_filter", state.settings.dnsFakeIpFilter)
+                    }
+                }
+
+                // DNS 服务器列表
                 putJsonArray("servers") { dnsServers.forEach(::add) }
+
+                // DNS 规则
                 putJsonArray("rules") { dnsRules.forEach(::add) }
-                // §246 hotfix：sing-box 1.14+ 全局 dns.strategy 与 dns.rules 中的 query_type / ip_version
-                // 规则共存时触发内核 FATAL（「Legacy strategy DNS rule action option is deprecated…」），
-                // VPN 启动失败，用户感知为「连不上节点」。LxBox 通过 post-step 剥离冲突 rules 中的 legacy
-                // strategy 字段兜底（降级到全局 default 策略）。sb-AI 选择直接不输出全局 strategy，
-                // 因为 per-rule ip_strategy 已覆盖所有用户配置场景；保留此字段仅会造成无谓的启动失败。
-                // 参考：~/LxBox/app/lib/services/builder/post_steps/heal_legacy_dns_strategy.dart
-                // independent_cache 在 sing-box 1.14 已废弃；lx fork 会报 unknown field 拒启动。
-                // 一律不输出；UI 开关保留仅作记录。
+
+                // 域名 -> DNS 服务器策略（nameserver-policy）
+                if (state.settings.dnsNameserverPolicy.isNotEmpty()) {
+                    putJsonObject("nameserver_policy") {
+                        state.settings.dnsNameserverPolicy.forEach { (domain, server) ->
+                            putJsonArray(domain) { add(server) }
+                        }
+                    }
+                }
+
+                // 代理服务器 DNS 策略
+                if (state.settings.dnsProxyServerNameserverPolicy.isNotEmpty()) {
+                    putJsonObject("proxy_server_nameserver_policy") {
+                        state.settings.dnsProxyServerNameserverPolicy.forEach { (domain, server) ->
+                            putJsonArray(domain) { add(server) }
+                        }
+                    }
+                }
+
+                // 上游 DNS 服务器
+                putJsonArray("nameserver") {
+                    state.settings.dnsNameserver.forEach { add(it) }
+                }
+
+                // Fallback DNS 服务器
+                if (state.settings.dnsFallback.isNotEmpty()) {
+                    putJsonArray("fallback") {
+                        state.settings.dnsFallback.forEach { add(it) }
+                    }
+
+                    // Fallback 过滤器（借鉴 FlClash）
+                    val filter = state.settings.dnsFallbackFilter
+                    putJsonObject("fallback_filter") {
+                        if (!filter.geoip) put("geoip", false)
+                        put("geoip_code", filter.geoipCode)
+                        if (filter.geosite.isNotEmpty()) {
+                            putJsonArray("geosite") { filter.geosite.forEach(::add) }
+                        }
+                        if (filter.ipcidr.isNotEmpty()) {
+                            putJsonArray("ipcidr") { filter.ipcidr.forEach(::add) }
+                        }
+                        if (filter.domain.isNotEmpty()) {
+                            putJsonArray("domain") { filter.domain.forEach(::add) }
+                        }
+                    }
+                }
+
                 put("final", defaultDnsTag)
             }
 
@@ -311,8 +387,10 @@ object SingBoxConfigGenerator {
                     put("mtu", state.settings.mtu)
                     put("auto_route", true)
                     put("strict_route", state.settings.strictRoute)
-                    // TUN 网络栈：system / gvisor / mixed
-                    put("stack", state.settings.tunStack.ifBlank { "mixed" })
+                    // TUN 网络栈：借鉴 FlClash，支持 system/gvisor/mips/mixed
+                    put("stack", state.settings.tunStack.wireName)
+                    // DNS Hijack 模式（借鉴 FlClash）
+                    put("dns_mode", "hijack")
                     // sing-box 1.13 已移除 inbound 上的 legacy 字段（sniff / sniff_override_destination 等），
                     // 带上会被内核拒绝："legacy inbound fields are deprecated ... removed in sing-box 1.13.0"。
                     // 真机复现即为 VPN 无法启动的根因。嗅探改由 route.rules 中的 {"action":"sniff"} 承担（见下方路由规则）。
