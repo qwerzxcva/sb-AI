@@ -1,5 +1,4 @@
 package com.sbai.ui.home
-
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
@@ -119,7 +118,6 @@ import kotlinx.serialization.json.jsonPrimitive
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun HomeScreen() {
@@ -146,17 +144,14 @@ fun HomeScreen() {
     val selectedOutbound by remember(store) {
         store.state.map { it.selectedOutboundTag }.distinctUntilChanged()
     }.collectAsState(initial = remember(store) { store.state.value.selectedOutboundTag })
-
     val status by SbAiVpnService.status.collectAsState()
     val proxyGroups by SbCommandClient.groups.collectAsState()
     val coreConnected by SbCommandClient.connectedToService.collectAsState()
     val scope = rememberCoroutineScope()
     val tokens = LocalSbStyleTokens.current
-
     val subManager = remember { SubscriptionManager(store, context.applicationContext) }
     var refreshingId by remember { mutableStateOf<String?>(null) }
     var testFeedback by remember { mutableStateOf<String?>(null) }
-
     var editingNode by remember { mutableStateOf<ProxyNode?>(null) }
     var editingSub by remember { mutableStateOf<Subscription?>(null) }
     // 订阅删除确认（含无 URL 的本地订阅，如 WARP）
@@ -168,7 +163,6 @@ fun HomeScreen() {
     var testingNodeId by remember { mutableStateOf<String?>(null) }
     // WARP 注册对话框
     var showWarpDialog by remember { mutableStateOf(false) }
-
     val vpnPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult(),
     ) { result ->
@@ -184,7 +178,6 @@ fun HomeScreen() {
             android.util.Log.w("SbAI_VPN", "VPN permission denied or cancelled")
         }
     }
-
     // 点击启动/停止的统一入口。
     // 关键：:core 进程的 SbAiVpnService._status 是进程内 StateFlow，不跨进程共享，
     // UI 进程读到的恒为 Stopped。因此这里不能依赖 status 判断，
@@ -211,7 +204,6 @@ fun HomeScreen() {
             }
         }
     }
-
     // 全局出口选择：先写本地（卡片立刻变色），VPN 运行时再通知内核。
     fun selectGlobalOutbound(tag: String) {
         store.updateSelectedOutbound(tag)
@@ -226,7 +218,6 @@ fun HomeScreen() {
             testFeedback = "已记下「${if (tag == "auto") "自动" else if (tag == "direct") "直连" else tag}」，启动 VPN 后生效"
         }
     }
-
     // 单节点测速：触发内核 URLTest 后回填该节点延迟。
     // 需要 VPN 已运行（CommandServer 在线），否则提示先启动。
     fun testSingleNode(node: ProxyNode) {
@@ -264,7 +255,6 @@ fun HomeScreen() {
             testingNodeId = null
         }
     }
-
     // 节点过滤状态（sb-AI NodeListFilter 基准）
     var nodeFilterQuery by remember { mutableStateOf("") }
     var nodeFilterProtocol by remember { mutableStateOf("") }
@@ -273,8 +263,9 @@ fun HomeScreen() {
     var nodeSortMode by remember { mutableStateOf<NodeSortMode>(NodeSortMode.NAME_ASC) }
     // 订阅展开状态（节点内嵌在订阅卡片中）
     var expandedSubscriptionIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    // 本地源展开状态（节点源内的可展开/收起区块）
+    var localNodesExpanded by remember { mutableStateOf(true) }
     val lb = loadBalance
-
     // 节点过滤结果缓存：避免在 LazyListScope 里每次重组都重新解析节点 JSON。
     // 订阅 id → 订阅名（纯内存映射，不订阅完整 AppState）
     val subscriptionNames = remember(subscriptions) {
@@ -385,7 +376,6 @@ fun HomeScreen() {
     val running = effectivePhase == VpnRuntimeState.Phase.Running ||
         effectivePhase == VpnRuntimeState.Phase.Starting
     val coreRunning = running || coreConnected
-
     // 节点编辑器：整页（二级页面），不是弹窗
     editingNode?.let { node ->
         NodeEditorScreen(
@@ -398,7 +388,6 @@ fun HomeScreen() {
         )
         return
     }
-
     // 订阅编辑器：整页（二级页面），不是弹窗
     editingSub?.let { sub ->
         SubscriptionEditorDialog(
@@ -432,7 +421,6 @@ fun HomeScreen() {
         )
         return
     }
-
     // 订阅删除确认（含无 URL 的本地订阅，如 WARP）
     subToDelete?.let { sub ->
         AlertDialog(
@@ -460,7 +448,6 @@ fun HomeScreen() {
         )
         return
     }
-
     Scaffold { padding ->
         LazyColumn(
             modifier = Modifier
@@ -518,9 +505,7 @@ fun HomeScreen() {
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-
                     Spacer(Modifier.height(20.dp))
-
                     // ---- 系统模式卡（规则/全局，点选加深）——独占整行。 ----
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -558,7 +543,6 @@ fun HomeScreen() {
                 }
                 SbSpacer()
             }
-
             // ---- 全局出口：直连 / 自动（不放进订阅源，全局一份） ----
             item {
                 val liveSelected = proxyGroups.firstOrNull { it.tag == "proxy" }?.selected
@@ -597,7 +581,6 @@ fun HomeScreen() {
                 }
                 SbSpacer()
             }
-
             // ---- 实时流量卡（ClashFest 首页观感；运行中显示） ----
             if (coreRunning) {
                 item {
@@ -605,7 +588,6 @@ fun HomeScreen() {
                     SbSpacer()
                 }
             }
-
             // ---- 代理组（运行中：延迟/切换/测速） ----
             if (coreRunning && proxyGroups.isNotEmpty()) {
                 item {
@@ -650,20 +632,18 @@ fun HomeScreen() {
                     SbSpacer()
                 }
             }
-
             // ---- 节点源（合并订阅源 + 本地源；参考 Bettbox 节点源结构）----
             item {
                 SbGroup(title = "节点源 (${subscriptions.size} 条订阅 + ${standaloneNodes} 本地节点)") {
-                    var localExpanded by remember { mutableStateOf(true) }
                     item {
                         SbItem(
                             title = "本地源 (${standaloneNodes})",
-                            subtitle = if (localExpanded) "点击收起" else "点击展开",
-                            icon = if (localExpanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                            onClick = { localExpanded = !localExpanded },
+                            subtitle = if (localNodesExpanded) "点击收起" else "点击展开",
+                            icon = if (localNodesExpanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                            onClick = { localNodesExpanded = !localNodesExpanded },
                         )
                     }
-                    if (localExpanded) {
+                    if (localNodesExpanded) {
                     // 搜索过滤（订阅节点在订阅卡片内展开，这里只列手动/剪贴板导入的独立节点）
                     item {
                         Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
@@ -945,7 +925,6 @@ fun HomeScreen() {
             item { SbSpacer() }
         }
     }
-
     // ---- 对话框 ----
     if (showWarpDialog) {
         var warpBusy by remember { mutableStateOf(false) }
@@ -1003,13 +982,10 @@ fun HomeScreen() {
             },
         )
     }
-
 }
-
 // ---------------------------------------------------------------------------
 // 辅助
 // ---------------------------------------------------------------------------
-
 private fun statusText(status: SbAiVpnService.ServiceStatus): String = when (status) {
     is SbAiVpnService.ServiceStatus.Running -> "运行中"
     is SbAiVpnService.ServiceStatus.Starting -> "启动中…"
@@ -1017,7 +993,6 @@ private fun statusText(status: SbAiVpnService.ServiceStatus): String = when (sta
     is SbAiVpnService.ServiceStatus.Error -> "错误: ${status.message}"
     else -> "已停止"
 }
-
 /** :core 发布的跨进程阶段是状态来源；遥测连接不代表 VPN 正在运行。 */
 private fun displayVpnPhase(phase: VpnRuntimeState.Phase, message: String?): String = when (phase) {
     VpnRuntimeState.Phase.Starting -> "启动中…"
@@ -1030,11 +1005,9 @@ private fun displayVpnPhase(phase: VpnRuntimeState.Phase, message: String?): Str
     }
     VpnRuntimeState.Phase.Stopped -> "已停止"
 }
-
 private fun formatTime(epoch: Long): String =
     if (epoch <= 0) "未更新"
     else SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()).format(Date(epoch))
-
 /** 订阅选项开关行 */
 @Composable
 private fun SubOptionSwitch(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
@@ -1047,11 +1020,9 @@ private fun SubOptionSwitch(label: String, checked: Boolean, onChange: (Boolean)
         Text(label, style = MaterialTheme.typography.bodyMedium)
     }
 }
-
 // ---------------------------------------------------------------------------
 // ClashFest 风格首页卡片
 // ---------------------------------------------------------------------------
-
 @Composable
 private fun HomeTrafficCard() {
     // 内部独立 collect 高频流量状态，避免在 HomeScreen 顶层 collect 导致整页每 1s 重组
@@ -1094,7 +1065,6 @@ private fun HomeTrafficCard() {
         }
     }
 }
-
 @Composable
 private fun SubscriptionCard(
     sub: Subscription,
@@ -1163,7 +1133,6 @@ private fun SubscriptionCard(
                         }
                     }
                 }
-
                 if (hasTraffic) {
                     Spacer(Modifier.height(8.dp))
                     LinearProgressIndicator(
@@ -1186,7 +1155,6 @@ private fun SubscriptionCard(
         }
     }
 }
-
 @Composable
 private fun SelectableNodeRow(
     row: NodeRow,
@@ -1253,7 +1221,6 @@ private fun SelectableNodeRow(
         }
     }
 }
-
 /** 独立节点行（WARP / 手动添加 / 剪贴板导入，subscriptionId == null）：on/off 启停 + 单节点测速 + 点击编辑 + 删除 */
 @Composable
 private fun StandaloneNodeRow(
@@ -1326,7 +1293,6 @@ private fun StandaloneNodeRow(
         }
     }
 }
-
 // 从 outboundJson 提取摘要，用纯字符串查找而非 Json.parseToJsonElement 全量解析。
 // 节点列表渲染时对每个节点调用，全量 JSON 解析（含 tls/headers 等大字段）是回首页/滚动卡顿主因。
 private fun String.nodeSummary(): String {
@@ -1352,12 +1318,10 @@ private fun String.nodeSummary(): String {
         else -> "$type · $server:$port"
     }
 }
-
 private fun clipboardText(context: Context): String? = runCatching {
     val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
     cm.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(context)?.toString()
 }.getOrNull()
-
 private fun startVpn(context: Context) {
     android.util.Log.i("SbAI_VPN", "startVpn called")
     val intent = Intent(context, SbAiVpnService::class.java).setAction(SbAiVpnService.ACTION_START)
@@ -1366,16 +1330,13 @@ private fun startVpn(context: Context) {
     com.sbai.data.RuleStore.get(app).afterPendingWrites { ContextCompat.startForegroundService(app, intent) }
     android.util.Log.i("SbAI_VPN", "startVpn completed - service starting")
 }
-
 private fun stopVpn(context: Context) {
     val intent = Intent(context, SbAiVpnService::class.java).setAction(SbAiVpnService.ACTION_STOP)
     context.startService(intent)
 }
-
 // ---------------------------------------------------------------------------
 // 对话框
 // ---------------------------------------------------------------------------
-
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 private fun SubscriptionEditorDialog(
@@ -1406,11 +1367,9 @@ private fun SubscriptionEditorDialog(
     var filterProtocol by remember { mutableStateOf(initial.filterProtocol) }
     var filterRegion by remember { mutableStateOf(initial.filterRegion) }
     var error by remember { mutableStateOf<String?>(null) }
-
     // 整页编辑器（不再是弹窗）；拦截系统返回/侧滑回到首页
     BackHandler(enabled = true) { BottomBarController.show(); onDismiss() }
     RestoreBottomBarOnDispose()
-
     fun doSave() {
         val u = url.trim()
         // 只在新 URL 非空时校验格式：WARP 等无 URL 的本地订阅允许保存字段变更
@@ -1441,7 +1400,6 @@ private fun SubscriptionEditorDialog(
             ),
         )
     }
-
     Scaffold(
         topBar = {
             TopAppBar(
@@ -1477,7 +1435,6 @@ private fun SubscriptionEditorDialog(
                     modifier = Modifier.fillMaxWidth(),
                 )
                 OutlinedTextField(value = url, onValueChange = { url = it }, label = { Text("订阅 URL（http/https）") }, modifier = Modifier.fillMaxWidth(), minLines = 2)
-
                 // #13：订阅更新走哪个出口
                 Text("更新出口", style = MaterialTheme.typography.labelLarge)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1498,7 +1455,6 @@ private fun SubscriptionEditorDialog(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-
                 // 跳过证书校验（机场 CDN 证书不匹配时用）
                 SubOptionSwitch(
                     "跳过 TLS 证书校验",
@@ -1511,7 +1467,6 @@ private fun SubscriptionEditorDialog(
                         color = MaterialTheme.colorScheme.error,
                     )
                 }
-
                 // 禁止导入订阅自带的路由规则
                 SubOptionSwitch(
                     "禁用订阅规则",
@@ -1522,13 +1477,11 @@ private fun SubscriptionEditorDialog(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-
                 Text(
                     "订阅规则默认按直连 / 代理 / 拦截归并成三个规则集，在「路由」页查看。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-
                 // 把订阅节点按直连/代理/拦截分组到规则集
                 SubOptionSwitch(
                     "订阅节点分组到规则集",
@@ -1539,7 +1492,6 @@ private fun SubscriptionEditorDialog(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-
                 OutlinedTextField(
                     value = userAgent, onValueChange = { userAgent = it },
                     label = { Text("User-Agent（可选）") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
@@ -1583,7 +1535,6 @@ private fun SubscriptionEditorDialog(
                         label = { Text("替换为（可留空=删除匹配部分）") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
                     )
                 }
-
                 // ---- 节点后处理（SubscriptionOptions 基准） ----
                 Text("节点后处理", style = MaterialTheme.typography.labelLarge)
                 SubOptionSwitch("去重（同名节点保留第一个）", removeDuplicates) { removeDuplicates = it }
@@ -1597,7 +1548,6 @@ private fun SubscriptionEditorDialog(
                     SubOptionSwitch("移除不可用节点", removeUnavailable) { removeUnavailable = it }
                     SubOptionSwitch("按延迟排序", sortByLatency) { sortByLatency = it }
                 }
-
                 // 流量信息展示（来自 subscription-userinfo 头）
                 if (initial.trafficTotal > 0) {
                     val used = initial.trafficUpload + initial.trafficDownload
@@ -1616,13 +1566,9 @@ private fun SubscriptionEditorDialog(
             }
     }
 }
-
 // ---------------------------------------------------------------------------
 // 节点列表过滤器枚举
 // ---------------------------------------------------------------------------
-
 /** 预计算好的节点行：subtitle 在缓存阶段算好，composable 内不再解析 JSON */
 private data class NodeRow(val node: ProxyNode, val subtitle: String)
-
 enum class NodeSortMode { NAME_ASC, LATENCY_ASC }
-
