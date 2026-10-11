@@ -520,10 +520,10 @@ data class AppSettings(
     val tunStack: TunStack = TunStack.TSB_AI,
     /** tsbAI/go 栈的 multi_queue（Linux 多队列网络引擎；仅 tsbAI/go 生效） */
     val tunMultiQueue: Boolean = false,
-    // ---- sb-lxf SPEC 020 idle-suspend（与内核 lib_android_slim 的 lx_idle_suspend 构建 tag 配合） ----
-    /** 空闲隧道挂起阈值：超过此时间后未使用的隧道会被挂起，释放 recv-worker 内存并停止后台工作。0 = 不启用。 */
+    // ---- TUN 空闲挂起（SPEC 020，内核需支持 lx.wg.idle_suspend；否则该配置为 no-op） ----
+    /** 空闲挂起阈值（毫秒）：无流量超过该时长后挂起 TUN；0 = 关闭 */
     val idleSuspendDuration: Long = 0L,
-    /** 空闲隧道拆除阈值：已挂起的隧道在此时间后彻底释放设备/netstack，下次使用时重建。0 = 使用 idleSuspendDuration */
+    /** 挂起后拆除阈值（毫秒）：挂起态无流量超过该时长后拆除 TUN；0 = 不拆除 */
     val idleTeardownDuration: Long = 0L,
 
     // ---- DNS 高级功能（参考 FlClash/Bettbox/mihomo） ----
