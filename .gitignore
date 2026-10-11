@@ -27,4 +27,3 @@ app/libs/libbox.aar
 # ---- Docs artifacts (source jars used for API reference) ----
 docs/*.jar
 app/libs/*.aar
-jni/
