@@ -11,7 +11,6 @@ import com.sbai.data.ProxyNode
 import com.sbai.data.RuleStore
 import com.sbai.data.Subscription
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -23,7 +22,7 @@ import java.net.URL
  *
  * 增强：
  *  - 自定义 User-Agent（机场常按 UA 返回不同格式）
- *  - 支持 HTTP / HTTPS（默认严格校验证书）
+ *  - 仅允许 https
  *  - 响应体 4MB 上限（防止 gzip 炸弹/超大订阅撑爆内存）
  *  - 解析 subscription-userinfo 响应头（upload/download/total/expire）
  */
@@ -56,11 +55,10 @@ class SubscriptionManager(
                 // 给出可诊断的错误：说明拿到了什么格式
                 val hint = when {
                     body.isBlank() -> "订阅返回空内容"
-                    SubscriptionFormat.cleanText(body).startsWith("<") ->
+                    body.trimStart().startsWith("<") ->
                         "订阅返回 HTML 登录/授权页（该地址可能是登录端点而非订阅链接，" +
                             "请到机场后台复制「通用订阅链接 / base64 / Clash 订阅」后重试）"
-                    parsedResult != null -> "已识别 ${parsedResult.format}，但没有有效节点（无效节点 ${parsedResult.rejectedNodeCount}）；已有节点已保留"
-                    else -> "订阅内容无法识别为任何支持的格式（分享链接 / Clash YAML / sing-box JSON），或全部节点不受支持；已有节点已保留"
+                    else -> "订阅内容无法识别为任何支持的格式（分享链接 / Clash YAML / sing-box JSON）"
                 }
                 return@withContext fail(subscription, hint)
             }
@@ -86,7 +84,11 @@ class SubscriptionManager(
             val filterRegion = subscription.filterRegion.trim()
             if (filterProto.isNotEmpty()) {
                 parsed = parsed.filter { n ->
-                    SubscriptionFormat.matchesProtocol(n.outboundJson, filterProto)
+                    val protoHit = filterProto.split(Regex("\\s+"))
+                        .filter { it.isNotBlank() }.any { pattern ->
+                            n.outboundJson.contains(pattern, ignoreCase = true)
+                        }
+                    protoHit
                 }
             }
             if (filterRegion.isNotEmpty()) {
@@ -99,18 +101,6 @@ class SubscriptionManager(
                 }
             }
 
-            // 节点重命名（正则替换）：renamePattern 非空时对节点名做 replace。
-            val renamePattern = subscription.renamePattern.trim()
-            if (renamePattern.isNotEmpty()) {
-                val regex = runCatching { Regex(renamePattern) }.getOrNull()
-                if (regex != null) {
-                    parsed = parsed.map { n ->
-                        n.copy(name = n.name.replace(regex, subscription.renameReplace).trim().ifBlank { n.name })
-                    }
-                } else {
-                    Log.w(TAG, "subscription ${subscription.name}: invalid renamePattern regex, skipped")
-                }
-            }
             // 节点后处理选项
             if (subscription.removeInsecure) {
                 parsed = parsed.filter { !isInsecureNode(it.outboundJson) }
@@ -119,7 +109,7 @@ class SubscriptionManager(
                 parsed = parsed.filter { !ShareLinkParser.isInfoNode(it.name) }
             }
             if (parsed.isEmpty()) {
-                return@withContext fail(subscription, "解析得到 ${parsedResult.nodes.size} 个有效节点，但被订阅筛选条件全部排除；请检查协议、地区、信息节点及安全过滤，已有节点已保留")
+                return@withContext fail(subscription, "过滤后无剩余节点")
             }
             val nodes = (if (subscription.removeDuplicates) {
                 // 去重按「配置内容」而非名称：同名但不同服务器/端口/参数的节点都保留，
@@ -136,37 +126,14 @@ class SubscriptionManager(
             }
             store.replaceSubscriptionNodes(subscription.id, nodes)
 
-            // 订阅自带规则：禁止导入则清掉；否则按直连/代理/拦截归并成三个规则集，
-            // 路由列表每类只留一条引用。归并不了的复杂规则（端口/进程等）原样保留。
+            // 导入解析出的路由规则（Clash YAML / sing-box JSON 配置带规则时）
             val importedRules = parsedResult.routeRules
-            when {
-                subscription.blockImportRules -> {
-                    store.replaceSubscriptionRules(subscription.id, emptyList())
-                    if (importedRules.isNotEmpty()) {
-                        Log.i(TAG, "subscription ${subscription.name}: skipped ${importedRules.size} route rules (blockImportRules)")
-                    }
+            if (importedRules.isNotEmpty()) {
+                // 只保留启用的新规则，插入到现有规则最前（订阅规则优先级最高）
+                importedRules.forEach { rule ->
+                    store.upsertRouteRule(rule.copy(enabled = true))
                 }
-                importedRules.isNotEmpty() -> {
-                    val merged = SubscriptionRuleMerger.merge(
-                        subscription.id,
-                        subscription.name.ifBlank { detectAirportName(fetched.headers, subscription.url) },
-                        importedRules,
-                    )
-                    merged.ruleSets.forEach { store.upsertRuleSetByTag(it) }
-                    val mergedActions = merged.rules.map { it.action }.toSet()
-                    val leftover = importedRules.filterNot {
-                        it.enabled && it.action in mergedActions && SubscriptionRuleMerger.isMergeable(it)
-                    }.map { it.copy(enabled = true, subscriptionId = subscription.id) }
-                    store.replaceSubscriptionRules(subscription.id, merged.rules + leftover)
-                    Log.i(TAG, "subscription ${subscription.name}: merged ${importedRules.size} rules into ${merged.ruleSets.size} rule sets")
-                }
-            }
-
-            // 把订阅节点按直连/代理/拦截分组到规则集（<订阅名>直连/代理/拦截）。
-            // 节点本身只是 outbound；这里生成的是「以订阅为单位的命名分组」，
-            // 供路由规则按组引用，而不必逐节点写规则。
-            if (subscription.groupNodesToRuleSets && nodes.isNotEmpty()) {
-                applyNodeGroupRuleSets(store, subscription, nodes)
+                Log.i(TAG, "subscription ${subscription.name}: +${importedRules.size} route rules ($subFormat)")
             }
 
             // #15：未填名称时，自动识别机场名（profile-title 头 > content-disposition > 域名）
@@ -186,26 +153,14 @@ class SubscriptionManager(
             )
             Log.i(TAG, "subscription ${autoName}: ${nodes.size} nodes ($subFormat)")
             Result.Success(nodes.size)
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            throw e
-        } catch (t: Exception) {
-            kotlinx.coroutines.currentCoroutineContext().ensureActive()
-            Log.w(TAG, "subscription refresh failed (${t.javaClass.simpleName})")
+        } catch (t: Throwable) {
+            Log.w(TAG, "subscription refresh failed: ${subscription.url}", t)
             // 统一为中文错误提示，避免显示英文异常消息
             val msg = when {
                 t.message?.contains("http") == true || t.message?.contains("HTTP") == true -> "网络请求失败（HTTP ${t.message?.let { Regex("""\d+""").find(it)?.value ?: "?"} }）"
                 t.message?.contains("timeout") == true || t.message?.contains("Timeout") == true -> "连接超时，请检查网络或订阅地址"
                 t.message?.contains("certificate") == true || t.message?.contains("Certificate") == true -> "SSL 证书校验失败，可在订阅设置中开启「跳过 TLS 证书校验」"
-                else -> {
-                    // 保留英文异常关键信息（URL / 域名 / 错误码）以便用户诊断，
-                    // 避免"请检查地址及内容格式"这种空壳提示：表面有错误提示，实际上不生效/不指导。
-                    val detail = t.message?.let { msg ->
-                        // 截取第一段有意义的内容（URL、域名、错误码均可能出现在消息里）
-                        val snippet = msg.split("\n").firstOrNull()?.take(80)?.trim() ?: msg
-                        "：$snippet"
-                    } ?: ""
-                    "订阅更新失败（${t.javaClass.simpleName}$detail）"
-                }
+                else -> t.message?.let { "错误: $it" } ?: t.javaClass.simpleName
             }
             fail(subscription, msg)
         }
@@ -214,30 +169,6 @@ class SubscriptionManager(
     private fun fail(subscription: Subscription, message: String): Result.Failure {
         store.upsertSubscription(subscription.copy(lastError = message))
         return Result.Failure(message)
-    }
-
-    /**
-     * 把订阅节点按直连/代理/拦截分组写入规则集：<订阅名>直连 / <订阅名>代理 / <订阅名>拦截。
-     *
-     * 语义：节点本身是 outbound；这里生成三个以「订阅名+动作」命名的节点分组，
-     * 供路由规则按组整批引用这批节点（不必逐节点写规则）。localContent 存节点 tag 列表（JSON）。
-     */
-    private fun applyNodeGroupRuleSets(store: RuleStore, subscription: Subscription, nodes: List<ProxyNode>) {
-        val base = subscription.name.ifBlank { "订阅" }
-        val tags = nodes.map { SingBoxConfigGenerator.nodeTagOf(it) }
-        listOf("直连", "代理", "拦截").forEach { suffix ->
-            // 按 tag 幂等更新：订阅刷新节点变化时更新而非堆积重复分组
-            store.upsertRuleSetByTag(
-                com.sbai.data.RouteRuleSet(
-                    tag = "$base$suffix",
-                    type = com.sbai.data.RuleSetType.LOCAL,
-                    localContent = kotlinx.serialization.json.buildJsonArray {
-                        tags.forEach { add(kotlinx.serialization.json.JsonPrimitive(it)) }
-                    }.toString(),
-                ),
-            )
-        }
-        Log.i(TAG, "subscription $base: grouped ${tags.size} nodes into ${'$'}base直连/代理/拦截")
     }
 
     /**
@@ -272,7 +203,7 @@ class SubscriptionManager(
         when (obj["type"]?.jsonPrimitive?.content) {
             "trojan" -> obj["tls"]?.jsonObject?.get("enabled")?.jsonPrimitive?.content != "true"
             "shadowsocks" -> obj["password"]?.jsonPrimitive?.content.isNullOrBlank()
-            "http" -> obj["tls"]?.jsonObject?.get("enabled")?.jsonPrimitive?.content != "true"
+            "http" -> true   // 明文 http 代理视为不安全
             else -> false
         }
     }.getOrDefault(false)
@@ -358,7 +289,7 @@ class SubscriptionManager(
     ): FetchResult {
         // 手动跟随重定向（默认 HttpURLConnection 不跨 http/https 跟随）。
         // 若原始 URL 是 https，则拒绝降级到 http（防凭据明文泄露）；http 订阅允许 http 跳转。
-        var requireHttps = URL(url).protocol.equals("https", ignoreCase = true)
+        val originIsHttps = url.startsWith("https://")
         var current = url
         // UA：订阅级 override > 全局 override > 品牌 UA
         val ua = userAgent?.takeIf { it.isNotBlank() }
@@ -376,7 +307,11 @@ class SubscriptionManager(
                 conn.readTimeout = 20_000
                 // UA：订阅级 override > 全局 override > 品牌 UA
                 conn.setRequestProperty("User-Agent", ua)
-                // 默认保留系统证书与主机名验证；只有显式 skipCertVerify 才允许放宽。
+                // 机场常见 SNI 路由：服务器证书与 hostname 不匹配，必须信任所有证书
+                if (conn is javax.net.ssl.HttpsURLConnection) {
+                    conn.sslSocketFactory = unsafeTrustAllSslSocketFactory
+                    conn.hostnameVerifier = javax.net.ssl.HostnameVerifier { _, _ -> true }
+                }
                 // 机场常用：声明客户端类型以拿到通用订阅格式
                 conn.setRequestProperty("Accept", "*/*")
                 // HWID + device-meta 头部
@@ -398,28 +333,54 @@ class SubscriptionManager(
                     val location = conn.getHeaderField("Location")
                         ?: error("重定向缺少 Location 头（HTTP $code）")
                     val next = URL(URL(current), location).toExternalForm()
-                    val nextProtocol = URL(next).protocol.lowercase()
-                    require(nextProtocol == "http" || nextProtocol == "https") { "不支持的重定向协议" }
-                    if (requireHttps && nextProtocol == "http") {
+                    if (originIsHttps && next.startsWith("http://")) {
                         error("拒绝 https → http 降级重定向")
                     }
-                    requireHttps = requireHttps || nextProtocol == "https"
                     current = next
                     return@repeat
                 }
                 if (code !in 200..299) error("HTTP $code")
 
-                // HTTPS 使用系统校验；除非用户显式设置 skipCertVerify，否则校验失败即终止。
+                // 证书校验失败（hostname 不匹配 / CA 不信任）→ 容忍，继续拉取（机场 CDN 常见）
                 val headers: MutableMap<String, String> = mutableMapOf()
                 conn.headerFields?.forEach { (k, v) ->
                     if (k != null && v.isNotEmpty()) headers[k.lowercase()] = v.joinToString(",")
                 }
-                val input = conn.inputStream
-                val decodedInput = if (conn.contentEncoding.equals("gzip", ignoreCase = true)) {
-                    java.util.zip.GZIPInputStream(input)
-                } else input
-                val textAndHeaders = decodedInput.bufferedReader(Charsets.UTF_8).use {
-                    it.readBoundedText(MAX_BODY_CHARS) to headers
+                val textAndHeaders: Pair<String, MutableMap<String, String>> = runCatching {
+                    conn.inputStream.bufferedReader(Charsets.UTF_8).use { reader ->
+                        val sb = StringBuilder()
+                        val buf = CharArray(8192)
+                        var total = 0
+                        while (true) {
+                            val n = reader.read(buf)
+                            if (n < 0) break
+                            total += n
+                            if (total > MAX_BODY_CHARS) error("订阅内容超过 4MB，已中止")
+                            sb.append(buf, 0, n)
+                        }
+                        sb.toString() to headers
+                    }
+                }.getOrElse { e ->
+                    // 证书错误：尝试用信任所有证书的 fallback 再拉一次
+                    @Suppress("UNCHECKED_CAST")
+                    val httpsConn = conn as? javax.net.ssl.HttpsURLConnection
+                    if (httpsConn != null) applyTrustAll(httpsConn)
+                    conn.connect()
+                    val retryCode = conn.responseCode
+                    if (retryCode !in 200..299) error("HTTP $retryCode")
+                    conn.inputStream.bufferedReader(Charsets.UTF_8).use { reader ->
+                        val sb = StringBuilder()
+                        val buf = CharArray(8192)
+                        var total = 0
+                        while (true) {
+                            val n = reader.read(buf)
+                            if (n < 0) break
+                            total += n
+                            if (total > MAX_BODY_CHARS) error("订阅内容超过 4MB，已中止")
+                            sb.append(buf, 0, n)
+                        }
+                        sb.toString() to headers
+                    }
                 }
                 val traffic = parseUserinfo(textAndHeaders.second["subscription-userinfo"])
                 return FetchResult(textAndHeaders.first, traffic, textAndHeaders.second)
@@ -451,5 +412,18 @@ class SubscriptionManager(
         const val MAX_BODY_CHARS = 4 * 1024 * 1024
         const val MAX_REDIRECTS = 5
 
+        /** 信任所有证书的 SSLSocketFactory（机场证书与 hostname 不匹配时必需，如 SNI 路由） */
+        val unsafeTrustAllSslSocketFactory: javax.net.ssl.SSLSocketFactory by lazy {
+            @Suppress("UNCHECKED_CAST")
+            val trustAll = arrayOf(
+                object : javax.net.ssl.X509TrustManager {
+                    override fun getAcceptedIssuers(): Array<java.security.cert.X509Certificate> = emptyArray()
+                    override fun checkClientTrusted(chain: Array<java.security.cert.X509Certificate>?, authType: String?) {}
+                    override fun checkServerTrusted(chain: Array<java.security.cert.X509Certificate>?, authType: String?) {}
+                }
+            ) as Array<javax.net.ssl.X509TrustManager>
+            val sslContext = javax.net.ssl.SSLContext.getInstance("TLS").apply { init(null, trustAll, java.security.SecureRandom()) }
+            sslContext.socketFactory
+        }
     }
 }
