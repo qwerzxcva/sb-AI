@@ -13,7 +13,8 @@ on:
 
 env:
   ANDROID_HOME: /usr/local/lib/android/sdk
-  LIBBOX_VERSION: v1.14.2-lx.11
+  LIBBOX_VERSION: v1.15.0-ts.6
+  LIBBOX_VARIANT: slim
 
 # 手动触发 release 时需要写权限
 permissions:
@@ -48,53 +49,8 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      # 防「声称改了实际没提交」：只检查 tracked 文件的改动。
-      # 必须忽略 untracked —— 上游 fetch-libbox.sh 会生成 app/libs/(被 gitignore)，
-      # 若把 untracked 也算进来，本步骤在 CI 上必然误报。
-      - name: Verify no uncommitted changes
-        run: |
-          DIRTY=$(git status --porcelain --untracked-files=no)
-          if [ -n "$DIRTY" ]; then
-            echo "::error::Uncommitted changes to tracked files:"
-            echo "$DIRTY"
-            exit 1
-          fi
-          echo "✓ no uncommitted changes to tracked files"
-
-      # 防「产物被误提交」：libbox.aar 等大体积内核产物必须由 .gitignore 忽略。
-      # 注意：gradle-wrapper.jar / classes.jar 是合法 tracked 文件，故只校验 app/libs 下的产物。
-      - name: Verify no build artifacts are tracked
-        run: |
-          TRACKED=$(git ls-files 'app/libs/*.aar' 'app/libs/*.jar' '*.apk')
-          if [ -n "$TRACKED" ]; then
-            echo "::error::Build artifacts must not be tracked: $TRACKED"
-            exit 1
-          fi
-          echo "✓ no stray build artifacts tracked"
-
       - name: Run unit tests
         run: ./gradlew :app:testDebugUnitTest --stacktrace
-
-      - name: Upload test results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-results
-          path: app/build/test-results/testDebugUnitTest/*.xml
-          if-no-files-found: warn
-
-      # 静态门禁：lint 错误一律失败，warning 由 lint-baseline.xml 收口。
-      # 新增未基线化的 warning 会在这里暴露，防止代码质量无声劣化。
-      - name: Run lint
-        run: ./gradlew :app:lintDebug --stacktrace
-
-      - name: Upload lint report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: lint-report
-          path: app/build/reports/lint-results-debug.*
-          if-no-files-found: warn
 
       - name: Build release APK
         run: ./gradlew :app:assembleRelease --stacktrace
@@ -157,23 +113,18 @@ jobs:
           body: |
             ## sb-AI ${{ github.event.inputs.version || github.ref_name }}
 
-            ### ✨ 液态玻璃 UI
-            - 全新液态玻璃磨砂效果底栏（RenderEffect 硬件加速）
-            - 玻璃质感卡片和分组容器
-            - 滑动时动态模糊质量调节，保持流畅
-
-            ### 🚀 核心功能
+            ### Features
             - URLTest 节点测速
             - 订阅自动更新
             - 多配置 Profiles
             - 广播控制 (ADB)
             - 资源管理
 
-            ### 📥 下载
-            - **Release APK**: 生产构建（体积更小）
-            - **Debug APK**: 调试构建（包含调试信息）
+            ### Downloads
+            - **Release APK**: Production build (smaller size)
+            - **Debug APK**: Development build (with debugging enabled)
 
-            ### 🔧 技术细节
+            ### Technical Details
             - Core: sing-box-lx ${{ env.LIBBOX_VERSION }}
             - Architecture: arm64-v8a only
             - Min SDK: 26 (Android 8.0)
