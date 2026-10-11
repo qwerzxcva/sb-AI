@@ -1,6 +1,5 @@
 package com.sbai.service
 
-import android.content.Context
 import android.util.Log
 import io.nekohasekai.libbox.CommandClient
 import io.nekohasekai.libbox.CommandClientHandler
@@ -12,15 +11,7 @@ import io.nekohasekai.libbox.OutboundGroup
 import io.nekohasekai.libbox.OutboundGroupItem
 import io.nekohasekai.libbox.OutboundGroupItemIterator
 import io.nekohasekai.libbox.OutboundGroupIterator
-import io.nekohasekai.libbox.RemoteConnectionOptions
 import io.nekohasekai.libbox.StatusMessage
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import java.util.concurrent.ConcurrentLinkedQueue
@@ -29,7 +20,7 @@ import java.util.concurrent.ConcurrentLinkedQueue
  * libbox CommandClient 单例：连接正在运行的 sing-box 服务，
  * 订阅状态（流量/连接数）、代理组（延迟/选中）、日志与连接事件。
  *
- * 每个进程独立持有客户端；连接状态仅表示遥测通道，不代表 VPN 服务状态。
+ * 生命周期与 SbAiVpnService 绑定；UI 侧只读取 StateFlow。
  */
 object SbCommandClient : CommandClientHandler {
 
@@ -103,163 +94,85 @@ object SbCommandClient : CommandClientHandler {
     private val logQueue = ConcurrentLinkedQueue<LogLine>()
     private val logSeq = java.util.concurrent.atomic.AtomicLong(0)
     private const val MAX_LOGS = 500
-    private const val MAX_CONNECTIONS = 300
 
-    @Volatile private var client: CommandClient? = null
-    private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val lifecycleMutex = Mutex()
-    private val retryMutex = Mutex()
-    private val generation = java.util.concurrent.atomic.AtomicLong(0)
-    /** Lazy: merely observing a flow must not allocate native objects on the UI thread. */
-    private var connectionState: Connections? = null
-    // 主进程调用 configureRemote(context) 后，connectNow 会优先尝试远程连接（跨进程连 :core）。
-    // :core 进程不调 configureRemote → 走本地 newCommandClient（in-process），行为不变。
-    private var remoteContext: Context? = null
+    private var client: CommandClient? = null
+    /** libbox 连接状态机（Go 侧维护），与公开 StateFlow 区分命名 */
+    private var connectionState: Connections = Libbox.newConnections()
 
-    /** 主进程入口：声明本进程应以跨进程 remote 方式连接 :core 内核。幂等，disconnect 不清除。 */
-    fun configureRemote(context: Context) {
-        remoteContext = context.applicationContext
-    }
-
-    // Native callbacks can occur on another thread before connect/disconnect returns.
-    // Never hold a JVM monitor around native calls; stale handlers cannot publish state.
-    private fun handler(epoch: Long): CommandClientHandler =
-        java.lang.reflect.Proxy.newProxyInstance(
-            CommandClientHandler::class.java.classLoader,
-            arrayOf(CommandClientHandler::class.java),
-        ) { proxy, method, args ->
-            when (method.name) {
-                "toString" -> "SbCommandClientHandler($epoch)"
-                "hashCode" -> System.identityHashCode(proxy)
-                "equals" -> proxy === args?.firstOrNull()
-                else -> {
-                    if (generation.get() == epoch) {
-                        method.invoke(this, *(args ?: emptyArray()))
-                    } else null
-                }
-            }
-        } as CommandClientHandler
-
-    /** Compatibility entry point; all native lifecycle work is dispatched to IO. */
+    @Synchronized
     fun connect() {
-        val epoch = generation.get()
-        ioScope.launch { connectNow(epoch) }
+        if (client != null) return
+        val options = CommandClientOptions().apply {
+            addCommand(Libbox.CommandStatus)
+            addCommand(Libbox.CommandGroup)
+            addCommand(Libbox.CommandLog)
+            addCommand(Libbox.CommandConnections)
+            addCommand(Libbox.CommandOutbounds)  // lxbox: 节点明细回调
+            addCommand(Libbox.CommandDNS)       // lxbox: DNS 查询回调
+            addCommand(Libbox.CommandClashMode) // lxbox: Clash 模式回调
+            statusInterval = StatusIntervalNanos
+        }
+        val c = Libbox.newCommandClient(this, options)
+        runCatching { c.connect() }.onFailure {
+            Log.w(TAG, "command client connect failed", it)
+            return
+        }
+        client = c
+        // Connections 是 gobind 代理对象（无 close），直接换新实例，旧对象由 GC 释放 refnum
+        synchronized(connectionsLock) {
+            connectionState = Libbox.newConnections()
+        }
+        _connections.value = emptyList()
     }
 
-    private suspend fun connectNow(requestEpoch: Long) = lifecycleMutex.withLock {
-        if (generation.get() != requestEpoch || _connectedToService.value) return@withLock
-        val epoch = generation.incrementAndGet()
-        val old = client
-        client = null
-        runCatching { old?.disconnect() }
-        try {
-            synchronized(connectionsLock) { connectionState = Libbox.newConnections() }
-            _connections.value = emptyList()
-            val options = CommandClientOptions().apply {
-                addCommand(Libbox.CommandStatus)
-                addCommand(Libbox.CommandGroup)
-                addCommand(Libbox.CommandLog)
-                addCommand(Libbox.CommandConnections)
-                addCommand(Libbox.CommandOutbounds)
-                addCommand(Libbox.CommandDNS)
-                addCommand(Libbox.CommandClashMode)
-                statusInterval = StatusIntervalNanos
-            }
-            // 主进程若配置了 remoteContext，尝试跨进程远程连接；:core 进程留用本地连接。
-            // :core 不调 configureRemote，所以 remoteContext==null → 始终走 local。
-            val c = if (remoteContext != null) {
-                val config = LibboxRuntime.readCommandServerConfig(remoteContext!!)
-                if (config != null) {
-                    val rco = RemoteConnectionOptions().apply {
-                        setURL("127.0.0.1:${config.first}")
-                        setSecret(config.second)
-                    }
-                    Log.i(TAG, "using remote command client to 127.0.0.1:${config.first}")
-                    Libbox.newRemoteCommandClient(handler(epoch), options, rco)
-                } else {
-                    Log.w(TAG, "remote context configured but no command server config found; falling back to local")
-                    Libbox.newCommandClient(handler(epoch), options)
-                }
-            } else {
-                Libbox.newCommandClient(handler(epoch), options)
-            }
-            client = c // Own partial connections so failures can always release resources.
-            c.connect()
-        } catch (t: Exception) {
-            generation.compareAndSet(epoch, epoch + 1)
-            _connectedToService.value = false
-            val failed = client
-            client = null
-            runCatching { failed?.disconnect() }
-            Log.w(TAG, "command client connect failed", t)
+    /**
+     * 带重试的连接：服务可能尚未启动（:core 进程 CommandServer 未就绪），
+     * 轮询若干次直到连上或超时。用于点击启动后 / 进入首页时。
+     */
+    suspend fun connectWithRetry(attempts: Int = 10, delayMs: Long = 800) {
+        repeat(attempts) {
+            if (_connectedToService.value) return
+            connect()
+            if (_connectedToService.value) return
+            kotlinx.coroutines.delay(delayMs)
         }
     }
 
-    /** Deduplicated IO retries; failure never changes the authoritative VPN state. */
-    suspend fun connectWithRetry(attempts: Int = 10, delayMs: Long = 800) =
-        withContext(Dispatchers.IO) {
-            if (!retryMutex.tryLock()) return@withContext
-            try {
-                repeat(attempts) {
-                    if (_connectedToService.value) return@withContext
-                    connectNow(generation.get())
-                    if (_connectedToService.value) return@withContext
-                    kotlinx.coroutines.delay(delayMs)
-                }
-            } finally {
-                retryMutex.unlock()
-            }
-        }
-
+    @Synchronized
     fun disconnect() {
-        val epoch = generation.incrementAndGet() // Invalidate callbacks immediately.
         _status.value = DashboardStatus()
         _groups.value = emptyList()
         _connections.value = emptyList()
         _connectedToService.value = false
-        ioScope.launch {
-            lifecycleMutex.withLock {
-                // A newer request owns the client now; do not tear it down.
-                if (generation.get() != epoch) return@withLock
-                val c = client
-                client = null
-                runCatching { c?.disconnect() }
-                synchronized(connectionsLock) { connectionState = null }
-            }
+        val c = client
+        client = null
+        if (c != null) {
+            runCatching { c.disconnect() }
+        }
+        synchronized(connectionsLock) {
+            connectionState = Libbox.newConnections()
         }
     }
 
-    // 以下均为 libbox native 同步 IPC 调用（unix socket 往返），UI 点击直接调用会阻塞主线程；
-    // 真机 ANR 栈已证实 native CommandClient 调用在 main 线程会导致输入超时。统一投递到 IO。
-
     /** 关闭单条连接 */
     fun closeConnection(id: String) {
-        ioScope.launch {
-            runCatching { client?.closeConnection(id) }
-                .onFailure { Log.w(TAG, "closeConnection failed", it) }
-        }
+        runCatching { client?.closeConnection(id) }
+            .onFailure { Log.w(TAG, "closeConnection failed", it) }
     }
 
     /** 关闭全部连接 */
     fun closeAllConnections() {
-        ioScope.launch {
-            runCatching { client?.closeConnections() }
-                .onFailure { Log.w(TAG, "closeConnections failed", it) }
-        }
+        runCatching { client?.closeConnections() }
+            .onFailure { Log.w(TAG, "closeConnections failed", it) }
     }
 
     fun selectOutbound(groupTag: String, outboundTag: String) {
-        ioScope.launch {
-            runCatching { client?.selectOutbound(groupTag, outboundTag) }
-                .onFailure { Log.w(TAG, "selectOutbound failed", it) }
-        }
+        runCatching { client?.selectOutbound(groupTag, outboundTag) }
     }
 
     fun urlTest(groupTag: String) {
-        ioScope.launch {
-            runCatching { client?.urlTest(groupTag) }
-                .onFailure { Log.w(TAG, "urlTest failed for group: $groupTag", it) }
-        }
+        runCatching { client?.urlTest(groupTag) }
+            .onFailure { Log.w(TAG, "urlTest failed for group: $groupTag", it) }
     }
 
     /** 对指定节点执行单次测速 */
@@ -283,7 +196,7 @@ object SbCommandClient : CommandClientHandler {
             .flatMap { (_, items) -> items.entries }
             .associate { (tag, delay) -> tag to delay }
         val updatedNodes = state.proxyNodes.map { node ->
-            val delay = delayMap[SingBoxConfigGenerator.nodeTagOf(node)]
+            val delay = delayMap[node.name]
             if (delay != null && delay != node.urlTestDelay) {
                 changed = true
                 node.copy(urlTestDelay = delay, urlTestTime = System.currentTimeMillis())
@@ -304,14 +217,13 @@ object SbCommandClient : CommandClientHandler {
 
     override fun disconnected(message: String?) {
         _connectedToService.value = false
-        _status.value = DashboardStatus()
         if (!message.isNullOrBlank()) appendLog("[disconnected] $message")
     }
 
     override fun writeStatus(message: StatusMessage) {
         // 只在值真正变化时才更新，避免不必要的 recomposition
         val current = _status.value
-        if (current.connected && current.memory == message.memory &&
+        if (current.memory == message.memory &&
             current.connectionsIn == message.connectionsIn &&
             current.connectionsOut == message.connectionsOut &&
             current.uplink == message.uplink &&
@@ -396,13 +308,11 @@ object SbCommandClient : CommandClientHandler {
     override fun writeConnectionEvents(events: io.nekohasekai.libbox.ConnectionEvents) {        // events 由 Go 侧传入；用 libbox Connections 状态机维护（不手动解析事件类型）
         val snapshot = synchronized(connectionsLock) {
             runCatching {
-                val connectionState = connectionState ?: return@synchronized emptyList()
                 connectionState.applyEvents(events)
                 connectionState.filterState(Libbox.ConnectionStateActive.toInt())
                 buildList {
                     val it = connectionState.iterator()
-                    // Bound Kotlin allocation, not just the already-built published list.
-                    while (size < MAX_CONNECTIONS && it.hasNext()) {
+                    while (it.hasNext()) {
                         val c = it.next()
                         val proc = runCatching { c.processInfo }.getOrNull()
                         add(
@@ -430,8 +340,6 @@ object SbCommandClient : CommandClientHandler {
                 _connections.value
             }
         }
-        // 保留迭代器顺序的前 MAX_CONNECTIONS 条；不假定 native 迭代顺序为时间排序。
-        // Native 活动连接状态仍由内核维护，此处仅限制 UI 快照。
         _connections.value = snapshot
     }
 
@@ -465,6 +373,6 @@ object SbCommandClient : CommandClientHandler {
         _logs.value = logQueue.toList()
     }
 
-    internal const val StatusIntervalNanos = 1_000_000_000L // 1s（平衡实时性和性能）
+    private const val StatusIntervalNanos = 1_000_000_000L // 1s（平衡实时性和性能）
     private const val TAG = "SbCommandClient"
 }
