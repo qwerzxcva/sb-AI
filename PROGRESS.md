@@ -1,13 +1,5 @@
 # sb-AI 进度（第 17 段续跑起点）
 
-## 最新质量审查增量（基于 d151f34）
-
-- 完成 11 个审查切面：后台任务、资源生命周期、快照完整性、并发、窄屏底栏、TLS、测试与 CI 门禁。
-- 本地 Debug / Release 构建通过，147 测试通过（0 失败/错误/跳过），APK 签名与 arm64-v8a ABI 校验通过。
-- 完整证据与剩余风险：[11 项审查记录](docs/QUALITY_REVIEW_11_ROUNDS.md)。
-- 未配置 Git 凭据，尚未推送或触发 GitHub CI；没有真机卡顿/ANR 修复验收，不能宣称根治。
-
-
 > 目标：Kototoro 液态玻璃 UI + sing-box 内核基准 + 全面审核循环。
 > 当前核心状态（2026-05-04）：
 
@@ -94,32 +86,3 @@ b04421c refactor: 全面清理第三方项目引用（LxBox/Throne/AsteriskBOX/N
 - Release v1.0.0: https://github.com/qwerzxcva/sb-AI/releases/tag/v1.0.0
 - Release APK (28MB): https://github.com/qwerzxcva/sb-AI/releases/download/v1.0.0/sb-AI-arm64-v8a-release.apk
 - Debug APK (47MB): https://github.com/qwerzxcva/sb-AI/releases/download/v1.0.0/sb-AI-arm64-v8a-debug.apk
-
-## 第 18 段：深度优化与安全加固（第 6-9 轮审查）
-
-本轮对 sing-box 配置生成、订阅解析、资源管理和安全边界进行了深度审查与修复：
-
-1. **URLTest 与规则集修复**
-   - 修复 URLTest 结果回填逻辑，改用真实的内核测速结果而非固定延迟等待
-   - 修正 `.srs` 远程规则集格式声明为 `binary`，避免 sing-box 解析失败
-
-2. **订阅协议全面兼容**
-   - 新增 Tuic、AnyTLS、SSH、Hysteria (v1)、HTTP、SOCKS 分享链接解析支持
-   - 优化 Clash YAML 解析安全性，使用 `SafeConstructor` 防止任意类反序列化漏洞
-
-3. **资源泄漏与生命周期修复**
-   - 修复 `WarpClient` HTTP 连接泄漏问题，在 `finally` 块中强制 `disconnect()`
-   - 审查并确认所有 `HttpURLConnection` 和 `CommandClient` 生命周期管理正确
-
-4. **构建与测试验证**
-   - Debug/Release APK 构建成功 (Debug 48MB, Release 29MB)
-   - 200 个单元测试全部通过，无失败/错误/跳过
-
-### Git log（本轮新增）
-```
-21fa73c security: use SafeConstructor for SnakeYAML to prevent arbitrary class deserialization
-7127378 fix: prevent connection leak in WarpClient by disconnecting in finally block
-86abca6 feat: add share link parsing for tuic, anytls, ssh, hysteria, http, socks protocols
-2ed621e fix: use binary format for .srs remote rule sets
-14ef8fa fix: use fresh URLTest results instead of fixed wait and stale cache
-```
