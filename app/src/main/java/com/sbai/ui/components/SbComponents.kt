@@ -1,5 +1,6 @@
 package com.sbai.ui.components
 
+import android.os.Build
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
@@ -35,8 +36,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.BlurEffect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.TileMode
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -128,11 +132,20 @@ fun GlassChoiceCard(
             .fillMaxWidth()
             .clip(shape)
             .clickable(onClick = onClick)
-            .background(backgroundColor)
-            .border(
-                width = 1.dp,
-                color = if (selected) colors.primary.copy(alpha = 0.5f) else colors.outline.copy(alpha = 0.2f),
-                shape = shape,
+            .then(
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    Modifier.graphicsLayer {
+                        val px = 12.dp.toPx()  // 降低模糊半径
+                        renderEffect = BlurEffect(px, px, TileMode.Clamp)
+                    }.background(backgroundColor)
+                        .border(
+                            width = 1.dp,
+                            color = if (selected) colors.primary.copy(alpha = 0.5f) else colors.outline.copy(alpha = 0.2f),
+                            shape = shape,
+                        )
+                } else {
+                    Modifier.background(backgroundColor)
+                }
             )
             .padding(16.dp),
     ) {

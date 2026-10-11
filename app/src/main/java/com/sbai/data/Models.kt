@@ -164,30 +164,26 @@ enum class DnsServerType(val wireName: String) {
     FAKEIP("fakeip"),
 }
 
+/** TUN 网络栈：借鉴 FlClash，支持四种模式
+ * - system: 系统原生 TUN（最低延迟，依赖内核实现）
+ * - gvisor: gVisor 用户态 TCP/IP 栈（兼容性好，性能中等）
+ * - mips: MIPS 栈（Clash 原生，稳定）
+ * - mixed: 混合栈（sing-box 默认，自动选择最优）
+ */
+@Serializable
+enum class TunStack(val wireName: String, val displayName: String) {
+    SYSTEM("system", "系统栈"),
+    GVISOR("gvisor", "gVisor 栈"),
+    MIPS("mips", "MIPS 栈"),
+    MIXED("mixed", "混合栈"),
+}
+
 /** 静态 hosts 映射条目（host → IP 列表），供 hosts 类型 DNS 服务器使用 */
 @Serializable
 data class HostsEntry(
     val id: String = UUID.randomUUID().toString(),
     val host: String = "",
     val ips: List<String> = emptyList(),
-)
-
-/** 配置 Profile（多配置快照） */
-@Serializable
-data class ConfigProfile(
-    val id: String = UUID.randomUUID().toString(),
-    val name: String = "",
-    val createdAt: Long = System.currentTimeMillis(),
-    /** snapshot 为 AppState JSON 快照，导入时 replaceAll 还原 */
-    val snapshot: String = "",
-)
-
-/** DNS group：一组 DNS server 的命名集合（无需指定出口） */
-@Serializable
-data class DnsGroup(
-    val id: String = UUID.randomUUID().toString(),
-    val name: String = "",
-    val serverTags: List<String> = emptyList(),
 )
 
 /**
@@ -206,6 +202,24 @@ data class FallbackFilter(
     val ipcidr: List<String> = emptyList(),
     /** 域名列表（匹配这些域名时使用 fallback） */
     val domain: List<String> = emptyList(),
+)
+
+/** 配置 Profile（多配置快照） */
+@Serializable
+data class ConfigProfile(
+    val id: String = UUID.randomUUID().toString(),
+    val name: String = "",
+    val createdAt: Long = System.currentTimeMillis(),
+    /** snapshot 为 AppState JSON 快照，导入时 replaceAll 还原 */
+    val snapshot: String = "",
+)
+
+/** DNS group：一组 DNS server 的命名集合（无需指定出口） */
+@Serializable
+data class DnsGroup(
+    val id: String = UUID.randomUUID().toString(),
+    val name: String = "",
+    val serverTags: List<String> = emptyList(),
 )
 
 /**
@@ -242,7 +256,7 @@ data class DnsRule(
     val rewriteTtl: Int? = null,
     /** 本条规则级别的 ECS 覆盖 */
     val clientSubnet: String? = null,
-    /** 规则动作：route=路由到 server / route-options=改写应答 / reject=拒绝 / evaluate=先解析再二次匹配 / pre-defined=预定义 */
+    /** 规则动作：route=路由到 server / route-options=改写应答 / reject=拒绝 / pre-defined=预定义 */
     val action: String = "route",
     /** reject 方式的 rcode（route-options / reject 时用）：success / refused / formerror / notimp / nxdomain */
     val rcode: String = "",
@@ -403,20 +417,6 @@ data class Subscription(
 
 @Serializable
 enum class LogLevel(val wireName: String) { TRACE("trace"), DEBUG("debug"), INFO("info"), WARN("warn"), ERROR("error"), FATAL("fatal"), PANIC("panic") }
-
-/** TUN 网络栈：借鉴 FlClash，支持四种模式
- * - system: 系统原生 TUN（最低延迟，依赖内核实现）
- * - gvisor: gVisor 用户态 TCP/IP 栈（兼容性好，性能中等）
- * - mips: MIPS 栈（Clash 原生，稳定）
- * - mixed: 混合栈（sing-box 默认，自动选择最优）
- */
-@Serializable
-enum class TunStack(val wireName: String, val displayName: String) {
-    SYSTEM("system", "系统栈"),
-    GVISOR("gvisor", "gVisor 栈"),
-    MIPS("mips", "MIPS 栈"),
-    MIXED("mixed", "混合栈"),
-}
 
 /** 分应用代理（include/exclude 名单） */
 @Serializable

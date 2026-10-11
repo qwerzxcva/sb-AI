@@ -230,8 +230,8 @@ object SingBoxConfigGenerator {
                 if (state.settings.dnsEnhancedMode == "fakeip") {
                     put("enhanced_mode", "fakeip")
                     // fakeIP 配置
-                    val fakeIpServer = state.dnsServers.firstOrNull { 
-                        it.enabled && it.type == DnsServerType.FAKEIP 
+                    val fakeIpServer = state.dnsServers.firstOrNull {
+                        it.enabled && it.type == DnsServerType.FAKEIP
                     }
                     if (fakeIpServer != null) {
                         put("fake_ip_range", fakeIpServer.inet4Range.ifBlank { state.settings.dnsFakeIpRange })
@@ -389,8 +389,6 @@ object SingBoxConfigGenerator {
                     put("strict_route", state.settings.strictRoute)
                     // TUN 网络栈：借鉴 FlClash，支持 system/gvisor/mips/mixed
                     put("stack", state.settings.tunStack.wireName)
-                    // DNS Hijack 模式（借鉴 FlClash）
-                    put("dns_mode", "hijack")
                     // sing-box 1.13 已移除 inbound 上的 legacy 字段（sniff / sniff_override_destination 等），
                     // 带上会被内核拒绝："legacy inbound fields are deprecated ... removed in sing-box 1.13.0"。
                     // 真机复现即为 VPN 无法启动的根因。嗅探改由 route.rules 中的 {"action":"sniff"} 承担（见下方路由规则）。
@@ -769,18 +767,12 @@ object SingBoxConfigGenerator {
             val dnsServer = resolveDnsTag(rule.dnsTag, groupOfTag, state)
             val strategy = ipStrategy(rule.ipv4, rule.ipv6)
             if (dnsServer == null && strategy == null) return@forEach
-            
-            // DIRECT 规则生成 evaluate 组合：先用指定 DNS 解析，再根据解析出的 IP 匹配后续规则
-            // （类似 mihomo fallback-filter：国内域名先评估，解析出国内 IP 则直连）
-            val action = if (rule.action == RuleAction.ROUTE_DIRECT) "evaluate" else "route"
-            
             result.add(
                 DnsRule(
                     id = "auto-${rule.id}",
                     enabled = true,
                     autoFromRouteRuleId = rule.id,
                     name = "自动 · ${rule.name.ifBlank { "路由规则" }}",
-                    action = action,
                     domains = rule.domains,
                     domainSuffixes = rule.domainSuffixes,
                     domainKeywords = rule.domainKeywords,
@@ -830,8 +822,8 @@ object SingBoxConfigGenerator {
         val dnsDefinedTags = definedRuleSetTags(state)
         state.dnsRules.filter { it.enabled }.forEach { r ->
             val server = resolveDnsTag(r.server, groupOfTag, state)
-            // route/evaluate 动作必须有有效 server，否则整条跳过（避免悬空引用 / 残缺规则）
-            val needsServer = r.action.isBlank() || r.action == "route" || r.action == "evaluate"
+            // route 动作必须有有效 server，否则整条跳过（避免悬空引用 / 残缺规则）
+            val needsServer = r.action.isBlank() || r.action == "route"
             if (needsServer && server == null) return@forEach
             // DNS 规则为 AND 语义：引用未声明的规则集既无法命中又会导致内核拒绝配置 → 跳过
             if (r.ruleSetTags.any { resolveRuleSetTag(it) !in dnsDefinedTags }) return@forEach
@@ -853,11 +845,6 @@ object SingBoxConfigGenerator {
 
                 // 动作
                 when (r.action) {
-                    "evaluate" -> {
-                        put("action", "evaluate")
-                        // evaluate 动作必须有 server
-                        put("server", server!!)
-                    }
                     "reject" -> {
                         put("action", "reject")
                         if (r.rcode.isNotBlank() && r.rcode != "success") put("rcode", r.rcode)
@@ -871,10 +858,7 @@ object SingBoxConfigGenerator {
                     }
                     "pre-defined" -> put("action", "pre-defined")
                     else -> {
-                        // route / evaluate（空白默认 route）：server 已在上面校验非空
-                        if (r.action == "evaluate") {
-                            put("action", "evaluate")
-                        }
+                        // route：server 已在上面校验非空
                         put("server", server!!)
                     }
                 }
@@ -899,10 +883,6 @@ object SingBoxConfigGenerator {
             val strategy = ipStrategy(rule.ipv4, rule.ipv6)
             if (dnsServer == null && strategy == null) return@forEach
 
-            // DIRECT 规则生成 evaluate 组合：先用指定 DNS 解析，再根据解析出的 IP 二次匹配后续规则
-            // （类似 mihomo fallback-filter：国内域名先评估，解析出国内 IP 则直连）
-            val action = if (rule.action == RuleAction.ROUTE_DIRECT) "evaluate" else null
-
             result.add(buildJsonObject {
                 if (rule.domains.isNotEmpty()) putJsonArray("domain") { rule.domains.forEach(::add) }
                 if (rule.domainSuffixes.isNotEmpty()) putJsonArray("domain_suffix") { rule.domainSuffixes.forEach(::add) }
@@ -910,7 +890,6 @@ object SingBoxConfigGenerator {
                 if (rule.domainRegexes.isNotEmpty()) putJsonArray("domain_regex") { rule.domainRegexes.forEach(::add) }
                 put("server", dnsServer ?: defaultDnsTag)
                 if (strategy != null) put("ip_strategy", strategy)
-                if (action != null) put("action", action)
             })
         }
 
