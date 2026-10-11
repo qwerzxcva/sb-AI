@@ -15,6 +15,8 @@ import android.os.Process
 import android.system.ErrnoException
 import android.system.OsConstants
 import android.util.Log
+import io.nekohasekai.libbox.AutoRedirectHandler
+import io.nekohasekai.libbox.AutoRedirectSession
 import io.nekohasekai.libbox.BridgeOptions
 import io.nekohasekai.libbox.BridgeSession
 import io.nekohasekai.libbox.ConnectionOwner
@@ -260,6 +262,11 @@ class SbPlatformInterface(
     override fun usePlatformBridge(): Boolean = false
     override fun createBridge(options: BridgeOptions?): BridgeSession = unsupported("platform bridge")
     override fun registerMyInterface(name: String?) = Unit
+
+    // ---- Auto-Redirect（nftables 流量重定向，Linux 特性；Android 不支持） ----
+    override fun usePlatformAutoRedirect(): Boolean = false
+    override fun createAutoRedirect(options: ByteArray, handler: AutoRedirectHandler): AutoRedirectSession =
+        unsupported("platform auto-redirect")
 
     @Suppress("DEPRECATION")
     override fun readWIFIState(): WIFIState? {
