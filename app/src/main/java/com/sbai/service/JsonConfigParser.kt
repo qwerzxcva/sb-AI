@@ -9,7 +9,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
 /**
- * 完整 sing-box JSON 配置解析。Xray 的 protocol/settings 不可直接当作 sing-box 节点。
+ * 完整 JSON 配置解析（sing-box / xray 格式）。
  *
  * 支持多来源 fallback：
  *  - sing-box 完整配置（含 `outbounds[]`）→ 提取每个 outbound 为节点
@@ -32,23 +32,19 @@ object JsonConfigParser {
 
         // sing-box 完整配置 / xray 配置：取 outbounds[]
         val outbounds = when (root) {
-            is JsonObject -> JsonArray(
-                (root["outbounds"] as? JsonArray).orEmpty() +
-                    (root["endpoints"] as? JsonArray).orEmpty(),
-            )
+            is JsonObject -> root["outbounds"] as? JsonArray
             is JsonArray -> root
             else -> null
         } ?: return null
 
         val nodes = outbounds.mapNotNull { el ->
             val o = el as? JsonObject ?: return@mapNotNull null
-            val type = (o["type"] as? kotlinx.serialization.json.JsonPrimitive)?.content
-                ?: return@mapNotNull null // Xray protocol/settings is not sing-box JSON.
+            val type = o["type"]?.jsonPrimitive?.content
             // 跳过 sing-box 的系统 outbound（不是节点）
             if (type in setOf("selector", "urltest", "direct", "block", "dns")) return@mapNotNull null
-            val tag = (o["tag"] as? kotlinx.serialization.json.JsonPrimitive)?.content
+            val tag = o["tag"]?.jsonPrimitive?.content
             val name = tag?.takeIf { it.isNotBlank() }
-                ?: (o["server"] as? kotlinx.serialization.json.JsonPrimitive)?.content
+                ?: o["server"]?.jsonPrimitive?.content
                 ?: return@mapNotNull null
             ShareLinkParser.ParsedNode(name, o.toString())
         }
