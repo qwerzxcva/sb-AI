@@ -283,6 +283,41 @@ fun SettingsScreen() {
                                         )
                                     }
                                 }
+                                // TUN 空闲挂起（SPEC 020；内核需支持 lx.wg.idle_suspend，否则 no-op）
+                                Spacer(Modifier.height(12.dp))
+                                Text("TUN 空闲挂起", style = MaterialTheme.typography.labelLarge)
+                                Spacer(Modifier.height(6.dp))
+                                Text(
+                                    "无流量超过阈值后挂起 TUN，进一步省电；需 sb-lxf 内核支持（Leadaxe 扩展），旧内核下为 no-op。单位：分钟。",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                Spacer(Modifier.height(6.dp))
+                                Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp)) {
+                                    OutlinedTextField(
+                                        value = (settings.idleSuspendDuration / 60000L).toString(),
+                                        onValueChange = { txt ->
+                                            val m = txt.toLongOrNull() ?: 0L
+                                            store.updateSettings(settings.copy(idleSuspendDuration = m * 60000L))
+                                        },
+                                        label = { Text("挂起阈值（分钟，0=关）") },
+                                        singleLine = true,
+                                        modifier = Modifier.weight(1f),
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                    )
+                                    Spacer(Modifier.width(8.dp))
+                                    OutlinedTextField(
+                                        value = (settings.idleTeardownDuration / 60000L).toString(),
+                                        onValueChange = { txt ->
+                                            val m = txt.toLongOrNull() ?: 0L
+                                            store.updateSettings(settings.copy(idleTeardownDuration = m * 60000L))
+                                        },
+                                        label = { Text("拆除阈值（分钟）") },
+                                        singleLine = true,
+                                        modifier = Modifier.weight(1f),
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                    )
+                                }
                             }
                         }
                     }
@@ -307,47 +342,6 @@ fun SettingsScreen() {
                                 enabled = settings.ipv6Route,
                                 modifier = Modifier.fillMaxWidth(),
                             )
-                        }
-                    }
-                    // ---- sb-lxf SPEC 020 idle-suspend 节能（需要内核含 with_lx_idle_suspend，即 lib_android_slim 变体）----
-                    item {
-                        Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
-                            Text("TUN 节能（idle-suspend）", style = MaterialTheme.typography.labelLarge)
-                            Spacer(Modifier.height(4.dp))
-                            Text(
-                                "空闲隧道在指定时间后挂起/拆除，释放 recv-worker 内存并停止后台工作。仅 lib_android_slim 变体有效。",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                            Spacer(Modifier.height(8.dp))
-                            Row(
-                                Modifier.fillMaxWidth().padding(horizontal = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                OutlinedTextField(
-                                    value = if (settings.idleSuspendDuration > 0) "${settings.idleSuspendDuration / 1000 / 60}" else "",
-                                    onValueChange = {
-                                        val v = it.toLongOrNull() ?: 0L
-                                        store.updateSettings(settings.copy(idleSuspendDuration = v * 60_000L))
-                                    },
-                                    label = { Text("挂起阈值（分钟，0=关）") },
-                                    singleLine = true,
-                                    modifier = Modifier.weight(1f),
-                                    suffix = { Text("min") },
-                                )
-                                Spacer(Modifier.width(8.dp))
-                                OutlinedTextField(
-                                    value = if (settings.idleTeardownDuration > 0) "${settings.idleTeardownDuration / 1000 / 60}" else "",
-                                    onValueChange = {
-                                        val v = it.toLongOrNull() ?: 0L
-                                        store.updateSettings(settings.copy(idleTeardownDuration = v * 60_000L))
-                                    },
-                                    label = { Text("拆除阈值（分钟，0=继承）") },
-                                    singleLine = true,
-                                    modifier = Modifier.weight(1f),
-                                    suffix = { Text("min") },
-                                )
-                            }
                         }
                     }
                 }
