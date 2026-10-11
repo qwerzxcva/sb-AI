@@ -13,12 +13,11 @@ set -euo pipefail
 LIBBOX_VERSION="${LIBBOX_VERSION:-v1.15.0-ts.6}"
 # 默认使用 QWERZXCVA/sb-lxf（tsbAI 内核），基于上游 1.15.0-alpha.12
 REPO="${SB_LXF_REPO:-QWERZXCVA/sb-lxf}"
-# 内核变体：slim（默认，省电/省空间，drop usbip/openvpn/openconnect + 启用 lx_idle_suspend；
-# sb-AI 不引用这些传输，可安全使用）或 full（完整功能集，含 usbip/openvpn/openconnect）。
-LIBBOX_VARIANT="${LIBBOX_VARIANT:-slim}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DEST="$ROOT/app/libs/libbox.aar"
-# slim 变体产物名带 -slim 后缀；full 变体保持原名
+# slim = sb-lxf 精简内核（去 usbip/openvpn/openconnect，sb-AI 均未引用）；full = 全量。
+# slim AAR 比 full 小 ~10MB，功耗/体积更优；默认走 slim。
+LIBBOX_VARIANT="${LIBBOX_VARIANT:-slim}"
 if [[ "$LIBBOX_VARIANT" == "slim" ]]; then
   AAR_NAME="libbox-${LIBBOX_VERSION#v}-slim.aar"
   SHA_FILE="SHA256SUMS.all"
@@ -31,8 +30,8 @@ MARKER="$ROOT/app/libs/.libbox.version"
 
 mkdir -p "$(dirname "$DEST")"
 
-if [[ -f "$DEST" && -f "$MARKER" && "$(cat "$MARKER")" == "$LIBBOX_VERSION" && "${FORCE:-0}" != "1" ]]; then
-  echo "✓ libbox.aar already $LIBBOX_VERSION — skipping"
+if [[ -f "$DEST" && -f "$MARKER" && "$(cat "$MARKER")" == "${LIBBOX_VERSION}/${LIBBOX_VARIANT}" && "${FORCE:-0}" != "1" ]]; then
+  echo "✓ libbox.aar already ${LIBBOX_VERSION} (${LIBBOX_VARIANT}) — skipping"
   exit 0
 fi
 
@@ -41,32 +40,27 @@ trap 'rm -rf "$TMP"' EXIT
 
 echo "→ Fetching $AAR_NAME ($REPO @ $LIBBOX_VERSION, variant=$LIBBOX_VARIANT)"
 # 下载 AAR；slim 变体若 404（旧 release 可能没有 -slim 产物）自动回退到 full
-if ! curl -fsSL --retry 3 -o "$TMP/$AAR_NAME" "$BASE_URL/$AAR_NAME"; then
+if ! curl -fsSL --retry 3 -o "$TMP/$AAR_NAME" "$BASE_URL/$AAR_NAME" 2>/dev/null; then
   if [[ "$LIBBOX_VARIANT" == "slim" ]]; then
-    echo "⚠  slim AAR not available for $LIBBOX_VERSION — falling back to full"
+    echo "  ⚠ slim AAR 不存在，回退到 full 变体"
     LIBBOX_VARIANT="full"
     AAR_NAME="libbox-${LIBBOX_VERSION#v}.aar"
     SHA_FILE="SHA256SUMS"
     curl -fsSL --retry 3 -o "$TMP/$AAR_NAME" "$BASE_URL/$AAR_NAME"
+  else
+    curl -fsSL --retry 3 -o "$TMP/$AAR_NAME" "$BASE_URL/$AAR_NAME"
   fi
 fi
 # 优先用合并的 SHA256SUMS.all（含 full + slim）；不存在时回退到 SHA256SUMS
-if [[ "$LIBBOX_VARIANT" == "slim" ]]; then
-  SHA_FILE="SHA256SUMS.all"
+if ! curl -fsSL --retry 3 -o "$TMP/$SHA_FILE" "$BASE_URL/$SHA_FILE" 2>/dev/null; then
+  [[ "$SHA_FILE" != "SHA256SUMS" ]] && curl -fsSL --retry 3 -o "$TMP/SHA256SUMS" "$BASE_URL/SHA256SUMS" && SHA_FILE="SHA256SUMS"
 fi
-curl -fsSL --retry 3 -o "$TMP/$SHA_FILE" "$BASE_URL/$SHA_FILE" || \
-  curl -fsSL --retry 3 -o "$TMP/$SHA_FILE" "$BASE_URL/SHA256SUMS"
 
-# 校验 SHA256（slim 变体在 SHA256SUMS.all 中；full 变体在 SHA256SUMS 中）
+# 校验 SHA256
 (
   cd "$TMP"
-  if grep -E "  ?$AAR_NAME\$" "$SHA_FILE" > expected.sum 2>/dev/null; then
-    sha256sum -c expected.sum
-  elif [[ "$SHA_FILE" == "SHA256SUMS.all" ]] && grep -E "  ?$AAR_NAME\$" SHA256SUMS > expected.sum 2>/dev/null; then
-    sha256sum -c expected.sum
-  else
-    echo "⚠  no SHA256 entry for $AAR_NAME — skipping verification"
-  fi
+  grep -E "  ?$AAR_NAME\$" "$SHA_FILE" > expected.sum || { echo "no SHA256 entry for $AAR_NAME"; exit 0; }
+  sha256sum -c expected.sum
 )
 
 # 仅保留 arm64-v8a（项目要求只支持 ARMv8），把 115MB 降到 ~79MB
@@ -86,5 +80,5 @@ print(f"✓ kept ABIs: {abis}")
 assert abis == ['arm64-v8a'], f"expected arm64-v8a only, got {abis}"
 PY
 
-printf '%s' "$LIBBOX_VERSION" > "$MARKER"
-echo "✅ $DEST ← $LIBBOX_VERSION ($(du -h "$DEST" | cut -f1))"
+printf '%s' "${LIBBOX_VERSION}/${LIBBOX_VARIANT}" > "$MARKER"
+echo "✅ $DEST ← ${LIBBOX_VERSION}/${LIBBOX_VARIANT} ($(du -h "$DEST" | cut -f1))"
