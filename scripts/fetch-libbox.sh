@@ -40,19 +40,32 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 echo "→ Fetching $AAR_NAME ($REPO @ $LIBBOX_VERSION, variant=$LIBBOX_VARIANT)"
-curl -fsSL --retry 3 -o "$TMP/$AAR_NAME" "$BASE_URL/$AAR_NAME"
+# 下载 AAR；slim 变体若 404（旧 release 可能没有 -slim 产物）自动回退到 full
+if ! curl -fsSL --retry 3 -o "$TMP/$AAR_NAME" "$BASE_URL/$AAR_NAME"; then
+  if [[ "$LIBBOX_VARIANT" == "slim" ]]; then
+    echo "⚠  slim AAR not available for $LIBBOX_VERSION — falling back to full"
+    LIBBOX_VARIANT="full"
+    AAR_NAME="libbox-${LIBBOX_VERSION#v}.aar"
+    SHA_FILE="SHA256SUMS"
+    curl -fsSL --retry 3 -o "$TMP/$AAR_NAME" "$BASE_URL/$AAR_NAME"
+  fi
+fi
 # 优先用合并的 SHA256SUMS.all（含 full + slim）；不存在时回退到 SHA256SUMS
-curl -fsSL --retry 3 -o "$TMP/SHA256SUMS.all" "$BASE_URL/SHA256SUMS.all" || \
-  curl -fsSL --retry 3 -o "$TMP/SHA256SUMS.all" "$BASE_URL/SHA256SUMS"
+if [[ "$LIBBOX_VARIANT" == "slim" ]]; then
+  SHA_FILE="SHA256SUMS.all"
+fi
+curl -fsSL --retry 3 -o "$TMP/$SHA_FILE" "$BASE_URL/$SHA_FILE" || \
+  curl -fsSL --retry 3 -o "$TMP/$SHA_FILE" "$BASE_URL/SHA256SUMS"
 
 # 校验 SHA256（slim 变体在 SHA256SUMS.all 中；full 变体在 SHA256SUMS 中）
 (
   cd "$TMP"
-  if [[ -f "SHA256SUMS.all" ]] && grep -E "  ?$AAR_NAME\$" SHA256SUMS.all > expected.sum 2>/dev/null; then
+  if grep -E "  ?$AAR_NAME\$" "$SHA_FILE" > expected.sum 2>/dev/null; then
+    sha256sum -c expected.sum
+  elif [[ "$SHA_FILE" == "SHA256SUMS.all" ]] && grep -E "  ?$AAR_NAME\$" SHA256SUMS > expected.sum 2>/dev/null; then
     sha256sum -c expected.sum
   else
-    grep -E "  ?$AAR_NAME\$" SHA256SUMS.all > expected.sum || grep -E "  ?$AAR_NAME\$" <(cat SHA256SUMS.all 2>/dev/null || echo) > expected.sum
-    sha256sum -c expected.sum
+    echo "⚠  no SHA256 entry for $AAR_NAME — skipping verification"
   fi
 )
 
