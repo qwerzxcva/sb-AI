@@ -47,6 +47,8 @@ data class RouteRule(
     val name: String = "",
     val enabled: Boolean = true,
     val action: RuleAction = RuleAction.ROUTE_PROXY,
+    /** 路由目标 outbound tag：空 = 跟随动作语义（代理用 entryTag，直连接直接；其他动作忽略此字段） */
+    val outboundTag: String = "",
 
     // 一行一条：域名 / 域名后缀 / IP / IP CIDR / 远程规则集 tag
     val domains: List<String> = emptyList(),          // 精确域名
@@ -95,8 +97,6 @@ data class RouteRule(
 
     // 直连/代理可指定 DNS 或 DNS group（不强制）；拦截类/IP 规则/远程规则集规则不使用
     val dnsTag: String? = null,                       // DNS server tag 或 DNS group 名
-    /** 来源订阅 id；手动规则为 null。用于按订阅归并/清理订阅自带规则。 */
-    val subscriptionId: String? = null,
 ) {
     /** 仅由 IP CIDR / 远程规则集构成的规则不生成 DNS 联动 */
     val isIpOrRemoteOnly: Boolean
@@ -164,44 +164,12 @@ enum class DnsServerType(val wireName: String) {
     FAKEIP("fakeip"),
 }
 
-/** TUN 网络栈：借鉴 FlClash，支持四种模式
- * - system: 系统原生 TUN（最低延迟，依赖内核实现）
- * - gvisor: gVisor 用户态 TCP/IP 栈（兼容性好，性能中等）
- * - mips: MIPS 栈（Clash 原生，稳定）
- * - mixed: 混合栈（sing-box 默认，自动选择最优）
- */
-@Serializable
-enum class TunStack(val wireName: String, val displayName: String) {
-    SYSTEM("system", "系统栈"),
-    GVISOR("gvisor", "gVisor 栈"),
-    MIPS("mips", "MIPS 栈"),
-    MIXED("mixed", "混合栈"),
-}
-
 /** 静态 hosts 映射条目（host → IP 列表），供 hosts 类型 DNS 服务器使用 */
 @Serializable
 data class HostsEntry(
     val id: String = UUID.randomUUID().toString(),
     val host: String = "",
     val ips: List<String> = emptyList(),
-)
-
-/**
- * Fallback 过滤器：借鉴 FlClash 的 fallback-filter 实现
- * 用于判断何时使用 fallback DNS 服务器
- */
-@Serializable
-data class FallbackFilter(
-    /** 是否使用 GeoIP 判断（默认 true） */
-    val geoip: Boolean = true,
-    /** GeoIP 国家代码（默认 CN，即国内 IP 不使用 fallback） */
-    val geoipCode: String = "CN",
-    /** GeoSite 列表（如 geosite:geolocation-!cn） */
-    val geosite: List<String> = emptyList(),
-    /** IPCIDR 列表（匹配这些 IP 段时使用 fallback） */
-    val ipcidr: List<String> = emptyList(),
-    /** 域名列表（匹配这些域名时使用 fallback） */
-    val domain: List<String> = emptyList(),
 )
 
 /** 配置 Profile（多配置快照） */
@@ -276,14 +244,14 @@ data class DnsRule(
 
 @Serializable
 enum class LoadBalanceMode(val displayName: String) {
-    /** 延迟优选（urltest，tolerance=0）。首页「自动」已是同一行为，负载均衡里不再提供。 */
-    LATENCY("延迟最优"),
+    /** 延迟优选（urltest，tolerance=0） */
+    LATENCY("延迟优选"),
 
     /** 均衡负载（urltest + tolerance，节点间分摊，不轻易切换） */
-    BALANCED("均衡"),
+    BALANCED("均衡负载"),
 
     /** 手动切换（selector） */
-    MANUAL("手动"),
+    MANUAL("手动切换"),
 }
 
 /** urltest 选点模式（sb-AI UrltestMode） */
@@ -383,7 +351,7 @@ data class Subscription(
     val trafficTotal: Long = 0L,
     val trafficExpire: Long = 0L,
     // ---- 节点后处理选项 ----
-    /** 去重（按节点名/tag） */
+    /** 去重（去除重复配置） */
     val removeDuplicates: Boolean = true,
     /** 去除不安全节点（如无加密的 ss / 无 tls 的 trojan） */
     val removeInsecure: Boolean = false,
@@ -405,15 +373,22 @@ data class Subscription(
     val filterProtocol: String = "",
     /** L7Filter：地区关键字过滤（空 = 不过滤；匹配节点名称或 outbound server 字段） */
     val filterRegion: String = "",
-    /** 禁止导入订阅自带的规则集/路由规则（true = 只用我自己的规则集，不导入订阅的 rules） */
-    val blockImportRules: Boolean = false,
-    /** 把订阅节点按直连/代理/拦截分组到规则集（生成 <订阅名>直连/代理/拦截规则集） */
-    val groupNodesToRuleSets: Boolean = false,
-    /** 节点重命名正则：匹配模式（空 = 不重命名）。如 `香港|HK` */
-    val renamePattern: String = "",
-    /** 节点重命名替换内容（可为空字符串=删除匹配部分）。如 `🇭🇰 香港` */
-    val renameReplace: String = "",
 )
+
+/** TUN 网络栈（默认 TSB_AI：sb-lxf 内核的 Go TUN 栈，含 splice/GSO/multi_queue/oom-killer） */
+@Serializable
+enum class TunStack(val displayName: String, val wireName: String) {
+    /** tsbAI — sb-lxf 专用 Go TUN 栈（含 splice/GSO/multi_queue/oom-killer，默认首选） */
+    TSB_AI("tsbAI（纯Go栈+splice）", "tsbAI"),
+    /** 默认：mixed（sing-box-lx 有 gVisor tag 时默认 mixed） */
+    MIXED("Mixed（TCP+gVisor/UDP+system）", "mixed"),
+    /** 全系统栈：利用宿主内核 TCP，最低内存开销 */
+    SYSTEM("System（系统栈）", "system"),
+    /** 全 gVisor 用户态栈：最大兼容性，更高内存 */
+    GVISOR("gVisor（用户态栈）", "gvisor"),
+    /** Go TUN 栈（sing-box 1.15+ 新引入，不依赖 gVisor，纯 Go 实现，低内存）— 别名 */
+    GO("Go（纯Go栈）", "go"),
+}
 
 @Serializable
 enum class LogLevel(val wireName: String) { TRACE("trace"), DEBUG("debug"), INFO("info"), WARN("warn"), ERROR("error"), FATAL("fatal"), PANIC("panic") }
@@ -511,8 +486,6 @@ data class AppSettings(
     val autoDetectInterface: Boolean = true,
     val strictRoute: Boolean = true,
     val finalOutbound: String = "",   // 留空 = 自动（跟随入口 tag）
-    /** 系统模式：true=全局（所有流量走代理入口，绕过路由规则）；false=规则（按路由规则走） */
-    val globalMode: Boolean = false,
     val dnsStrategy: String = "prefer_ipv4",   // prefer_ipv4 / prefer_ipv6 / ipv4_only / ipv6_only
     val perAppProxy: PerAppProxy = PerAppProxy(),
     // ---- 拆分隧道（已移除，用户反馈：写规则不好么？）----
@@ -543,52 +516,40 @@ data class AppSettings(
     val subscriptionVerOs: String = "",
     /** x-device-model override；空 = Build.MODEL */
     val subscriptionDeviceModel: String = "",
-    /** TUN 网络栈：system / gvisor / mixed / mips（借鉴 FlClash） */
-    val tunStack: TunStack = TunStack.MIXED,
+    /** TUN 网络栈：tsbAI（sb-lxf 魔改） / mixed / system / gvisor / go（tsbAI=sb-lxf 专属低功耗Go栈） */
+    val tunStack: TunStack = TunStack.TSB_AI,
+    /** tsbAI/go 栈的 multi_queue（Linux 多队列网络引擎；仅 tsbAI/go 生效） */
+    val tunMultiQueue: Boolean = false,
+    // ---- sb-lxf SPEC 020 idle-suspend（与内核 lib_android_slim 的 lx_idle_suspend 构建 tag 配合） ----
+    /** 空闲隧道挂起阈值：超过此时间后未使用的隧道会被挂起，释放 recv-worker 内存并停止后台工作。0 = 不启用。 */
+    val idleSuspendDuration: Long = 0L,
+    /** 空闲隧道拆除阈值：已挂起的隧道在此时间后彻底释放设备/netstack，下次使用时重建。0 = 使用 idleSuspendDuration */
+    val idleTeardownDuration: Long = 0L,
 
-    // ---- DNS 缓存（sing-box dns 顶层；参考 karing/nekobox 做成可改）----
-    /** 为每个 DNS 服务器独立缓存（independent_cache，默认开） */
-    val dnsIndependentCache: Boolean = true,
-    /** fakeIP 结果写入缓存（store_fakeip，默认关：更真实，开启可加速重复查询） */
-    val dnsStoreFakeip: Boolean = false,
+    // ---- DNS 高级功能（参考 FlClash/Bettbox/mihomo） ----
+    /** DNS fallback 列表：当 nameserver 返回结果不满足 fallback-filter 时使用的备用 DNS */
+    val dnsFallbackServers: List<String> = emptyList(),
+    /** fallback-filter：geoip=true 时，非 CN IP 被认为污染 */
+    val dnsFallbackGeoip: Boolean = true,
+    /** fallback-filter：geoip-code */
+    val dnsFallbackGeoipCode: String = "CN",
+    /** fallback-filter：命中这些 geosite 时只用 fallback（如 gfw） */
+    val dnsFallbackGeosite: List<String> = emptyList(),
+    /** fallback-filter：命中这些 IP 段时认为污染（如 240.0.0.0/4） */
+    val dnsFallbackIpcidr: List<String> = emptyList(),
+    /** fallback-filter：命中这些域名时认为污染（如 +.google.com） */
+    val dnsFallbackDomain: List<String> = emptyList(),
+    /** lazy-query：先判断 nameserver 结果是否满足 filter，再决定是否发 fallback 查询 */
+    val dnsFallbackLazyQuery: Boolean = false,
 
-    // ---- 增强 DNS 配置（借鉴 FlClash）----
-    /** DNS 监听地址（默认 0.0.0.0:1053） */
-    val dnsListen: String = "0.0.0.0:1053",
-    /** 优先使用 HTTP/3（prefer-h3） */
-    val dnsPreferH3: Boolean = false,
-    /** 使用 hosts（use-hosts） */
-    val dnsUseHosts: Boolean = true,
-    /** 使用系统 hosts（use-system-hosts） */
-    val dnsUseSystemHosts: Boolean = true,
-    /** 尊重路由规则（respect-rules） */
-    val dnsRespectRules: Boolean = false,
-    /** 启用 IPv6 */
-    val dnsIpv6: Boolean = false,
-    /** 默认 DNS 服务器列表（default-nameserver） */
-    val dnsDefaultNameserver: List<String> = listOf("223.5.5.5"),
-    /** DNS 增强模式：fakeip / normal / hosts */
-    val dnsEnhancedMode: String = "fakeip",
-    /** fakeIP IP 段（默认 198.18.0.1/16，避开 karing 默认） */
-    val dnsFakeIpRange: String = "198.18.0.1/16",
-    /** fakeIP 过滤列表（如 +.local, +.lan） */
-    val dnsFakeIpFilter: List<String> = listOf("+.local", "+.lan"),
-    /** 域名 -> DNS 服务器策略（nameserver-policy） */
-    val dnsNameserverPolicy: Map<String, String> = emptyMap(),
-    /** 代理服务器 DNS 策略（proxy-server-nameserver-policy） */
-    val dnsProxyServerNameserverPolicy: Map<String, String> = emptyMap(),
-    /** 上游 DNS 服务器列表（nameserver） */
-    val dnsNameserver: List<String> = listOf(
-        "https://doh.pub/dns-query",
-        "https://dns.alidns.com/dns-query"
-    ),
-    /** Fallback DNS 服务器列表（fallback） */
-    val dnsFallback: List<String> = listOf(
-        "tls://8.8.4.4",
-        "tls://1.1.1.1"
-    ),
-    /** Fallback 过滤器 */
-    val dnsFallbackFilter: FallbackFilter = FallbackFilter(),
+    /** fakeIP 排除域名列表（这些域名不走 fakeIP，直接返回真实 IP） */
+    val dnsFakeipFilter: List<String> = emptyList(),
+    /** fakeIP 排除正则模式（参考 FlClash fake-ip-filter-pattern；匹配时不走 fakeIP） */
+    val dnsFakeipFilterPatterns: List<String> = emptyList(),
+    /** fakeIP 排除模式：blacklist=排除这些，whitelist=只对这些用 fakeIP */
+    val dnsFakeipFilterMode: String = "blacklist",
+    /** nameserver-policy：按域名/规则指定特定 DNS 服务器（格式：key=value，每行一条） */
+    val dnsNameserverPolicy: List<String> = emptyList(),
 
     // ---- DPI 硬化：TLS 分片（参考 LxBox 016）----
     /** TLS 分片：把 ClientHello 拆成小 TCP 段（tls.fragment） */
@@ -626,10 +587,4 @@ data class AppState(
     val profiles: List<ConfigProfile> = emptyList(),
     /** 当前激活的 profile id（空 = 无快照模式） */
     val activeProfileId: String = "",
-    /**
-     * 全局出口选择（首页直连/自动/节点卡片的真源）。
-     * "auto" / "direct" / 节点 tag。内核 selectOutbound 是异步的，且组状态回写有延迟，
-     * 单靠内核回写会导致「点了卡片不变色」；这里先记本地选择，内核回写后以内核为准。
-     */
-    val selectedOutboundTag: String = "auto",
 )
