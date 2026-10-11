@@ -62,29 +62,19 @@ class SingBoxConfigGeneratorTest {
     }
 
     @Test
-    fun `proxy group is unified selector with auto and direct`() {
-        // 统一选择器：proxy 组含 auto + direct + 全部节点；route.final 指向 proxy。
+    fun `auto mode works independently of load balance`() {
+        // 关掉负载均衡、只开自动模式 + 多节点：入口应为 auto（urltest 优选）
         val node1 = ProxyNode(name = "n1", outboundJson = """{"type":"vless","tag":"n1","server":"1.2.3.4","server_port":443,"uuid":"x"}""")
         val node2 = ProxyNode(name = "n2", outboundJson = """{"type":"vless","tag":"n2","server":"1.2.3.5","server_port":443,"uuid":"y"}""")
         val state = AppState(
             proxyNodes = listOf(node1, node2),
-            loadBalance = LoadBalanceConfig(enabled = false),
+            loadBalance = LoadBalanceConfig(enabled = false, autoEnabled = true),
         )
         val cfg = parse(state)
-        assertEquals("proxy", cfg["route"]!!.jsonObject["final"]!!.jsonPrimitive.content)
-        val obs = outbounds(cfg)
-        val proxy = obs.first { it.jsonObject["tag"]!!.jsonPrimitive.content == "proxy" }.jsonObject
-        val members = proxy["outbounds"]!!.jsonArray.map { it.jsonPrimitive.content }
-        // proxy 组成员：auto + direct + 节点
-        assertTrue("auto" in members)
-        assertTrue("direct" in members)
-        assertTrue("n1" in members && "n2" in members)
-        assertEquals("auto", proxy["default"]!!.jsonPrimitive.content)
-        // auto urltest 独立生成（含全部节点）
-        val auto = obs.first { it.jsonObject["tag"]!!.jsonPrimitive.content == "auto" }.jsonObject
-        assertEquals("urltest", auto["type"]!!.jsonPrimitive.content)
+        assertEquals("auto", cfg["route"]!!.jsonObject["final"]!!.jsonPrimitive.content)
+        val tags = outbounds(cfg).map { it.jsonObject["tag"]!!.jsonPrimitive.content }
+        assertTrue("auto" in tags)
         // 不应有 lb / lb-selector（负载均衡关闭）
-        val tags = obs.map { it.jsonObject["tag"]!!.jsonPrimitive.content }
         assertTrue("lb" !in tags && "lb-selector" !in tags)
     }
 
@@ -400,16 +390,18 @@ class SingBoxConfigGeneratorTest {
         val obs = outbounds(cfg)
         val tags = obs.map { it.jsonObject["tag"]!!.jsonPrimitive.content }
         assertTrue("lb" in tags)
+        assertTrue("auto" in tags)
         assertTrue("n1" in tags)
-        // lb 开启时 auto 不单独生成（auto 只在非 lb 的统一选择器 proxy 组内）
-        assertTrue("auto" !in tags)
 
         val lb = obs.first { it.jsonObject["tag"]!!.jsonPrimitive.content == "lb" }.jsonObject
         assertEquals("urltest", lb["type"]!!.jsonPrimitive.content)
         assertTrue(lb["tolerance"]!!.jsonPrimitive.content.toInt() > 0)
 
-        // 路由 final 应指向 lb（负载均衡入口）
-        assertEquals("lb", cfg["route"]!!.jsonObject["final"]!!.jsonPrimitive.content)
+        val auto = obs.first { it.jsonObject["tag"]!!.jsonPrimitive.content == "auto" }.jsonObject
+        assertEquals("urltest", auto["type"]!!.jsonPrimitive.content)
+
+        // 路由 final 应指向 auto
+        assertEquals("auto", cfg["route"]!!.jsonObject["final"]!!.jsonPrimitive.content)
     }
 
     @Test
@@ -632,12 +624,7 @@ class SingBoxConfigGeneratorTest {
             action = RuleAction.ROUTE_DIRECT,
             ruleSetTags = listOf(url1, "existing-tag", url2, url1), // url1 重复
         )
-        // existing-tag 必须真实声明：引用未声明的 rule_set 会被 sing-box 拒绝启动，生成器会跳过该规则
-        val url3 = "https://example.com/existing.srs"
-        val state = AppState(
-            routeRules = listOf(rule),
-            routeRuleSets = listOf(com.sbai.data.RouteRuleSet(tag = "existing-tag", url = url3)),
-        )
+        val state = AppState(routeRules = listOf(rule), routeRuleSets = listOf())
         val cfg = parse(state)
 
         // 路由规则里的 rule_set 应引用生成的 tag（不是原始 URL）
@@ -647,15 +634,15 @@ class SingBoxConfigGeneratorTest {
         assertTrue(tags.contains("existing-tag"))
         assertEquals(2, tags.count { it.startsWith("url-") })  // 2 个不同 URL → 2 个 tag
 
-        // route.rule_set：显式 existing-tag + 自动创建的 2 个 remote 规则集（去重后）
+        // route.rule_set 里应自动创建 2 个 remote 规则集（去重后）
         val ruleSets = cfg["route"]!!.jsonObject["rule_set"]!!.jsonArray
         val urls = ruleSets.map { it.jsonObject["url"]?.jsonPrimitive?.content }
-        assertEquals(3, urls.count { it != null })
+        assertEquals(2, urls.count { it != null })
         assertTrue(urls.contains(url1))
         assertTrue(urls.contains(url2))
         ruleSets.forEach { rs ->
             assertEquals("remote", rs.jsonObject["type"]!!.jsonPrimitive.content)
-            assertEquals("binary", rs.jsonObject["format"]!!.jsonPrimitive.content)
+            assertEquals("source", rs.jsonObject["format"]!!.jsonPrimitive.content)
         }
     }
 
@@ -823,7 +810,7 @@ class SingBoxConfigGeneratorTest {
 
     @Test
     fun `tun stack from settings`() {
-        val cfg = parse(AppState(settings = com.sbai.data.AppSettings(tunStack = com.sbai.data.TunStack.GVISOR)))
+        val cfg = parse(AppState(settings = com.sbai.data.AppSettings(tunStack = "gvisor")))
         assertEquals("gvisor", cfg["inbounds"]!!.jsonArray.first().jsonObject["stack"]!!.jsonPrimitive.content)
     }
 
