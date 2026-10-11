@@ -21,8 +21,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.sbai.data.ThemeMode
 
-// Kototoro + 液态玻璃风格：深色优先 + 冷色主调 + 玻璃质感
-// 表面使用更高透明度以支持磨砂效果
+// Kototoro 风格：深色优先 + 冷色主调 + surfaceContainer 层级
+// 背景用深蓝灰而非纯黑，避免「乌漆麻黑」
 private val DarkColors = darkColorScheme(
     primary = Color(0xFFA8C7FA),
     onPrimary = Color(0xFF0B3057),
@@ -34,24 +34,23 @@ private val DarkColors = darkColorScheme(
     onSecondaryContainer = Color(0xFF9FF7E8),
     tertiary = Color(0xFFDAB9FF),
     onTertiary = Color(0xFF3F1D71),
-    background = Color(0xFF1A1F2A),
+    background = Color(0xFF131720),
     onBackground = Color(0xFFE2E5EE),
-    surface = Color(0xFF1A1F2A),
+    surface = Color(0xFF131720),
     onSurface = Color(0xFFE2E5EE),
-    surfaceVariant = Color(0xFF2D3340),
+    surfaceVariant = Color(0xFF4A4F59),
     onSurfaceVariant = Color(0xFFC6CAD6),
-    // 玻璃效果专用：更高的透明度
-    surfaceContainerLowest = Color(0xFF141820),
-    surfaceContainerLow = Color(0xFF1E2430),
-    surfaceContainer = Color(0xFF252B3A), // 用于玻璃背景
-    surfaceContainerHigh = Color(0xFF2D3446),
-    surfaceContainerHighest = Color(0xFF363E50),
+    surfaceContainerLowest = Color(0xFF0E1119),
+    surfaceContainerLow = Color(0xFF1B2028),
+    surfaceContainer = Color(0xFF20252E),
+    surfaceContainerHigh = Color(0xFF2A3039),
+    surfaceContainerHighest = Color(0xFF353B45),
     error = Color(0xFFFFB4AB),
     onError = Color(0xFF690005),
     errorContainer = Color(0xFF93000A),
     onErrorContainer = Color(0xFFFFDAD6),
     outline = Color(0xFF8C919C),
-    outlineVariant = Color(0xFF3D4350),
+    outlineVariant = Color(0xFF4A4F59),
 )
 
 private val LightColors = lightColorScheme(
@@ -65,24 +64,23 @@ private val LightColors = lightColorScheme(
     onSecondaryContainer = Color(0xFF003730),
     tertiary = Color(0xFF6B4EA0),
     onTertiary = Color.White,
-    background = Color(0xFFF0F2F8),
+    background = Color(0xFFF8F9FE),
     onBackground = Color(0xFF191C21),
-    surface = Color(0xFFF0F2F8),
+    surface = Color(0xFFF8F9FE),
     onSurface = Color(0xFF191C21),
-    surfaceVariant = Color(0xFFE4E7F0),
+    surfaceVariant = Color(0xFFDFE2ED),
     onSurfaceVariant = Color(0xFF424750),
-    // 玻璃效果专用：更高的透明度
-    surfaceContainerLowest = Color(0xFFFAFBFF),
-    surfaceContainerLow = Color(0xFFF5F7FC),
-    surfaceContainer = Color(0xFFF0F3FA), // 用于玻璃背景
-    surfaceContainerHigh = Color(0xFFE8EBF5),
-    surfaceContainerHighest = Color(0xFFE0E3EF),
+    surfaceContainerLowest = Color(0xFFFFFFFF),
+    surfaceContainerLow = Color(0xFFF2F3F9),
+    surfaceContainer = Color(0xFFECEEF4),
+    surfaceContainerHigh = Color(0xFFE6E8EE),
+    surfaceContainerHighest = Color(0xFFE1E2E9),
     error = Color(0xFFBA1A1A),
     onError = Color.White,
     errorContainer = Color(0xFFFFDAD6),
     onErrorContainer = Color(0xFF410002),
     outline = Color(0xFF727781),
-    outlineVariant = Color(0xFFC8CBD8),
+    outlineVariant = Color(0xFFC2C6D2),
 )
 
 // Kototoro typography：明确的字号/字重
