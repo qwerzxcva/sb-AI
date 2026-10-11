@@ -729,6 +729,137 @@ private fun PageDnsSettings(
                 }
             }
         }
+// ---- 高级（fallback / fakeIP / nameserver-policy，参考 FlClash / Bettbox）----
+        item {
+            Text("DNS 高级",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
+            )
+        }
+        item {
+            SbGroup(title = "Fallback DNS（${cacheSettings.dnsFallback.size}）") {
+                item {
+                    Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                        Text("主 DNS 未命中时回退到这些服务器", style = MaterialTheme.typography.labelLarge)
+                        Text("当 dnsNameserver 的解析结果判定为污染（fallback-filter）时自动切换",
+                            style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(Modifier.height(4.dp))
+                        var text by remember { mutableStateOf(cacheSettings.dnsFallback.joinToString("\n")) }
+                        OutlinedTextField(
+                            value = text, onValueChange = { text = it },
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp), maxLines = 20, textStyle = MaterialTheme.typography.bodySmall,
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        val cnt = text.lines().count { it.trim().isNotEmpty() }
+                        Text("$cnt / 20 · 每行一个 DNS 地址（如 1.1.1.1 / https://dns.google/dns-query）",
+                            style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(Modifier.height(4.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(onClick = { onUpdateSettings(cacheSettings.copy(dnsFallback = text.lines().map { it.trim() }.filter { it.isNotEmpty() }.take(20))) }) { Text("保存服务器") }
+                            TextButton(onClick = { text = ""; onUpdateSettings(cacheSettings.copy(dnsFallback = emptyList())) }) { Text("清空") }
+                        }
+                    }
+                }
+            }
+        }
+        item { SbSpacer() }
+        item {
+            SbGroup(title = "Fallback Filter") {
+                item {
+                    Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                        SbSwitchItem(title = "GeoIP 污染检测",
+                            subtitle = "非 ${cacheSettings.dnsFallbackFilter.geoipCode} IP 视为污染（参考 Clash fallback-filter.geoip）",
+                            checked = cacheSettings.dnsFallbackFilter.geoip) { onUpdateSettings(cacheSettings.copy(dnsFallbackFilter = cacheSettings.dnsFallbackFilter.copy(geoip = it))) }
+                        Spacer(Modifier.height(4.dp))
+                        OutlinedTextField(value = cacheSettings.dnsFallbackFilter.geoipCode,
+                            onValueChange = { onUpdateSettings(cacheSettings.copy(dnsFallbackFilter = cacheSettings.dnsFallbackFilter.copy(geoipCode = it.trim().uppercase()))) },
+                            label = { Text("GeoIP 代码（默认 CN）") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                        Spacer(Modifier.height(8.dp))
+                        var geositeText by remember { mutableStateOf(cacheSettings.dnsFallbackFilter.geosite.joinToString("\n")) }
+                        Text("命中这些 geosite 时使用 fallback（如 gfw）", style = MaterialTheme.typography.labelSmall)
+                        OutlinedTextField(value = geositeText, onValueChange = { geositeText = it },
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 32.dp), maxLines = 20, textStyle = MaterialTheme.typography.bodySmall)
+                        Spacer(Modifier.height(4.dp))
+                        val gc = geositeText.lines().count { it.trim().isNotEmpty() }
+                        Text("$gc 条 · 示例：gfw、google、youtube", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(Modifier.height(8.dp))
+                        var ipcidrText by remember { mutableStateOf(cacheSettings.dnsFallbackFilter.ipcidr.joinToString("\n")) }
+                        Text("命中这些 IP 段时认为污染（如 240.0.0.0/4）", style = MaterialTheme.typography.labelSmall)
+                        OutlinedTextField(value = ipcidrText, onValueChange = { ipcidrText = it },
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 32.dp), maxLines = 20, textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace))
+                        Spacer(Modifier.height(4.dp))
+                        val ic = ipcidrText.lines().count { it.trim().isNotEmpty() }
+                        Text("$ic 条", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(Modifier.height(8.dp))
+                        var domainText by remember { mutableStateOf(cacheSettings.dnsFallbackFilter.domain.joinToString("\n")) }
+                        Text("命中这些域名时跳过 fallback（直连），用主 DNS 结果", style = MaterialTheme.typography.labelSmall)
+                        OutlinedTextField(value = domainText, onValueChange = { domainText = it },
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 32.dp), maxLines = 20, textStyle = MaterialTheme.typography.bodySmall)
+                        Spacer(Modifier(height = 4.dp))
+                        val dc = domainText.lines().count { it.trim().isNotEmpty() }
+                        Text("$dc 条", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(Modifier(height = 8.dp))
+                        OutlinedButton(onClick = { onUpdateSettings(cacheSettings.copy(dnsFallbackFilter = cacheSettings.dnsFallbackFilter.copy(geosite = geositeText.lines().map { it.trim() }.filter { it.isNotEmpty() }, ipcidr = ipcidrText.lines().map { it.trim() }.filter { it.isNotEmpty() }, domain = domainText.lines().map { it.trim() }.filter { it.isNotEmpty() }))) }) { Text("保存 filter") }
+                    }
+                }
+            }
+        }
+        item { SbSpacer() }
+        item {
+            SbGroup(title = "fakeIP 配置") {
+                item {
+                    Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                        Text("fakeIP 模式（enhanced_mode）", style = MaterialTheme.typography.labelLarge)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            listOf("fakeip", "redir-host", "mapping").forEach { m ->
+                                FilterChip(selected = cacheSettings.dnsEnhancedMode == m, onClick = { onUpdateSettings(cacheSettings.copy(dnsEnhancedMode = m)) }, label = { Text(m) })
+                            }
+                        }
+                        Spacer(Modifier.height(4.dp))
+                        OutlinedTextField(value = cacheSettings.dnsFakeIpRange,
+                            onValueChange = { onUpdateSettings(cacheSettings.copy(dnsFakeIpRange = it.trim())) },
+                            label = { Text("fakeIP 范围（默认 198.18.0.1/16）") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                        Spacer(Modifier(height = 4.dp))
+                        var fakeipText by remember { mutableStateOf(cacheSettings.dnsFakeIpFilter.joinToString("\n")) }
+                        Text("fakeIP 排除域名（不走 fakeIP，返回真实 IP）", style = MaterialTheme.typography.labelSmall)
+                        OutlinedTextField(value = fakeipText, onValueChange = { fakeipText = it },
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp), maxLines = 50, textStyle = MaterialTheme.typography.bodySmall)
+                        Spacer(Modifier(height = 4.dp))
+                        val fc = fakeipText.lines().count { it.trim().isNotEmpty() }
+                        Text("$fc 条 · 示例：+.local / stun.* / mysql.*", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(Modifier(height = 4.dp))
+                        OutlinedButton(onClick = { onUpdateSettings(cacheSettings.copy(dnsFakeIpFilter = fakeipText.lines().map { it.trim() }.filter { it.isNotEmpty() })) }) { Text("保存 fakeIP") }
+                    }
+                }
+            }
+        }
+        item { SbSpacer() }
+        item {
+            SbGroup(title = "nameserver-policy") {
+                item {
+                    Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                        Text("按域名指定 DNS 服务器（key=value，每行一条）", style = MaterialTheme.typography.labelLarge)
+                        Text("格式："*.lan"=dns-local；优先级高于默认 DNS；支持通配符 / geosite:",
+                            style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(Modifier(height = 4.dp))
+                        var policyText by remember { mutableStateOf(cacheSettings.dnsNameserverPolicy.map { "${it.key}=${it.value}" }.joinToString("\n")) }
+                        OutlinedTextField(value = policyText, onValueChange = { policyText = it },
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 96.dp), minLines = 5, maxLines = 100,
+                            textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace))
+                        Spacer(Modifier(height = 4.dp))
+                        val pc = policyText.lines().count { it.trim().isNotEmpty() && "=" in it }
+                        Text("$pc 条策略", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(Modifier(height = 8.dp))
+                        OutlinedButton(onClick = {
+                            val policies = policyText.lines().map { it.trim() }.filter { it.isNotEmpty() && "=" in it }
+                                .associate { line -> val parts = line.split("="); parts.first() to parts.drop(1).joinToString("=") }
+                            onUpdateSettings(cacheSettings.copy(dnsNameserverPolicy = policies))
+                        }) { Text("保存策略") }
+                    }
+                }
+            }
+        }
         item { Spacer(Modifier.height(24.dp)) }
     }
 }
