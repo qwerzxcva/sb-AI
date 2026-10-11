@@ -59,33 +59,12 @@ class SbPlatformInterface(
     private val connectivityManager =
         service.getSystemService(ConnectivityManager::class.java)
 
-    private val resourceLock = Any()
-    private var closed = false
     private var tunFileDescriptor: ParcelFileDescriptor? = null
     private var defaultNetworkCallback: ConnectivityManager.NetworkCallback? = null
 
-    fun closeTun() = synchronized(resourceLock) {
-        val fd = tunFileDescriptor
+    fun closeTun() {
+        runCatching { tunFileDescriptor?.close() }
         tunFileDescriptor = null
-        runCatching { fd?.close() }
-            .onFailure { Log.w(TAG, "TUN cleanup failed", it) }
-        Unit
-    }
-
-    /** Terminal, idempotent cleanup; also covers a native start that throws. */
-    fun close() = synchronized(resourceLock) {
-        closed = true
-        closeDefaultInterfaceMonitorLocked()
-        closeTun()
-    }
-
-    private fun closeDefaultInterfaceMonitorLocked() {
-        val callback = defaultNetworkCallback
-        defaultNetworkCallback = null
-        if (callback != null) {
-            runCatching { connectivityManager.unregisterNetworkCallback(callback) }
-                .onFailure { Log.w(TAG, "network callback cleanup failed", it) }
-        }
     }
 
     // ---- Socket 保护 ----
@@ -98,8 +77,7 @@ class SbPlatformInterface(
 
     // ---- TUN ----
 
-    override fun openTun(options: TunOptions): Int = synchronized(resourceLock) {
-        check(!closed) { "android: platform interface is closed" }
+    override fun openTun(options: TunOptions): Int {
         check(VpnService.prepare(service) == null) { "android: missing VPN permission" }
 
         val inet4 = options.inet4Address.toList()
@@ -130,7 +108,7 @@ class SbPlatformInterface(
         val fd = builder.establish()
             ?: error("android: failed to establish VPN interface")
         tunFileDescriptor = fd
-        fd.fd
+        return fd.fd
     }
 
     private fun applyRoutes(
@@ -199,66 +177,30 @@ class SbPlatformInterface(
     // ---- 默认网卡监控 ----
 
     override fun startDefaultInterfaceMonitor(listener: InterfaceUpdateListener) {
+        closeDefaultInterfaceMonitor(listener)
         val callback = object : ConnectivityManager.NetworkCallback() {
-            private fun update(network: Network?) {
-                val active = synchronized(resourceLock) {
-                    !closed && defaultNetworkCallback === this
-                }
-                // Never hold resourceLock while calling back into native code.
-                if (active) updateDefaultInterface(listener, network)
-            }
-
-            override fun onAvailable(network: Network) = update(network)
+            override fun onAvailable(network: Network) = updateDefaultInterface(listener, network)
             override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) =
-                update(network)
+                updateDefaultInterface(listener, network)
             override fun onLinkPropertiesChanged(network: Network, linkProperties: LinkProperties) =
-                update(network)
-            override fun onLost(network: Network) = update(connectivityManager.activeNetwork)
-
-            fun updateCurrent() = update(connectivityManager.activeNetwork)
+                updateDefaultInterface(listener, network)
+            override fun onLost(network: Network) =
+                updateDefaultInterface(listener, connectivityManager.activeNetwork)
         }
-        synchronized(resourceLock) {
-            check(!closed) { "android: platform interface is closed" }
-            closeDefaultInterfaceMonitorLocked()
-            defaultNetworkCallback = callback
-            try {
-                connectivityManager.registerDefaultNetworkCallback(callback)
-            } catch (t: Throwable) {
-                closeDefaultInterfaceMonitorLocked()
-                throw t
-            }
-        }
-        callback.updateCurrent()
+        defaultNetworkCallback = callback
+        connectivityManager.registerDefaultNetworkCallback(callback)
+        updateDefaultInterface(listener, connectivityManager.activeNetwork)
     }
 
     override fun closeDefaultInterfaceMonitor(listener: InterfaceUpdateListener) {
-        synchronized(resourceLock) { closeDefaultInterfaceMonitorLocked() }
+        defaultNetworkCallback?.let { runCatching { connectivityManager.unregisterNetworkCallback(it) } }
+        defaultNetworkCallback = null
     }
 
     private fun updateDefaultInterface(listener: InterfaceUpdateListener, network: Network?) {
-        // VPN 建立后回调传入的 network 会变成 tun0（VPN transport）；若直接上报，
-        // sing-box 会拿 tun 当出口再拨号被系统回环拒绝 → 全部连接 no available network interface（真机复现）。
-        // 一律解析为底层物理网络（cellular/wifi/ethernet），跳过 VPN transport。
-        val underlying = resolveUnderlying(network)
-        val name = underlying?.let(connectivityManager::getLinkProperties)?.interfaceName.orEmpty()
+        val name = network?.let(connectivityManager::getLinkProperties)?.interfaceName.orEmpty()
         val index = runCatching { NetworkInterface.getByName(name)?.index ?: -1 }.getOrDefault(-1)
         listener.updateDefaultInterface(name, index, false, false)
-    }
-
-    // 传入的 network 若是 VPN(tun)，则改挑底层物理网络；否则原样返回。
-    private fun resolveUnderlying(network: Network?): Network? {
-        if (network != null) {
-            val isVpn = connectivityManager.getNetworkCapabilities(network)
-                ?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
-            if (!isVpn) return network
-        }
-        return connectivityManager.allNetworks.firstOrNull { net ->
-            val caps = connectivityManager.getNetworkCapabilities(net) ?: return@firstOrNull false
-            !caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN) &&
-                (caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) ||
-                    caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
-                    caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET))
-        }
     }
 
     // ---- 网络接口枚举 ----
@@ -426,24 +368,10 @@ private class AndroidLocalDnsTransport(
         exchangeRaw(context, message)
     }
 
-    // local DNS 必须走底层物理网络，否则在 tun 上解析会失败/回环导致全网断（真机复现）。
-    private fun pickUnderlyingNetwork(): android.net.Network {
-        val active = connectivityManager.activeNetwork
-        val activeIsVpn = active != null && connectivityManager
-            .getNetworkCapabilities(active)?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
-        if (active != null && !activeIsVpn) return active
-        return connectivityManager.allNetworks.firstOrNull { net ->
-            val caps = connectivityManager.getNetworkCapabilities(net) ?: return@firstOrNull false
-            !caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN) &&
-                (caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) ||
-                    caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
-                    caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET))
-        } ?: error("android: underlying network is unavailable")
-    }
-
     @androidx.annotation.RequiresApi(Build.VERSION_CODES.Q)
     private fun exchangeRaw(context: ExchangeContext, message: ByteArray) = runBlocking {
-        val network = pickUnderlyingNetwork()
+        val network = connectivityManager.activeNetwork
+            ?: error("android: default network is unavailable")
         suspendCancellableCoroutine { continuation ->
             val cancellation = CancellationSignal()
             context.onCancel(cancellation::cancel)
@@ -474,7 +402,8 @@ private class AndroidLocalDnsTransport(
     }
 
     override fun lookup(context: ExchangeContext, network: String, domain: String) = runBlocking {
-        val defaultNetwork = pickUnderlyingNetwork()
+        val defaultNetwork = connectivityManager.activeNetwork
+            ?: error("android: default network is unavailable")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             lookupWithResolver(context, defaultNetwork, network, domain)
         } else {
