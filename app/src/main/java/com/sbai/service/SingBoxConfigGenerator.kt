@@ -182,6 +182,18 @@ object SingBoxConfigGenerator {
                 put("timestamp", true)
             }
 
+            // ---- TUN 空闲挂起（SPEC 020，sb-lxf 内核 Leadaxe 扩展；内核未开启 with_lx_idle_suspend 时为 no-op） ----
+            val idleSuspend = idleDurationToGo(state.settings.idleSuspendDuration)
+            val idleTeardown = idleDurationToGo(state.settings.idleTeardownDuration)
+            if (idleSuspend.isNotEmpty() || idleTeardown.isNotEmpty()) {
+                putJsonObject("lx") {
+                    putJsonObject("wg") {
+                        if (idleSuspend.isNotEmpty()) put("idle_suspend", idleSuspend)
+                        if (idleTeardown.isNotEmpty()) put("idle_teardown", idleTeardown)
+                    }
+                }
+            }
+
             putJsonObject("dns") {
                 putJsonArray("servers") { dnsServers.forEach(::add) }
                 putJsonArray("rules") { dnsRules.forEach(::add) }
@@ -339,35 +351,7 @@ object SingBoxConfigGenerator {
                     put("path", "cache.db")
                 }
             }
-
-            // sb-lxf SPEC 020 idle-suspend (root-level `lx.wg`, not inside experimental).
-            // Active only when the libbox AAR was built with `with_lx_idle_suspend`
-            // (the `lib_android_slim` profile). Idle WireGuard/Tailscale endpoints
-            // are suspended after idleSuspendDuration, and torn down after
-            // idleTeardownDuration (0 = inherit the reachable/idle threshold).
-            if (state.settings.idleSuspendDuration > 0L) {
-                putJsonObject("lx") {
-                    putJsonObject("wg") {
-                        put("idle_suspend", msToDuration(state.settings.idleSuspendDuration))
-                        if (state.settings.idleTeardownDuration > 0L) {
-                            put("idle_teardown", msToDuration(state.settings.idleTeardownDuration))
-                        }
-                    }
-                }
-            }
         }
-    }
-
-    /** Convert milliseconds to a Go duration string (e.g. 600000 -> "10m"). */
-    private fun msToDuration(ms: Long): String {
-        if (ms < 1000) return "${ms}ms"
-        val sec = ms / 1000
-        if (sec < 60) return "${sec}s"
-        val min = sec / 60
-        if (min < 60) return "${min}m"
-        val h = min / 60
-        if (h < 24) return "${h}h"
-        return "${h / 24}d"
     }
 
     // ------------------------------------------------------------------
@@ -833,6 +817,22 @@ object SingBoxConfigGenerator {
      *
      * @return 注入后的 JsonObject（无变化时返回原对象）
      */
+    /** 把毫秒转成 Go time.Duration 可解析的字符串（如 "5m" / "90s" / "1h30m"）；0 返回空串。 */
+    private fun idleDurationToGo(ms: Long): String {
+        if (ms <= 0L) return ""
+        val sec = ms / 1000
+        val min = sec / 60
+        val hr = min / 60
+        return when {
+            hr > 0 -> {
+                val remMin = min % 60
+                if (remMin > 0) "${hr}h${remMin}m" else "${hr}h"
+            }
+            min > 0 -> "${min}m"
+            else -> "${sec}s"
+        }
+    }
+
     private fun applyTlsFragment(obj: JsonObject, state: AppState): JsonObject {
         val s = state.settings
         if (!s.tlsFragment && !s.tlsRecordFragment) return obj
