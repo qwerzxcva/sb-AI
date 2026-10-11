@@ -1,7 +1,6 @@
 package com.sbai.ui.monitor
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,14 +15,11 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ClearAll
-import androidx.compose.material.icons.filled.Pause
-import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material3.Icon
@@ -34,7 +30,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -51,7 +46,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import com.sbai.service.SbCommandClient
-import com.sbai.service.VpnRuntimeState
 import com.sbai.ui.components.BottomBarClearance
 import com.sbai.ui.components.SbGroup
 import com.sbai.ui.components.SbItem
@@ -63,117 +57,64 @@ fun MonitorScreen() {
     val context = LocalContext.current
     val tokens = LocalSbStyleTokens.current
     var tab by remember { mutableIntStateOf(0) }
-    // 暂停刷新：冻结连接/日志展示快照（用户要求加暂停按钮）
-    var paused by remember { mutableStateOf(false) }
-    var frozenConnections by remember { mutableStateOf<List<SbCommandClient.ConnectionEntry>?>(null) }
-    var frozenLogs by remember { mutableStateOf<List<SbCommandClient.LogLine>?>(null) }
 
     val status by SbCommandClient.status.collectAsState()
-    val logsRaw by SbCommandClient.logs.collectAsState()
-    val connectionsRaw by SbCommandClient.connections.collectAsState()
-    // 暂停时用冻结快照，否则用实时流
-    val logs = if (paused) frozenLogs ?: logsRaw else logsRaw
-    val connections = if (paused) frozenConnections ?: connectionsRaw else connectionsRaw
+    val logs by SbCommandClient.logs.collectAsState()
+    val connections by SbCommandClient.connections.collectAsState()
     val connected by SbCommandClient.connectedToService.collectAsState()
-    // 跨进程遥测快照（UI 主进程通过共享文件读取 :core 发布的 CommandClient 数据）。
-    // 刷新时机：进入页面时 + tab 切换时 + 每 3s 轮询（覆盖冷启动时文件尚未落盘的窗口）。
-    var telemetry by remember { mutableStateOf<VpnRuntimeState.TelemetrySnapshot?>(null) }
-    LaunchedEffect(Unit) {
-        VpnRuntimeState.refreshTelemetry(context)
-        telemetry = VpnRuntimeState.telemetry.value
-        while (true) {
-            kotlinx.coroutines.delay(3_000L)
-            VpnRuntimeState.refreshTelemetry(context)
-            telemetry = VpnRuntimeState.telemetry.value
-        }
-    }
-    LaunchedEffect(tab) { VpnRuntimeState.refreshTelemetry(context); telemetry = VpnRuntimeState.telemetry.value }
     var query by remember { mutableStateOf("") }
-    // 时钟只在有遥测数据可能过期时才需要；无遥测（内核未跑）每秒重组是卡顿来源。
-    var clockTick by remember { mutableIntStateOf(0) }
-    val hasTelemetry = telemetry != null || connected
-    LaunchedEffect(hasTelemetry) {
-        while (true) {
-            kotlinx.coroutines.delay(if (hasTelemetry) 1000L else 15_000L)
-            clockTick = clockTick + 1
-        }
-    }
-    @Suppress("UNUSED_EXPRESSION") clockTick
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.surface)
-            .padding(horizontal = tokens.screenHorizontalPadding),
-    ) {
+    Box(modifier = Modifier.fillMaxSize()) {
+        // 背景渐变，避免一片死黑
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(260.dp)
+                .background(
+                    androidx.compose.ui.graphics.Brush.verticalGradient(
+                        listOf(
+                            MaterialTheme.colorScheme.surfaceContainerHigh,
+                            MaterialTheme.colorScheme.surface.copy(alpha = 0f),
+                        ),
+                    ),
+                ),
+        )
+
+        // 全白色背景（用户要求）
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.surface)
+                .padding(horizontal = tokens.screenHorizontalPadding),
+        ) {
             Spacer(Modifier.height(16.dp))
             Text("监控", style = MaterialTheme.typography.headlineLarge)
             Text(
                 if (connected) "sing-box 内核实时状态" else "启动 VPN 后显示内核数据",
-                style = MaterialTheme.typography.bodySmall,
+                style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.height(12.dp))
 
             TabRow(selectedTabIndex = tab) {
                 Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("状态") })
-                Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("连接（${connections.size.coerceAtLeast(telemetry?.connections ?: 0)}）") })
-                Tab(selected = tab == 2, onClick = { tab = 2 }, text = { Text("日志（${logs.size.coerceAtLeast(telemetry?.logTail?.size ?: 0)}）") })
-            }
-            // 暂停/继续刷新（连接与日志 tab 用）：冻结当前快照便于查看，再点恢复实时流。
-            if (tab == 1 || tab == 2) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    TextButton(onClick = {
-                        if (paused) {
-                            paused = false
-                            frozenConnections = null
-                            frozenLogs = null
-                        } else {
-                            frozenConnections = connectionsRaw
-                            frozenLogs = logsRaw
-                            paused = true
-                        }
-                    }) {
-                        Icon(
-                            if (paused) Icons.Filled.PlayArrow else Icons.Filled.Pause,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp),
-                        )
-                        Spacer(Modifier.size(4.dp))
-                        Text(if (paused) "继续" else "暂停")
-                    }
-                }
+                Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("连接（${connections.size}）") })
+                Tab(selected = tab == 2, onClick = { tab = 2 }, text = { Text("日志（${logs.size}）") })
             }
 
         if (tab == 0) {
-            // telemetry 新鲜度：:core 周期发布遥测（含 updatedAt）。:core 死后文件不再更新，
-            // 若不看新鲜度，监控页会永远显示死亡时刻的死快照（「运行 25s」静态 UI 的第二现场）。
-            val telemetryFresh = telemetry != null &&
-                (System.currentTimeMillis() - (telemetry?.updatedAt ?: 0L)) <= VpnRuntimeState.RUNNING_LEASE_TIMEOUT_MS
-            val liveTelemetry = if (telemetryFresh) telemetry else null
             LazyColumn {
                 item { Spacer(Modifier.height(16.dp)) }
 
                 // 连接状态大卡（有色彩层次，避免「黑的要死」）
-                // 跨进程时：liveTelemetry != null → 显示共享快照（含 uptime/publicIp/connections）；否则 fallback 到 CommandClient
                 item {
-                    StatusHeroCard(
-                        connected = connected || liveTelemetry != null,
-                        status = liveTelemetry?.toStatus() ?: status,
-                        uptimeSec = liveTelemetry?.uptimeSec,
-                        publicIp = liveTelemetry?.publicIp,
-                        loadingHint = liveTelemetry == null && !connected,
-                    )
+                    StatusHeroCard(connected = connected, status = status)
                     Spacer(Modifier.height(16.dp))
                 }
 
-                // 实时流量卡（跨进程时优先用共享快照的流量）
+                // 实时流量卡
                 item {
-                    TrafficCard(status = liveTelemetry?.toStatus() ?: status)
+                    TrafficCard(status = status)
                     Spacer(Modifier.height(16.dp))
                 }
 
@@ -190,26 +131,24 @@ fun MonitorScreen() {
                 }
 
                 item {
-                    val effStatus = liveTelemetry?.toStatus() ?: status
-                    val connCount = (liveTelemetry?.connections ?: 0).coerceAtLeast(status.connectionsIn + status.connectionsOut)
                     SbGroup(title = "内核详情") {
                         item {
-                            SbItem(title = "连接数", subtitle = "活跃 ${connCount} · 出站 ${effStatus.connectionsOut}")
+                            SbItem(title = "连接数", subtitle = "入站 ${status.connectionsIn} · 出站 ${status.connectionsOut}")
                         }
                         item {
-                            SbItem(title = "内存占用", subtitle = formatBytes(effStatus.memory))
+                            SbItem(title = "内存占用", subtitle = formatBytes(status.memory))
                         }
                         item {
-                            SbItem(title = "累计流量", subtitle = "↑ ${formatBytes(effStatus.uplinkTotal)} · ↓ ${formatBytes(effStatus.downlinkTotal)}")
+                            SbItem(title = "累计流量", subtitle = "↑ ${formatBytes(status.uplinkTotal)} · ↓ ${formatBytes(status.downlinkTotal)}")
                         }
                     }
                 }
                 item {
-                    if (!connected && liveTelemetry == null) {
+                    if (!connected) {
                         Spacer(Modifier.height(16.dp))
                         Text(
                             "服务未运行时此处无数据。启动 VPN 后自动连接内核。",
-                            style = MaterialTheme.typography.bodySmall,
+                            style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
@@ -247,36 +186,16 @@ fun MonitorScreen() {
                         Icon(Icons.Filled.Close, contentDescription = "关闭全部连接")
                     }
                 }
-                val tele = telemetry
                 if (!connected) {
-                    if (!tele?.connList.isNullOrEmpty()) {
-                        // 跨进程：主进程拿不到逐条关闭通道，但能看 :core 发布的连接列表快照
-                        Text(
-                            "跨进程遥测（最近 ${tele!!.connList.size} 条，完整控制需进程内通道）",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Spacer(Modifier.height(8.dp))
-                        LazyColumn(
-                            verticalArrangement = Arrangement.spacedBy(6.dp),
-                            modifier = Modifier.fillMaxSize(),
-                        ) {
-                            items(tele!!.connList, key = { it.id }) { c ->
-                                TelemetryConnectionCard(entry = c)
-                            }
-                            item { Spacer(Modifier.height(112.dp)) }
-                        }
-                    } else {
-                        Text(
-                            "服务未运行，无连接数据。",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
+                    Text(
+                        "服务未运行，无连接数据。",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 } else if (filtered.isEmpty()) {
                     Text(
                         if (connections.isEmpty()) "当前无活跃连接。" else "无匹配连接。",
-                        style = MaterialTheme.typography.bodySmall,
+                        style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 } else {
@@ -296,21 +215,15 @@ fun MonitorScreen() {
             }
         } else {
             Column(Modifier.fillMaxSize()) {
-                val teleLogs = telemetry?.logTail.orEmpty()
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    val effLogCount = logs.size.coerceAtLeast(teleLogs.size)
                     Text(
-                        when {
-                            connected -> "内核日志（最多保留 500 条）"
-                            effLogCount > 0 -> "跨进程遥测日志（最近 ${effLogCount} 条）"
-                            else -> "服务未运行，无内核日志"
-                        },
-                        style = MaterialTheme.typography.bodySmall,
+                        if (connected) "内核日志（最多保留 500 条）" else "服务未运行，无内核日志",
+                        style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.weight(1f),
                     )
@@ -318,20 +231,16 @@ fun MonitorScreen() {
                         Icon(Icons.Filled.ClearAll, contentDescription = "清空")
                     }
                 }
-                // 跨进程回退：主进程 in-process CommandClient 无数据时，用共享快照的 logTail
-                val effLogs: List<SbCommandClient.LogLine> =
-                    if (logs.isNotEmpty()) logs
-                    else teleLogs.mapIndexed { i, t -> SbCommandClient.LogLine(i.toLong(), t) }
                 val listState = rememberLazyListState()
-                LaunchedEffect(effLogs.size) {
-                    if (effLogs.isNotEmpty()) listState.animateScrollToItem(effLogs.size - 1)
+                LaunchedEffect(logs.size) {
+                    if (logs.isNotEmpty()) listState.animateScrollToItem(logs.size - 1)
                 }
                 LazyColumn(
                     state = listState,
                     verticalArrangement = Arrangement.spacedBy(2.dp),
                     modifier = Modifier.fillMaxSize(),
                 ) {
-                    items(effLogs, key = { it.seq }) { line ->
+                    items(logs, key = { it.seq }) { line ->
                         Text(
                             line.text,
                             style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
@@ -350,6 +259,7 @@ fun MonitorScreen() {
             }
         }
     }
+    }
 }
 
 @Composable
@@ -362,102 +272,12 @@ private fun SbStatBadge(text: String, ok: Boolean) {
 private fun ConnectionCard(entry: SbCommandClient.ConnectionEntry, onClose: () -> Unit) {
     val title = entry.domain.ifBlank { entry.destination }.ifBlank { "(unknown)" }
     val app = entry.processPath.substringAfterLast('/').ifBlank { entry.userName }
-    // 点击展开/收起完整连接信息（用户要求点击展开更多数据）
-    var expanded by remember { mutableStateOf(false) }
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .background(
                 MaterialTheme.colorScheme.surfaceContainer,
-                RoundedCornerShape(16.dp),
-            )
-            .clickable { expanded = !expanded }
-            .padding(horizontal = 14.dp, vertical = 10.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(
-                    title,
-                    style = MaterialTheme.typography.titleSmall,
-                    maxLines = if (expanded) Int.MAX_VALUE else 1,
-                )
-                Text(
-                    buildString {
-                        append(entry.network.uppercase())
-                        if (entry.protocol.isNotBlank()) append(" · ${entry.protocol}")
-                        if (app.isNotBlank()) append(" · $app")
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = if (expanded) Int.MAX_VALUE else 1,
-                )
-            }
-            IconButton(onClick = onClose) {
-                Icon(
-                    Icons.Filled.Close,
-                    contentDescription = "关闭连接",
-                    tint = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.size(18.dp),
-                )
-            }
-        }
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            if (entry.outbound.isNotBlank()) {
-                Text(
-                    "→ ${entry.outbound}",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-            }
-            if (entry.rule.isNotBlank()) {
-                Text(
-                    "rule: ${entry.rule}",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = if (expanded) Int.MAX_VALUE else 1,
-                    modifier = Modifier.weight(1f),
-                )
-            }
-            Text(
-                "↑${formatBytes(entry.uplinkTotal)} ↓${formatBytes(entry.downlinkTotal)}",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.secondary,
-            )
-        }
-        // 展开时显示完整字段
-        if (expanded) {
-            Spacer(Modifier.height(6.dp))
-            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text("目标: ${entry.destination}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                if (entry.domain.isNotBlank()) Text("域名: ${entry.domain}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                if (entry.processPath.isNotBlank()) Text("进程: ${entry.processPath}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                if (entry.outbound.isNotBlank()) Text("出口: ${entry.outbound}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                if (entry.rule.isNotBlank()) Text("规则: ${entry.rule}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text("网络: ${entry.network} · 协议: ${entry.protocol.ifBlank { "-" }}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text("↑${formatBytes(entry.uplinkTotal)} ↓${formatBytes(entry.downlinkTotal)}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.secondary)
-            }
-        }
-    }
-}
-
-/**
- * 跨进程连接卡片：渲染 :core 发布的 [VpnRuntimeState.ConnBrief] 快照。
- * 与 [ConnectionCard] 布局一致，但无关闭按钮（主进程无法向 :core 下发 close 命令），
- * 用于监控页"连接"tab 的跨进程回退展示，使 connList 数据真正被消费（非死代码）。
- */
-@Composable
-private fun TelemetryConnectionCard(entry: VpnRuntimeState.ConnBrief) {
-    val title = entry.domain.ifBlank { entry.destination }.ifBlank { "(unknown)" }
-    val app = entry.processPath.substringAfterLast('/').ifBlank { "" }
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(
-                MaterialTheme.colorScheme.surfaceContainer,
-                RoundedCornerShape(16.dp),
+                MaterialTheme.shapes.small,
             )
             .padding(horizontal = 14.dp, vertical = 10.dp),
     ) {
@@ -468,14 +288,24 @@ private fun TelemetryConnectionCard(entry: VpnRuntimeState.ConnBrief) {
                     style = MaterialTheme.typography.titleSmall,
                     maxLines = 1,
                 )
-                if (app.isNotBlank()) {
-                    Text(
-                        app,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                    )
-                }
+                Text(
+                    buildString {
+                        append(entry.network.uppercase())
+                        if (entry.protocol.isNotBlank()) append(" · ${entry.protocol}")
+                        if (app.isNotBlank()) append(" · $app")
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                )
+            }
+            IconButton(onClick = onClose) {
+                Icon(
+                    Icons.Filled.Close,
+                    contentDescription = "关闭连接",
+                    tint = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(18.dp),
+                )
             }
         }
         Row(
@@ -521,34 +351,6 @@ internal fun formatBytes(bytes: Long): String {
 
 internal fun formatSpeed(bytesPerSec: Long): String =
     if (bytesPerSec <= 0) "0 B/s" else formatBytes(bytesPerSec) + "/s"
-
-internal fun formatUptime(sec: Long): String = buildString {
-    val s = sec.coerceAtLeast(0L)
-    if (s >= 3600) {
-        append(s / 3600).append("h")
-        append((s % 3600) / 60).append("m")
-    } else if (s >= 60) {
-        append(s / 60).append("m")
-        append(s % 60).append("s")
-    } else {
-        append(s).append("s")
-    }
-}
-
-/** 把共享遥测快照转回 DashboardStatus（供 StatusHeroCard / TrafficCard / 首页流量卡复用，无需重写组件）。 */
-internal fun VpnRuntimeState.TelemetrySnapshot?.toStatus(): SbCommandClient.DashboardStatus = when {
-    this == null -> SbCommandClient.DashboardStatus()
-    else -> SbCommandClient.DashboardStatus(
-        memory = this.memory,
-        connectionsIn = 0,
-        connectionsOut = 0,
-        uplink = this.uplink,
-        downlink = this.downlink,
-        uplinkTotal = this.uplinkTotal,
-        downlinkTotal = this.downlinkTotal,
-        connected = true,
-    )
-}
 
 // ---------------------------------------------------------------------------
 // sb-AI 统计页：按规则 / 按出口聚合流量
@@ -609,23 +411,23 @@ private fun AggregationCard(
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.large,
-        color = colors.surfaceContainer,
-        tonalElevation = 0.dp,
+        color = colors.surfaceContainerLow,
+        tonalElevation = 2.dp,
     ) {
-        Column(Modifier.padding(16.dp)) {
-            Text(title, style = MaterialTheme.typography.titleSmall, color = colors.onSurface)
+        Column(Modifier.padding(18.dp)) {
+            Text(title, style = MaterialTheme.typography.titleMedium, color = colors.onSurface)
             Text(subtitle, style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
             Spacer(Modifier.height(14.dp))
 
             if (rows.isEmpty()) {
-                Text(emptyText, style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
+                Text(emptyText, style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant)
             } else {
                 rows.take(8).forEach { row ->
                     Column(Modifier.padding(vertical = 6.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
                                 row.key,
-                                style = MaterialTheme.typography.titleSmall,
+                                style = MaterialTheme.typography.bodyMedium,
                                 color = colors.onSurface,
                                 modifier = Modifier.weight(1f),
                                 maxLines = 1,
@@ -685,13 +487,7 @@ private fun AggregationCard(
 // ---------------------------------------------------------------------------
 
 @Composable
-private fun StatusHeroCard(
-    connected: Boolean,
-    status: SbCommandClient.DashboardStatus,
-    uptimeSec: Long? = null,
-    publicIp: String? = "",
-    loadingHint: Boolean = false,
-) {
+private fun StatusHeroCard(connected: Boolean, status: SbCommandClient.DashboardStatus) {
     val colors = MaterialTheme.colorScheme
     // 与首页等其他页面保持一致：使用 surfaceContainer，避免 primaryContainer 造成视觉反差
     val bg = colors.surfaceContainer
@@ -716,14 +512,9 @@ private fun StatusHeroCard(
                 )
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    buildString {
-                        append(if (connected) "sing-box 运行中 · " else "启动 VPN 后自动连接")
-                        if (uptimeSec != null && uptimeSec > 0) append("运行 ${formatUptime(uptimeSec)}")
-                        if (publicIp?.isNotBlank() == true) append(" · IP: $publicIp")
-                        if (loadingHint) append("（共享数据加载中…）")
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = colors.onSurfaceVariant,
+                    if (connected) "sing-box 运行中 · 实时接收状态" else "启动 VPN 后自动连接",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = fg.copy(alpha = 0.8f),
                 )
             }
             Box(
