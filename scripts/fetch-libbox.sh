@@ -10,7 +10,7 @@
 #   - chain 出站: 通过 with_lx_chain 构建标签可选启用
 set -euo pipefail
 
-LIBBOX_VERSION="${LIBBOX_VERSION:-v1.15.0-ts.1}"
+LIBBOX_VERSION="${LIBBOX_VERSION:-v1.15.0-ts.6}"
 # 默认使用 QWERZXCVA/sb-lxf（tsbAI 内核），基于上游 1.15.0-alpha.12
 REPO="${SB_LXF_REPO:-QWERZXCVA/sb-lxf}"
 # 内核变体：slim（默认，省电/省空间，drop usbip/openvpn/openconnect + 启用 lx_idle_suspend；
