@@ -60,8 +60,19 @@ app/src/main/java/com/sbai/
 
 ## 内核
 
-使用 **LxBox 同款内核 [`Leadaxe/sing-box-lx`](https://github.com/Leadaxe/sing-box-lx)**
-（`v1.14.2-lx.11`，已裁剪至 arm64-v8a），由 `scripts/fetch-libbox.sh` / CI 在构建时下载并校验 SHA256。
+使用 **[QWERZXCVA/sb-lxf](https://github.com/QWERZXCVA/sb-lxf)（tsbAI 内核）**
+（当前默认档 `v1.15.0-ts.9/slim`，基于 SagerNet/sing-box v1.15.0-alpha.12 +
+Leadaxe 低功耗扩展 + Go TUN 栈 tsbAI），由 `scripts/fetch-libbox.sh` / CI 在
+构建时下载并校验 SHA256。
+
+**ts.9 = Android-only 深度裁剪档**（本仓 `sb-AI` 专用）：
+- 只保留 sb-AI `OUTBOUND_TYPES` 实际用到的协议族
+  （vless/vmess/trojan/shadowsocks/hysteria2/hysteria/http/socks/
+   wireguard/tailscale/tor/ssh/direct/block），裁掉 anytls / shadowtls /
+   snell / masque / naive_outbound / usbip / openvpn / openconnect；
+- slim AAR **~79 MB**（full 111 MB）；tsbAI Go TUN 栈（splice + GSO +
+  multi_queue + oom-killer）+ `with_lx_idle_suspend`（空闲端点挂起）；
+- 相比 Karing / PuerNya 的 Android AAR，额外多一层 tsbAI 低功耗 TUN 栈。
 
 **为什么用它**（用户明确要求「以 LxBox 为准」且追问内核来源）：
 负载均衡「仅使用 N 个节点」依赖 fork 特有的
