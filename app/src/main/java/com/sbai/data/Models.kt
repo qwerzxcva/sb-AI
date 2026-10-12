@@ -551,6 +551,23 @@ data class AppSettings(
     /** nameserver-policy：按域名/规则指定特定 DNS 服务器（格式：key=value，每行一条） */
     val dnsNameserverPolicy: List<String> = emptyList(),
 
+    /** DNS 缓存容量（LRU，<1024 被内核忽略）；0 = 用内核默认 */
+    val dnsCacheCapacity: Int = 0,
+    /** 禁用 DNS 缓存 */
+    val dnsDisableCache: Boolean = false,
+    /** 禁用 DNS 缓存过期（与 optimistic 互斥） */
+    val dnsDisableExpire: Boolean = false,
+    /** 乐观缓存：过期条目先返回旧结果同时后台刷新；与 disable_cache/disable_expire 互斥 */
+    val dnsOptimistic: Boolean = false,
+    /** 乐观缓存最大服务窗口（duration 字符串，如 "3d"）；空 = 内核默认 3d */
+    val dnsOptimisticTimeout: String = "",
+    /** 单条 DNS 查询超时（duration 字符串，如 "10s"）；空 = 内核默认 10s */
+    val dnsQueryTimeout: String = "",
+    /** 反向映射：记录 IP→域名，供路由按域名匹配（1.9+） */
+    val dnsReverseMapping: Boolean = false,
+    /** resolve 动作策略：对 TUN/mixed 入站连接先解析域名（参考 Throne）；空 = 不生成该规则 */
+    val dnsResolveStrategy: String = "",
+
     // ---- DPI 硬化：TLS 分片（参考 LxBox 016）----
     /** TLS 分片：把 ClientHello 拆成小 TCP 段（tls.fragment） */
     val tlsFragment: Boolean = false,

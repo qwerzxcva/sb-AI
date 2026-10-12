@@ -923,6 +923,94 @@ class SingBoxConfigGeneratorTest {
     }
 
     @Test
+    fun `tun excludes own subnet and loopback to avoid dns routing loop`() {
+        val cfg = parse(AppState())
+        val tun = cfg["inbounds"]!!.jsonArray.first().jsonObject
+        // dns_mode=hijack：TUN 派生 DNS 地址上的连接劫持进 DNS 模块
+        assertEquals("hijack", tun["dns_mode"]!!.jsonPrimitive.content)
+        val excluded = tun["route_exclude_address"]!!.jsonArray.map { it.jsonPrimitive.content }
+        // TUN 自身网段必须排除，否则发往 TUN DNS 地址（address+1）的查询会被送回隧道成环
+        assertTrue(excluded.any { it.startsWith("172.18.0.") })
+        assertTrue(excluded.contains("127.0.0.0/8"))
+        assertTrue(excluded.contains("255.255.255.255/32"))
+    }
+
+    @Test
+    fun `tun excludes ipv6 subnet when ipv6 routing on`() {
+        val cfg = parse(
+            AppState(settings = com.sbai.data.AppSettings(ipv6Route = true)),
+        )
+        val excluded = cfg["inbounds"]!!.jsonArray.first().jsonObject["route_exclude_address"]!!.jsonArray
+        assertTrue(excluded.any { it.jsonPrimitive.content.contains("fdfe:dcba:9876") })
+    }
+
+    @Test
+    fun `dns cache capacity omitted below kernel threshold`() {
+        // 内核忽略 <1024 的 cache_capacity，生成器不应输出无效值
+        val small = parse(AppState(settings = com.sbai.data.AppSettings(dnsCacheCapacity = 512)))
+        assertNull(small["dns"]!!.jsonObject["cache_capacity"])
+        val ok = parse(AppState(settings = com.sbai.data.AppSettings(dnsCacheCapacity = 4096)))
+        assertEquals(4096, ok["dns"]!!.jsonObject["cache_capacity"]!!.jsonPrimitive.content.toInt())
+    }
+
+    @Test
+    fun `optimistic dns omitted when it conflicts with cache switches`() {
+        // 内核会直接拒绝 optimistic 与 disable_cache/disable_expire 共存的配置
+        val conflict = parse(
+            AppState(
+                settings = com.sbai.data.AppSettings(dnsOptimistic = true, dnsDisableCache = true),
+            ),
+        )
+        assertNull(conflict["dns"]!!.jsonObject["optimistic"])
+
+        val ok = parse(AppState(settings = com.sbai.data.AppSettings(dnsOptimistic = true)))
+        assertEquals(true, ok["dns"]!!.jsonObject["optimistic"]!!.jsonPrimitive.content.toBoolean())
+    }
+
+    @Test
+    fun `optimistic dns object form carries timeout`() {
+        val cfg = parse(
+            AppState(
+                settings = com.sbai.data.AppSettings(
+                    dnsOptimistic = true,
+                    dnsOptimisticTimeout = "6h",
+                ),
+            ),
+        )
+        val optimistic = cfg["dns"]!!.jsonObject["optimistic"]!!.jsonObject
+        assertEquals(true, optimistic["enabled"]!!.jsonPrimitive.content.toBoolean())
+        assertEquals("6h", optimistic["timeout"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `dns reverse mapping and query timeout emitted when set`() {
+        val cfg = parse(
+            AppState(
+                settings = com.sbai.data.AppSettings(
+                    dnsReverseMapping = true,
+                    dnsQueryTimeout = "5s",
+                ),
+            ),
+        )
+        val dns = cfg["dns"]!!.jsonObject
+        assertEquals(true, dns["reverse_mapping"]!!.jsonPrimitive.content.toBoolean())
+        assertEquals("5s", dns["timeout"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `resolve route rule only when strategy configured`() {
+        val off = parse(AppState())
+        assertTrue(routeRules(off).none { it.jsonObject["action"]?.jsonPrimitive?.content == "resolve" })
+
+        val on = parse(
+            AppState(settings = com.sbai.data.AppSettings(dnsResolveStrategy = "prefer_ipv4")),
+        )
+        val resolve = routeRules(on).first { it.jsonObject["action"]?.jsonPrimitive?.content == "resolve" }.jsonObject
+        assertEquals("prefer_ipv4", resolve["strategy"]!!.jsonPrimitive.content)
+        assertTrue(resolve["inbound"]!!.jsonArray.any { it.jsonPrimitive.content == "tun-in" })
+    }
+
+    @Test
     fun `tun inbound has no removed legacy sniff fields`() {
         val cfg = parse(AppState())
         val tun = cfg["inbounds"]!!.jsonArray.first().jsonObject

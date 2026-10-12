@@ -27,6 +27,8 @@ import androidx.compose.material.icons.filled.GroupWork
 import androidx.compose.material.icons.filled.Rule
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
@@ -57,6 +59,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.sbai.ui.components.BottomBarController
 import com.sbai.data.DnsGroup
@@ -1080,6 +1083,123 @@ private fun DnsAdvancedTab(
                             subtitle = "先判断 nameserver 结果是否满足 filter，再决定是否发 fallback 查询",
                             checked = settings.dnsFallbackLazyQuery,
                         ) { onSave(settings.copy(dnsFallbackLazyQuery = it)) }
+                    }
+                }
+            }
+            SbSpacer()
+        }
+
+        // ---- DNS 缓存与查询策略（参考 Throne dns 高级项）----
+        item {
+            SbGroup(title = "DNS 缓存与查询") {
+                item {
+                    SbSwitchItem(
+                        title = "禁用 DNS 缓存",
+                        subtitle = "disable_cache；与「乐观缓存」互斥",
+                        checked = settings.dnsDisableCache,
+                    ) { onSave(settings.copy(dnsDisableCache = it)) }
+                }
+                item {
+                    SbSwitchItem(
+                        title = "禁用缓存过期",
+                        subtitle = "disable_expire；与「乐观缓存」互斥",
+                        checked = settings.dnsDisableExpire,
+                    ) { onSave(settings.copy(dnsDisableExpire = it)) }
+                }
+                item {
+                    SbSwitchItem(
+                        title = "乐观缓存",
+                        subtitle = if (settings.dnsDisableCache || settings.dnsDisableExpire) {
+                            "与禁用缓存/过期互斥，当前不会生效"
+                        } else {
+                            "过期条目先返回旧结果并后台刷新，降低首包延迟"
+                        },
+                        checked = settings.dnsOptimistic &&
+                            !settings.dnsDisableCache && !settings.dnsDisableExpire,
+                    ) { onSave(settings.copy(dnsOptimistic = it)) }
+                }
+                item {
+                    Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                        Text("乐观缓存服务窗口", style = MaterialTheme.typography.labelLarge)
+                        Text("duration 字符串，如 3d / 6h；留空用内核默认 3d",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        var t by remember { mutableStateOf(settings.dnsOptimisticTimeout) }
+                        OutlinedTextField(
+                            value = t, onValueChange = { t = it.trim() },
+                            singleLine = true, modifier = Modifier.fillMaxWidth(),
+                            placeholder = { Text("3d") },
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        OutlinedButton(onClick = { onSave(settings.copy(dnsOptimisticTimeout = t)) }) {
+                            Text("保存")
+                        }
+                    }
+                }
+                item {
+                    Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                        Text("缓存容量（LRU）", style = MaterialTheme.typography.labelLarge)
+                        Text("内核忽略 <1024 的值；留空用内核默认",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        var cap by remember {
+                            mutableStateOf(
+                                if (settings.dnsCacheCapacity > 0) settings.dnsCacheCapacity.toString() else "",
+                            )
+                        }
+                        OutlinedTextField(
+                            value = cap, onValueChange = { cap = it.filter(Char::isDigit).take(7) },
+                            singleLine = true, modifier = Modifier.fillMaxWidth(),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        OutlinedButton(onClick = {
+                            onSave(settings.copy(dnsCacheCapacity = cap.toIntOrNull() ?: 0))
+                        }) { Text("保存") }
+                    }
+                }
+                item {
+                    Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                        Text("查询超时", style = MaterialTheme.typography.labelLarge)
+                        Text("duration 字符串，如 10s；留空用内核默认",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        var t by remember { mutableStateOf(settings.dnsQueryTimeout) }
+                        OutlinedTextField(
+                            value = t, onValueChange = { t = it.trim() },
+                            singleLine = true, modifier = Modifier.fillMaxWidth(),
+                            placeholder = { Text("10s") },
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        OutlinedButton(onClick = { onSave(settings.copy(dnsQueryTimeout = t)) }) {
+                            Text("保存")
+                        }
+                    }
+                }
+                item {
+                    SbSwitchItem(
+                        title = "IP 反向映射",
+                        subtitle = "reverse_mapping：记录 IP→域名，供路由按域名匹配",
+                        checked = settings.dnsReverseMapping,
+                    ) { onSave(settings.copy(dnsReverseMapping = it)) }
+                }
+                item {
+                    Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                        Text("resolve 动作策略", style = MaterialTheme.typography.labelLarge)
+                        Text("对 TUN 入站连接预解析域名，让域名规则能覆盖 sniff 不到的对象；留空不生成该规则",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        var s by remember { mutableStateOf(settings.dnsResolveStrategy) }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            listOf("", "prefer_ipv4", "prefer_ipv6", "ipv4_only", "ipv6_only").forEach { opt ->
+                                FilterChip(
+                                    selected = s == opt,
+                                    onClick = { s = opt; onSave(settings.copy(dnsResolveStrategy = opt)) },
+                                    label = { Text(opt.ifEmpty { "关闭" }) },
+                                    modifier = Modifier.padding(end = 6.dp),
+                                )
+                            }
+                        }
                     }
                 }
             }

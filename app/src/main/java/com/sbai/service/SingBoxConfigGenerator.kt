@@ -201,6 +201,34 @@ object SingBoxConfigGenerator {
                 put("strategy", state.settings.dnsStrategy)
                 put("independent_cache", true)
                 put("final", defaultDnsTag)
+                // DNS 缓存调优（参考 Throne：内核会直接拒绝 optimistic 与缓存开关共存的配置）
+                if (state.settings.dnsCacheCapacity > 0) {
+                    // 内核忽略 <1024 的值，这里只在有效时输出
+                    if (state.settings.dnsCacheCapacity >= 1024) {
+                        put("cache_capacity", state.settings.dnsCacheCapacity)
+                    }
+                }
+                if (state.settings.dnsDisableCache) put("disable_cache", true)
+                if (state.settings.dnsDisableExpire) put("disable_expire", true)
+                // optimistic 与 disable_cache / disable_expire 互斥，冲突时不输出
+                if (state.settings.dnsOptimistic &&
+                    !state.settings.dnsDisableCache &&
+                    !state.settings.dnsDisableExpire
+                ) {
+                    val optTimeout = state.settings.dnsOptimisticTimeout.trim()
+                    if (optTimeout.isEmpty()) {
+                        put("optimistic", true)
+                    } else {
+                        putJsonObject("optimistic") {
+                            put("enabled", true)
+                            put("timeout", optTimeout)
+                        }
+                    }
+                }
+                if (state.settings.dnsQueryTimeout.isNotBlank()) {
+                    put("timeout", state.settings.dnsQueryTimeout.trim())
+                }
+                if (state.settings.dnsReverseMapping) put("reverse_mapping", true)
             }
 
             putJsonObject("route") {
@@ -280,6 +308,22 @@ object SingBoxConfigGenerator {
                     put("mtu", state.settings.mtu)
                     put("auto_route", true)
                     put("strict_route", state.settings.strictRoute)
+                    // dns_mode=hijack（1.14+ 默认，显式写出）：内核把 TUN 派生的 DNS 地址
+                    // （address 首段 +1）上的连接劫持进 DNS 模块。不写则依赖默认值，
+                    // 显式写出可避免上游改默认时行为漂移。
+                    put("dns_mode", "hijack")
+                    // route_exclude_address：把 TUN 自身网段与回环/广播排除在路由外。
+                    // 关键：TUN 的 DNS 地址 = address 首段 +1，落在 TUN 网段内；
+                    // 若不排除，发往该地址的 DNS 查询会被送回隧道形成环，
+                    // 表现为「VPN 显示已连接但域名全部解析失败」（参考 Throne D13）。
+                    putJsonArray("route_exclude_address") {
+                        add("127.0.0.0/8")
+                        add("255.255.255.255/32")
+                        add(state.settings.tunAddress.ifBlank { "172.18.0.1/30" })
+                        if (state.settings.ipv6Route) {
+                            add(state.settings.tunAddress6.ifBlank { "fdfe:dcba:9876::1/126" })
+                        }
+                    }
                     // TUN 网络栈：system / gvisor / mixed / go / tsbAI（go=1.15+ 新 Go 栈，tsbAI=sb-lxf 魔改含 splice/GSO/multi_queue）
                     put("stack", state.settings.tunStack.wireName)
                     // tsbAI/go 栈可选 multi_queue（Linux 多队列网络引擎）
@@ -579,6 +623,16 @@ object SingBoxConfigGenerator {
     private fun buildRouteRules(state: AppState, entryTag: String): List<JsonObject> {
         val rules = mutableListOf<JsonObject>()
         rules.add(buildJsonObject { put("action", "sniff") })
+        // resolve 动作（参考 Throne）：对 TUN 入站连接按策略预解析域名，
+        // 让后续按域名匹配的规则能拿到 sniff 不到的域名（如直连 IP 场景）。
+        val resolveStrategy = state.settings.dnsResolveStrategy.trim()
+        if (resolveStrategy.isNotEmpty()) {
+            rules.add(buildJsonObject {
+                putJsonArray("inbound") { add("tun-in") }
+                put("action", "resolve")
+                put("strategy", resolveStrategy)
+            })
+        }
         // fakeIP 联动：存在启用的 fakeip DNS server 时，自动生成 fakeIP 段路由规则（放最前，优先级最高）
         state.dnsServers.firstOrNull { it.enabled && it.type == DnsServerType.FAKEIP && it.tag.isNotBlank() }
             ?.let { fake ->
