@@ -17,7 +17,7 @@ on:
         default: false
 
 env:
-  LIBBOX_VERSION: v1.15.0-ts.8
+  LIBBOX_VERSION: v1.15.0-ts.9
   LIBBOX_VARIANT: slim
 
 # 创建 Release 需要 contents: write 权限（默认是 read，会导致 softprops 步骤 403 失败）
