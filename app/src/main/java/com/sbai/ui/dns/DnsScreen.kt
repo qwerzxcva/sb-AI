@@ -849,8 +849,8 @@ private fun DnsRuleEditorDialog(
                     }
                 }
 
-                if (ruleAction == "route-options") {
-                    MultiLine("覆盖应答 A 记录（一行一个 IPv4）", answers) { answers = it }
+                if (ruleAction == "pre-defined") {
+                    MultiLine("覆盖应答 A 记录（一行一个 IPv4/IPv6，自动补成合法 DNS 记录）", answers) { answers = it }
                     MultiLine("覆盖应答 NS 记录（一行一条）", ns) { ns = it }
                     MultiLine("覆盖应答 EXTRA 记录（一行一条）", extra) { extra = it }
                 }

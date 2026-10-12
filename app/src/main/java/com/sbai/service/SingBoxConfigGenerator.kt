@@ -466,6 +466,23 @@ object SingBoxConfigGenerator {
     }
 
     /**
+     * 把用户输入规范成内核可解析的 DNS 记录字符串。
+     * 内核的 DNSRecordOptions 用 dns.ZoneParser 解析（或 base64），
+     * 裸 IP 无法解析；UI 只收裸 IP，这里补成合法 zone 记录。
+     * 已是完整记录（含 IN A/AAAA/CNAME/... 等类型词）的按原样返回。
+     */
+    private fun toDnsRecord(input: String): String {
+        val s = input.trim()
+        if (s.isEmpty()) return s
+        // 已是完整 zone 记录（包含记录类型关键字）→ 原样返回
+        if (s.contains(Regex("\\s+IN\\s+", RegexOption.IGNORE_CASE))) return s
+        val isV6 = s.contains(':')
+        val type = if (isV6) "AAAA" else "A"
+        // 名称用根域占位；内核只取记录里的 IP 部分
+        return "$s 60 IN $type"
+    }
+
+    /**
      * 把用户手写的 DNS 地址（如 "tls://8.8.8.8" / "223.5.5.5"）解析成 sing-box DNS server 对象。
      * 用于 fallback / nameserver-policy 这类「引用真实 server」的规则：先生成 server，再用其 tag。
      * 已存在同 tag 的 server 时直接复用，避免重复声明。
@@ -978,9 +995,27 @@ object SingBoxConfigGenerator {
                         // predefined 才承载 rcode/answer/ns/extra
                         put("action", "predefined")
                         if (r.rcode.isNotBlank() && r.rcode != "success") put("rcode", r.rcode)
-                        if (r.answers.isNotEmpty()) putJsonArray("answer") { r.answers.forEach(::add) }
-                        if (r.ns.isNotEmpty()) putJsonArray("ns") { r.ns.forEach(::add) }
-                        if (r.extra.isNotEmpty()) putJsonArray("extra") { r.extra.forEach(::add) }
+                        // answer 走 DNSRecordOptions：内核用 dns.ZoneParser 解析字符串
+                        // （或 base64），裸 IP 无法解析。UI 只收裸 IP，这里补成合法
+                        // zone 记录：IPv4 → A，IPv6 → AAAA；已是完整记录的按原样输出。
+                        if (r.answers.isNotEmpty()) {
+                            putJsonArray("answer") {
+                                r.answers.map { it.trim() }.filter { it.isNotEmpty() }
+                                    .forEach { add(toDnsRecord(it)) }
+                            }
+                        }
+                        if (r.ns.isNotEmpty()) {
+                            putJsonArray("ns") {
+                                r.ns.map { it.trim() }.filter { it.isNotEmpty() }
+                                    .forEach { add(toDnsRecord(it)) }
+                            }
+                        }
+                        if (r.extra.isNotEmpty()) {
+                            putJsonArray("extra") {
+                                r.extra.map { it.trim() }.filter { it.isNotEmpty() }
+                                    .forEach { add(toDnsRecord(it)) }
+                            }
+                        }
                     }
                     else -> {
                         // route：server 已在上面校验非空

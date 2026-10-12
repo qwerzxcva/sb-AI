@@ -800,7 +800,45 @@ class SingBoxConfigGeneratorTest {
         val dr = parse(state)["dns"]!!.jsonObject["rules"]!!.jsonArray.first().jsonObject
         assertEquals("predefined", dr["action"]!!.jsonPrimitive.content)
         assertEquals("nxdomain", dr["rcode"]!!.jsonPrimitive.content)
-        assertEquals("1.2.3.4", dr["answer"]!!.jsonArray[0].jsonPrimitive.content)
+        // 内核用 dns.ZoneParser 解析 answer，裸 IP 无法解析，必须补成合法 zone 记录
+        assertEquals("1.2.3.4 60 IN A", dr["answer"]!!.jsonArray[0].jsonPrimitive.content)
+    }
+
+    @Test
+    fun `predefined answer preserves already valid zone records`() {
+        val rule = DnsRule(
+            name = "fixed",
+            domains = listOf("example.com"),
+            server = "d1",
+            action = "pre-defined",
+            answers = listOf("example.com. 300 IN A 1.2.3.4"),
+        )
+        val state = AppState(
+            dnsRules = listOf(rule),
+            dnsServers = listOf(DnsServer(tag = "d1", type = DnsServerType.UDP, address = "223.5.5.5")),
+        )
+        val dr = parse(state)["dns"]!!.jsonObject["rules"]!!.jsonArray.first().jsonObject
+        assertEquals(
+            "example.com. 300 IN A 1.2.3.4",
+            dr["answer"]!!.jsonArray[0].jsonPrimitive.content,
+        )
+    }
+
+    @Test
+    fun `predefined ipv6 answer uses AAAA record`() {
+        val rule = DnsRule(
+            name = "fixed6",
+            domains = listOf("example.com"),
+            server = "d1",
+            action = "pre-defined",
+            answers = listOf("2001:db8::1"),
+        )
+        val state = AppState(
+            dnsRules = listOf(rule),
+            dnsServers = listOf(DnsServer(tag = "d1", type = DnsServerType.UDP, address = "223.5.5.5")),
+        )
+        val dr = parse(state)["dns"]!!.jsonObject["rules"]!!.jsonArray.first().jsonObject
+        assertEquals("2001:db8::1 60 IN AAAA", dr["answer"]!!.jsonArray[0].jsonPrimitive.content)
     }
 
     @Test
