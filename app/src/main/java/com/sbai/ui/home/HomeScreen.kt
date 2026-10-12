@@ -1189,8 +1189,11 @@ private fun NodeRow(
                     !node.enabled -> " · 已禁用"
                     else -> ""
                 }
+                // nodeSummary 会对 outboundJson 做三次线性扫描（type/server/server_port），
+                // 每个节点每次重组都跑一遍；JSON 本身不变，用 remember 按内容缓存。
+                val summary = remember(node.outboundJson) { node.outboundJson.nodeSummary() }
                 Text(
-                    node.outboundJson.nodeSummary() + delay + state,
+                    summary + delay + state,
                     style = MaterialTheme.typography.bodySmall,
                     color = colors.onSurfaceVariant,
                     maxLines = 1,
