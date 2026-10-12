@@ -815,6 +815,143 @@ class SingBoxConfigGeneratorTest {
     }
 
     @Test
+    fun `tsbai is default tun stack`() {
+        val cfg = parse(AppState())
+        assertEquals(
+            "tsbAI",
+            cfg["inbounds"]!!.jsonArray.first().jsonObject["stack"]!!.jsonPrimitive.content,
+        )
+    }
+
+    // ---- Clash 专有字段不得泄漏到 sing-box 配置（会让内核拒绝启动）----
+
+    @Test
+    fun `dns object has no clash-only keys`() {
+        val cfg = parse(
+            AppState(
+                settings = com.sbai.data.AppSettings(
+                    dnsFallbackServers = listOf("tls://8.8.8.8"),
+                    dnsFallbackIpcidr = listOf("240.0.0.0/4"),
+                    dnsFakeipFilter = listOf("*.lan"),
+                    dnsFakeipFilterPatterns = listOf("^stun\\."),
+                    dnsNameserverPolicy = listOf("*.cn=223.5.5.5"),
+                ),
+            ),
+        )
+        val dns = cfg["dns"]!!.jsonObject
+        listOf(
+            "fallback",
+            "fallback-filter",
+            "fakeip-filter",
+            "fakeip-filter-pattern",
+            "nameserver-policy",
+        ).forEach { key ->
+            assertNull("dns.$key 是 Clash 专有字段，不得出现", dns[key])
+        }
+    }
+
+    @Test
+    fun `fallback becomes dns rule with match_response and real server`() {
+        val cfg = parse(
+            AppState(
+                settings = com.sbai.data.AppSettings(
+                    dnsFallbackServers = listOf("tls://8.8.8.8"),
+                    dnsFallbackIpcidr = listOf("240.0.0.0/4"),
+                ),
+            ),
+        )
+        val dns = cfg["dns"]!!.jsonObject
+        val servers = dns["servers"]!!.jsonArray.map { it.jsonObject }
+        val fallbackServer = servers.firstOrNull {
+            it["type"]?.jsonPrimitive?.content == "tls" &&
+                it["server"]?.jsonPrimitive?.content == "8.8.8.8"
+        }
+        assertNotNull("fallback 地址必须生成真实 DNS server", fallbackServer)
+        val fallbackTag = fallbackServer!!["tag"]!!.jsonPrimitive.content
+        val rule = dnsRules(cfg).firstOrNull {
+            it.jsonObject["server"]?.jsonPrimitive?.content == fallbackTag
+        }?.jsonObject
+        assertNotNull("fallback 必须生成 dns rule", rule)
+        assertEquals("route", rule!!["action"]!!.jsonPrimitive.content)
+        assertEquals(true, rule["match_response"]!!.jsonPrimitive.content.toBoolean())
+        assertTrue(
+            rule["ip_cidr"]!!.jsonArray.any { it.jsonPrimitive.content == "240.0.0.0/4" },
+        )
+    }
+
+    @Test
+    fun `fakeip filter becomes dns rule pointing at real resolver`() {
+        val cfg = parse(
+            AppState(
+                dnsServers = listOf(
+                    DnsServer(tag = "real", type = DnsServerType.UDP, address = "223.5.5.5"),
+                ),
+                settings = com.sbai.data.AppSettings(
+                    dnsFakeipFilter = listOf("*.lan", "localhost"),
+                ),
+            ),
+        )
+        val rule = dnsRules(cfg).firstOrNull {
+            it.jsonObject["domain"]?.jsonArray?.any { d -> d.jsonPrimitive.content == "*.lan" } == true
+        }?.jsonObject
+        assertNotNull("fakeIP 过滤域名必须生成 dns rule", rule)
+        assertEquals("real", rule!!["server"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `nameserver policy bare address becomes real dns server and rule`() {
+        val cfg = parse(
+            AppState(
+                settings = com.sbai.data.AppSettings(
+                    dnsNameserverPolicy = listOf("*.cn=tls://223.5.5.5"),
+                ),
+            ),
+        )
+        val dns = cfg["dns"]!!.jsonObject
+        val policyServer = dns["servers"]!!.jsonArray.map { it.jsonObject }.firstOrNull {
+            it["type"]?.jsonPrimitive?.content == "tls" &&
+                it["server"]?.jsonPrimitive?.content == "223.5.5.5"
+        }
+        assertNotNull("裸地址必须先落成真实 DNS server", policyServer)
+        val rule = dnsRules(cfg).firstOrNull {
+            it.jsonObject["server"]?.jsonPrimitive?.content == policyServer!!["tag"]!!.jsonPrimitive.content
+        }?.jsonObject
+        assertNotNull("nameserver-policy 必须生成 dns rule", rule)
+        assertTrue(
+            rule!!["domain_suffix"]!!.jsonArray.any { it.jsonPrimitive.content == "cn" },
+        )
+    }
+
+    @Test
+    fun `tun inbound has no removed legacy sniff fields`() {
+        val cfg = parse(AppState())
+        val tun = cfg["inbounds"]!!.jsonArray.first().jsonObject
+        // sing-box 1.13 起 inbound.sniff / sniff_override_destination 已移除，带上会被内核拒绝
+        assertNull(tun["sniff"])
+        assertNull(tun["sniff_override_destination"])
+        // 嗅探改由 route 规则承担，必须存在
+        assertTrue(routeRules(cfg).any { it.jsonObject["action"]?.jsonPrimitive?.content == "sniff" })
+    }
+
+    @Test
+    fun `multi_queue only emitted for tsbai and go stacks`() {
+        val tsbai = parse(
+            AppState(settings = com.sbai.data.AppSettings(tunStack = com.sbai.data.TunStack.TSB_AI, tunMultiQueue = true)),
+        )
+        assertEquals(
+            true,
+            tsbai["inbounds"]!!.jsonArray.first().jsonObject["multi_queue"]!!.jsonPrimitive.content.toBoolean(),
+        )
+        val gvisor = parse(
+            AppState(settings = com.sbai.data.AppSettings(tunStack = com.sbai.data.TunStack.GVISOR, tunMultiQueue = true)),
+        )
+        assertNull(
+            "gvisor 栈不支持 multi_queue，不得输出",
+            gvisor["inbounds"]!!.jsonArray.first().jsonObject["multi_queue"],
+        )
+    }
+
+    @Test
     fun `fakeip custom ranges and auto rules`() {
         val state = AppState(
             dnsServers = listOf(

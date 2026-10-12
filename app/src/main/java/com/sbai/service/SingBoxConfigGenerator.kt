@@ -97,11 +97,12 @@ object SingBoxConfigGenerator {
         val autoWorthWrapping = lb.autoEnabled && (finalProxyTag == "lb" || finalProxyTag == "proxy")
         val entryTag = if (autoWorthWrapping) "auto" else finalProxyTag
 
-        val dnsServers = buildDnsServers(state, entryTag)
+        val dnsServers = buildDnsServers(state, entryTag).toMutableList()
         val defaultDnsTag = state.dnsServers.firstOrNull { it.enabled && it.tag.isNotBlank() }?.tag
             ?: "dns-default"
         val routeRules = buildRouteRules(state, entryTag)
-        val dnsRules = buildDnsRules(state, defaultDnsTag)
+        val dnsRules = buildDnsRules(state, defaultDnsTag).toMutableList()
+        appendDnsPolicyRules(state, dnsServers, dnsRules, defaultDnsTag)
 
         val outbounds = buildJsonArray {
             if (lb.enabled) {
@@ -200,52 +201,6 @@ object SingBoxConfigGenerator {
                 put("strategy", state.settings.dnsStrategy)
                 put("independent_cache", true)
                 put("final", defaultDnsTag)
-                // DNS fallback（参考 FlClash/mihomo）
-                val fallbackServers = state.settings.dnsFallbackServers
-                if (fallbackServers.isNotEmpty()) {
-                    putJsonArray("fallback") { fallbackServers.forEach(::add) }
-                    // fallback-filter
-                    val filterEnabled = state.settings.dnsFallbackGeoip ||
-                        state.settings.dnsFallbackGeosite.isNotEmpty() ||
-                        state.settings.dnsFallbackIpcidr.isNotEmpty() ||
-                        state.settings.dnsFallbackDomain.isNotEmpty()
-                    if (filterEnabled) {
-                        putJsonObject("fallback-filter") {
-                            put("geoip", state.settings.dnsFallbackGeoip)
-                            if (state.settings.dnsFallbackGeoip)
-                                put("geoip-code", state.settings.dnsFallbackGeoipCode)
-                            if (state.settings.dnsFallbackGeosite.isNotEmpty())
-                                putJsonArray("geosite") { state.settings.dnsFallbackGeosite.forEach(::add) }
-                            if (state.settings.dnsFallbackIpcidr.isNotEmpty())
-                                putJsonArray("ipcidr") { state.settings.dnsFallbackIpcidr.forEach(::add) }
-                            if (state.settings.dnsFallbackDomain.isNotEmpty())
-                                putJsonArray("domain") { state.settings.dnsFallbackDomain.forEach(::add) }
-                            put("lazy-query", state.settings.dnsFallbackLazyQuery)
-                        }
-                    }
-                }
-                // fake-ip-filter（sing-box 原生支持，用于排除特定域名不走 fakeIP）
-                if (state.settings.dnsFakeipFilter.isNotEmpty()) {
-                    putJsonArray("fakeip-filter") { state.settings.dnsFakeipFilter.forEach(::add) }
-                    if (state.settings.dnsFakeipFilterMode == "whitelist")
-                        put("fakeip-filter-mode", "whitelist")
-                }
-                // fake-ip-filter-pattern（正则形式，高于 fakeip-filter）
-                if (state.settings.dnsFakeipFilterPatterns.isNotEmpty()) {
-                    putJsonArray("fakeip-filter-pattern") { state.settings.dnsFakeipFilterPatterns.forEach(::add) }
-                }
-                // nameserver-policy（按域名指定 DNS，优先级高于默认服务器）
-                val policyEntries = state.settings.dnsNameserverPolicy
-                    .filter { it.isNotBlank() && it.contains("=") }
-                    .associate { entry ->
-                        val eq = entry.indexOf('=')
-                        entry.substring(0, eq).trim() to entry.substring(eq + 1).trim()
-                    }
-                if (policyEntries.isNotEmpty()) {
-                    putJsonObject("nameserver-policy") {
-                        policyEntries.forEach { (k, v) -> put(k, v) }
-                    }
-                }
             }
 
             putJsonObject("route") {
@@ -332,8 +287,9 @@ object SingBoxConfigGenerator {
                         (state.settings.tunStack == TunStack.TSB_AI || state.settings.tunStack == TunStack.GO)) {
                         put("multi_queue", true)
                     }
-                    put("sniff", true)
-                    put("sniff_override_destination", false)
+                    // sing-box 1.13 起 inbound 上不再有 sniff/sniff_override_destination
+                    // （内核 option/tun.go 已无这两个字段，带上会被拒绝启动）；
+                    // 嗅探改由 route.rules 的 {"action":"sniff"} 承担（见 buildRouteRules 首条）。
 
                     when (state.settings.perAppProxy.mode) {
                         PerAppProxyMode.INCLUDE ->
@@ -436,6 +392,149 @@ object SingBoxConfigGenerator {
         val slash = noScheme.indexOf('/')
         return if (slash >= 0) noScheme.substring(0, slash) to noScheme.substring(slash)
         else noScheme to null
+    }
+
+    /**
+     * 把用户手写的 DNS 地址（如 "tls://8.8.8.8" / "223.5.5.5"）解析成 sing-box DNS server 对象。
+     * 用于 fallback / nameserver-policy 这类「引用真实 server」的规则：先生成 server，再用其 tag。
+     * 已存在同 tag 的 server 时直接复用，避免重复声明。
+     */
+    private fun dnsServerFromAddress(tag: String, address: String): JsonObject? {
+        val trimmed = address.trim()
+        if (trimmed.isEmpty()) return null
+        val scheme = trimmed.substringBefore("://")
+        return buildJsonObject {
+            put("tag", tag)
+            when (scheme) {
+                "tls" -> {
+                    put("type", "tls")
+                    put("server", splitHostAndPath(trimmed).first)
+                }
+                "https" -> {
+                    put("type", "https")
+                    val (host, path) = splitHostAndPath(trimmed)
+                    put("server", host)
+                    if (path != null) put("path", path)
+                }
+                "quic" -> {
+                    put("type", "quic")
+                    put("server", splitHostAndPath(trimmed).first)
+                }
+                "h3" -> {
+                    put("type", "h3")
+                    put("server", splitHostAndPath(trimmed).first)
+                }
+                "tcp" -> {
+                    put("type", "tcp")
+                    put("server", splitHostAndPath(trimmed).first)
+                }
+                else -> {
+                    put("type", "udp")
+                    put("server", trimmed)
+                }
+            }
+        }
+    }
+
+    /**
+     * 把 DNS 高级设置（fallback / fakeIP 过滤 / nameserver-policy）翻译成 sing-box 原生 dns.rules。
+     * sing-box 没有 Clash 的 fallback/fallback-filter/fakeip-filter/nameserver-policy 顶层字段，
+     * 直接用会让内核拒绝启动；这里全部用等价的 rule 表达。
+     * 可能向 [servers] 追加新 server（裸地址场景），因此两个列表都必须是可变的。
+     */
+    private fun appendDnsPolicyRules(
+        state: AppState,
+        servers: MutableList<JsonObject>,
+        rules: MutableList<JsonObject>,
+        defaultDnsTag: String,
+    ) {
+        val settings = state.settings
+
+        // 1) fallback：响应 IP 命中给定 CIDR 时改走 fallback server（match_response 评估响应）
+        val fallbackServers = settings.dnsFallbackServers.filter { it.isNotBlank() }
+        val fallbackCidrs = settings.dnsFallbackIpcidr.filter { it.isNotBlank() }
+        if (fallbackServers.isNotEmpty() && fallbackCidrs.isNotEmpty()) {
+            val fallbackTag = ensureDnsServerTag(servers, fallbackServers.first(), "dns-fallback")
+            rules.add(buildJsonObject {
+                put("action", "route")
+                put("server", fallbackTag)
+                put("match_response", true)
+                putJsonArray("ip_cidr") { fallbackCidrs.forEach(::add) }
+            })
+        }
+
+        // 2) fakeIP 过滤：这些域名不走 fakeIP，改走真实 DNS
+        if (settings.dnsFakeipFilter.isNotEmpty()) {
+            rules.add(buildJsonObject {
+                put("action", "route")
+                put("server", defaultDnsTag)
+                if (settings.dnsFakeipFilterMode == "whitelist") put("invert", true)
+                putJsonArray("domain") { settings.dnsFakeipFilter.forEach(::add) }
+            })
+        }
+        if (settings.dnsFakeipFilterPatterns.isNotEmpty()) {
+            rules.add(buildJsonObject {
+                put("action", "route")
+                put("server", defaultDnsTag)
+                putJsonArray("domain_regex") { settings.dnsFakeipFilterPatterns.forEach(::add) }
+            })
+        }
+
+        // 3) nameserver-policy：域名 -> 指定 DNS（tag 或裸地址）
+        settings.dnsNameserverPolicy
+            .filter { it.isNotBlank() && it.contains("=") }
+            .forEach { entry ->
+                val eq = entry.indexOf('=')
+                val domain = entry.substring(0, eq).trim()
+                val target = entry.substring(eq + 1).trim()
+                if (domain.isEmpty() || target.isEmpty()) return@forEach
+                val serverTag = resolvePolicyTag(servers, target) ?: return@forEach
+                rules.add(buildJsonObject {
+                    put("action", "route")
+                    put("server", serverTag)
+                    when {
+                        domain.startsWith("+.") ->
+                            putJsonArray("domain_suffix") { add(domain.removePrefix("+.")) }
+                        domain.startsWith("*.") ->
+                            putJsonArray("domain_suffix") { add(domain.removePrefix("*.")) }
+                        else -> putJsonArray("domain") { add(domain) }
+                    }
+                })
+            }
+    }
+
+    /**
+     * 确保 [address] 对应的 DNS server 已存在于 [servers]，返回其 tag；不存在则追加后返回。
+     * 供 fallback / nameserver-policy 等需要引用真实 server 的规则使用。
+     */
+    private fun ensureDnsServerTag(
+        servers: MutableList<JsonObject>,
+        address: String,
+        preferredTag: String,
+    ): String {
+        val target = dnsServerFromAddress(preferredTag, address) ?: return preferredTag
+        val existing = servers.firstOrNull { it == target || it["server"] == target["server"] && it["type"] == target["type"] }
+        if (existing != null) {
+            return existing["tag"]?.jsonPrimitive?.content ?: preferredTag
+        }
+        servers.add(target)
+        return preferredTag
+    }
+
+    /**
+     * 解析 nameserver-policy 的目标：既可以是已声明的 DNS server tag，也可以是裸地址。
+     * 返回 null 表示无法解析（调用方应跳过该规则，避免悬空引用导致内核拒绝启动）。
+     */
+    private fun resolvePolicyTag(servers: MutableList<JsonObject>, target: String): String? {
+        val trimmed = target.trim()
+        if (trimmed.isEmpty()) return null
+        val asTag = servers.firstOrNull { it["tag"]?.jsonPrimitive?.content == trimmed }
+        if (asTag != null) return trimmed
+        // 裸地址：作为新的 udp/tls/https server 追加
+        val tag = "dns-policy-" + trimmed.hashCode().toUInt().toString(16)
+        val server = dnsServerFromAddress(tag, trimmed) ?: return null
+        servers.add(server)
+        return tag
     }
 
     // ------------------------------------------------------------------
