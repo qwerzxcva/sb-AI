@@ -23,6 +23,10 @@ class RuleStore private constructor(context: Context) {
         prettyPrint = false
     }
 
+    // 冷启动说明：load() 同步做 SharedPreferences.getString + 整份 AppState JSON
+    // 反序列化（含所有节点的原始 outbound JSON）。这里保持构造时同步读盘，因为
+    // BootReceiver / VpnControlReceiver 等调用方在 get() 后立刻读 state.value，
+    // 改成异步预热会让它们看到默认态而静默跳过（如开机自启失效）。
     private val _state = MutableStateFlow(load())
     val state: StateFlow<AppState> = _state.asStateFlow()
 
