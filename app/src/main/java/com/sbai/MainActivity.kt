@@ -132,33 +132,38 @@ private fun MainScaffold() {
         }
 
         // FlClash 风格：底栏胶囊 + 右侧独立圆形 VPN 开关按钮
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .align(Alignment.BottomCenter)
-                .navigationBarsPadding()
-                .padding(horizontal = 20.dp)
-                .padding(bottom = 12.dp)
-                // 下滑隐藏：整体下移出屏幕
-                .offset(y = barOffset),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            SbGlassBottomBar(
-                pageBackdrop = pageBackdrop,
-                items = items.map { SbNavItem(it.route, it.title, it.icon) },
-                currentRoute = currentRoute,
-                onSelect = { route ->
-                    navController.navigate(route) {
-                        popUpTo(navController.graph.findStartDestination().id) { saveState = true }
-                        launchSingleTop = true
-                        restoreState = true
-                    }
-                },
-                modifier = Modifier.weight(1f),
-            )
-            Spacer(modifier = Modifier.size(12.dp))
-            // 与 NavigationBar 等高（80dp），上下平齐；圆形按钮直径 = 底栏高度
-            VpnToggleButton(size = 80.dp)
+        // 下滑隐藏时整行不参与绘制：layerBackdrop 会录制整个 NavHost 供底栏模糊采样，
+        // 隐藏后继续绘制等于每帧白录一层 + 跑一遍 blur，滑动时是纯浪费的 GPU 开销。
+        // 用 barVisible（离散状态）而非 barOffset（动画中间值）判断，避免浮点比较。
+        if (barVisible) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .align(Alignment.BottomCenter)
+                    .navigationBarsPadding()
+                    .padding(horizontal = 20.dp)
+                    .padding(bottom = 12.dp)
+                    // 下滑隐藏：整体下移出屏幕
+                    .offset(y = barOffset),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                SbGlassBottomBar(
+                    pageBackdrop = pageBackdrop,
+                    items = items.map { SbNavItem(it.route, it.title, it.icon) },
+                    currentRoute = currentRoute,
+                    onSelect = { route ->
+                        navController.navigate(route) {
+                            popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
+                    },
+                    modifier = Modifier.weight(1f),
+                )
+                Spacer(modifier = Modifier.size(12.dp))
+                // 与 NavigationBar 等高（80dp），上下平齐；圆形按钮直径 = 底栏高度
+                VpnToggleButton(size = 80.dp)
+            }
         }
     }
 }
