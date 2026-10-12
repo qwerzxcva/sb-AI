@@ -126,6 +126,9 @@ class SubscriptionManager(
             }
             store.replaceSubscriptionNodes(subscription.id, nodes)
 
+            // 更新后处理：自动测速 / 移除不可用 / 按延迟排序（此前 UI 可配但从不生效）
+            applyPostRefreshProcessing(subscription, nodes)
+
             // 导入解析出的路由规则（Clash YAML / sing-box JSON 配置带规则时）
             val importedRules = parsedResult.routeRules
             if (importedRules.isNotEmpty()) {
@@ -169,6 +172,72 @@ class SubscriptionManager(
     private fun fail(subscription: Subscription, message: String): Result.Failure {
         store.upsertSubscription(subscription.copy(lastError = message))
         return Result.Failure(message)
+    }
+
+    /**
+     * 订阅刷新后处理：自动测速 / 移除不可用节点 / 按延迟排序。
+     * 这三项在 UI 里可配（HomeScreen 订阅编辑器），此前生成端从不消费，属于静默失效。
+     * 注意：测速需要内核里存在对应的 urltest 组且 VPN 已连接；未连接时跳过测速，
+     * 但仍会按已有延迟数据做排序（排序本身不依赖内核）。
+     */
+    private suspend fun applyPostRefreshProcessing(
+        subscription: Subscription,
+        nodes: List<ProxyNode>,
+    ) {
+        var current = nodes
+
+        if (subscription.urlTestAfterUpdate && current.isNotEmpty()) {
+            val groupTag = resolveTestGroupTag(subscription.id)
+            if (groupTag != null && SbCommandClient.connectedToService.value) {
+                val results = runCatching {
+                    NodeBatchTester.testNodes(current, groupTag)
+                }.getOrNull()
+                if (results != null) {
+                    NodeBatchTester.applyResults(store, results)
+                    val delayById = results.associate { it.node.id to it.delay }
+                    current = current.map { n -> delayById[n.id]?.let { n.copy(urlTestDelay = it) } ?: n }
+                    Log.i(TAG, "subscription ${subscription.name}: post-refresh urltest ${results.size} nodes")
+                }
+            } else {
+                Log.i(TAG, "subscription ${subscription.name}: skip urltest (core not connected or no group)")
+            }
+        }
+
+        if (subscription.removeUnavailable) {
+            val before = current.size
+            current = current.filter { it.urlTestDelay >= 0 }
+            Log.i(TAG, "subscription ${subscription.name}: removed ${before - current.size} unavailable nodes")
+        }
+
+        if (subscription.sortByLatency) {
+            current = current.sortedWith(
+                compareBy<ProxyNode> { if (it.urlTestDelay < 0) Int.MAX_VALUE else it.urlTestDelay }
+                    .thenBy { it.name },
+            )
+        }
+
+        if (subscription.removeUnavailable || subscription.sortByLatency) {
+            if (current.isNotEmpty()) {
+                store.replaceSubscriptionNodes(subscription.id, current)
+            } else {
+                Log.w(TAG, "subscription ${subscription.name}: all nodes removed by post-processing, keeping original list")
+            }
+        }
+    }
+
+    /**
+     * 找到该订阅节点所在的、可测速的 urltest 组 tag。
+     * 节点进的是 lb/proxy 选择器组；urltest 只在负载均衡开启时生成。
+     */
+    private fun resolveTestGroupTag(subscriptionId: String): String? {
+        val lb = store.state.value.loadBalance
+        if (!lb.enabled) return null
+        val nodes = store.state.value.proxyNodes.filter { it.subscriptionId == subscriptionId }
+        if (nodes.isEmpty()) return null
+        return when (lb.mode) {
+            com.sbai.data.LoadBalanceMode.MANUAL -> "lb-selector"
+            else -> "lb"
+        }
     }
 
     /**
