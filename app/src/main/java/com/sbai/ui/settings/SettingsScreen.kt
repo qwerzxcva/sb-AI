@@ -353,6 +353,43 @@ fun SettingsScreen() {
                             )
                         }
                     }
+                    // 默认出口（route.final）与 DNS 解析策略（dns.strategy）
+                    // 这两项生成器一直在用，但此前没有 UI 入口，用户只能改备份文件
+                    item {
+                        Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                            Text("默认出口（route.final）", style = MaterialTheme.typography.labelLarge)
+                            Text(
+                                "未命中任何路由规则时的出口；留空 = 自动跟随代理入口。填 direct 可让默认流量直连。",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Spacer(Modifier.height(6.dp))
+                            OutlinedTextField(
+                                value = settings.finalOutbound,
+                                onValueChange = { store.updateSettings(settings.copy(finalOutbound = it.trim())) },
+                                label = { Text("出口 tag（留空 = 自动）") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            Spacer(Modifier.height(12.dp))
+                            Text("DNS 解析策略（dns.strategy）", style = MaterialTheme.typography.labelLarge)
+                            Text(
+                                "域名解析时优先使用的地址族。prefer_ipv4 兼容性最好；双栈场景可用 prefer_ipv6。",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Spacer(Modifier.height(6.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                listOf("prefer_ipv4", "prefer_ipv6", "ipv4_only", "ipv6_only").forEach { opt ->
+                                    FilterChip(
+                                        selected = settings.dnsStrategy == opt,
+                                        onClick = { store.updateSettings(settings.copy(dnsStrategy = opt)) },
+                                        label = { Text(opt) },
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
                 SbSpacer()
             }
