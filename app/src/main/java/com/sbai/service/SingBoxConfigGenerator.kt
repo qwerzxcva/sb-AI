@@ -102,6 +102,10 @@ object SingBoxConfigGenerator {
             ?: "dns-default"
         val routeRules = buildRouteRules(state, entryTag)
         val dnsRules = buildDnsRules(state, defaultDnsTag).toMutableList()
+        // appendDnsPolicyRules 会把 fakeIP 过滤 / fallback / nameserver-policy 规则插到
+        // dnsRules 头部（index 0 起），而不是尾部：buildDnsRules 最后一条是
+        // 「query_type A/AAAA → fakeip」无条件兜底，若这些过滤规则追加到它之后
+        // 就永远匹配不到（DNS 规则按序匹配，先命中先生效）。
         appendDnsPolicyRules(state, dnsServers, dnsRules, defaultDnsTag)
 
         val outbounds = buildJsonArray {
@@ -261,19 +265,25 @@ object SingBoxConfigGenerator {
                     state.settings.resources
                         .filter { it.enabled && it.resType == com.sbai.data.ResourceType.CHINA_IP && it.content.isNotEmpty() }
                         .forEach { res ->
+                            val tag = "res-${res.id.take(8)}"
                             add(buildJsonObject {
-                                put("tag", "res-${res.id.take(8)}")
+                                put("tag", tag)
                                 put("type", "inline")
                                 // content 格式：每行一个 IP/CIDR（如 36.33.64.0/20）
+                                // 注意：HeadlessRule 没有 outbound 字段（出口由引用它的
+                                // route rule 决定），写 outbound 会被内核拒绝启动。
                                 putJsonArray("rules") {
-                                    res.content.lines().filter { it.isNotBlank() && !it.startsWith("#") }.forEach { cidr ->
-                                        add(buildJsonObject {
-                                            putJsonArray("ip_cidr") { add(cidr.trim()) }
-                                            put("outbound", "direct")
-                                        })
-                                    }
+                                    res.content.lines()
+                                        .filter { it.isNotBlank() && !it.startsWith("#") }
+                                        .forEach { cidr ->
+                                            add(buildJsonObject {
+                                                putJsonArray("ip_cidr") { add(cidr.trim()) }
+                                            })
+                                        }
                                 }
                             })
+                            // 规则集必须被 route rule 引用才会生效；引用规则由
+                            // buildRouteRules 生成（China IP → direct）。
                         }
                     // Karing 风格：路由规则里直接写 URL 的远程规则集（自动创建，去重）
                     inlineUrlRuleSets(state).forEach { (tag, url) ->
@@ -511,22 +521,50 @@ object SingBoxConfigGenerator {
     ) {
         val settings = state.settings
 
-        // 1) fallback：响应 IP 命中给定 CIDR 时改走 fallback server（match_response 评估响应）
+        // 1) fallback：响应命中污染判定时改走 fallback server（match_response 评估响应）。
+        //    sing-box 没有 Clash 的 fallback-filter，这里把四类过滤条件拆成独立的
+        //    match_response 规则，语义等价且都是内核原生字段。
         val fallbackServers = settings.dnsFallbackServers.filter { it.isNotBlank() }
-        val fallbackCidrs = settings.dnsFallbackIpcidr.filter { it.isNotBlank() }
-        if (fallbackServers.isNotEmpty() && fallbackCidrs.isNotEmpty()) {
+        if (fallbackServers.isNotEmpty()) {
             val fallbackTag = ensureDnsServerTag(servers, fallbackServers.first(), "dns-fallback")
-            rules.add(buildJsonObject {
-                put("action", "route")
-                put("server", fallbackTag)
-                put("match_response", true)
-                putJsonArray("ip_cidr") { fallbackCidrs.forEach(::add) }
-            })
+
+            // 1a) 响应 IP 命中这些 CIDR → 认为污染，改走 fallback
+            val fallbackCidrs = settings.dnsFallbackIpcidr.filter { it.isNotBlank() }
+            if (fallbackCidrs.isNotEmpty()) {
+                rules.add(0, buildJsonObject {
+                    put("action", "route")
+                    put("server", fallbackTag)
+                    put("match_response", true)
+                    putJsonArray("ip_cidr") { fallbackCidrs.forEach(::add) }
+                })
+            }
+
+            // 1b) 响应 IP 命中这些 geosite → 改走 fallback
+            val fallbackGeosites = settings.dnsFallbackGeosite.filter { it.isNotBlank() }
+            if (fallbackGeosites.isNotEmpty()) {
+                rules.add(0, buildJsonObject {
+                    put("action", "route")
+                    put("server", fallbackTag)
+                    put("match_response", true)
+                    putJsonArray("geosite") { fallbackGeosites.forEach(::add) }
+                })
+            }
+
+            // 1c) 响应 IP 命中这些域名 → 改走 fallback
+            val fallbackDomains = settings.dnsFallbackDomain.filter { it.isNotBlank() }
+            if (fallbackDomains.isNotEmpty()) {
+                rules.add(0, buildJsonObject {
+                    put("action", "route")
+                    put("server", fallbackTag)
+                    put("match_response", true)
+                    putJsonArray("domain") { fallbackDomains.forEach(::add) }
+                })
+            }
         }
 
         // 2) fakeIP 过滤：这些域名不走 fakeIP，改走真实 DNS
         if (settings.dnsFakeipFilter.isNotEmpty()) {
-            rules.add(buildJsonObject {
+            rules.add(0, buildJsonObject {
                 put("action", "route")
                 put("server", defaultDnsTag)
                 if (settings.dnsFakeipFilterMode == "whitelist") put("invert", true)
@@ -534,7 +572,7 @@ object SingBoxConfigGenerator {
             })
         }
         if (settings.dnsFakeipFilterPatterns.isNotEmpty()) {
-            rules.add(buildJsonObject {
+            rules.add(0, buildJsonObject {
                 put("action", "route")
                 put("server", defaultDnsTag)
                 putJsonArray("domain_regex") { settings.dnsFakeipFilterPatterns.forEach(::add) }
@@ -550,7 +588,7 @@ object SingBoxConfigGenerator {
                 val target = entry.substring(eq + 1).trim()
                 if (domain.isEmpty() || target.isEmpty()) return@forEach
                 val serverTag = resolvePolicyTag(servers, target) ?: return@forEach
-                rules.add(buildJsonObject {
+                rules.add(0, buildJsonObject {
                     put("action", "route")
                     put("server", serverTag)
                     when {
@@ -640,6 +678,16 @@ object SingBoxConfigGenerator {
     private fun buildRouteRules(state: AppState, entryTag: String): List<JsonObject> {
         val rules = mutableListOf<JsonObject>()
         rules.add(buildJsonObject { put("action", "sniff") })
+        // China IP 资源 → 直连。必须显式生成引用规则，否则 rule_set 声明了也没人用
+        // （此前只有 inline rule_set，route.rules 从不引用 → 死配置）。
+        state.settings.resources
+            .filter { it.enabled && it.resType == com.sbai.data.ResourceType.CHINA_IP && it.content.isNotEmpty() }
+            .forEach { res ->
+                rules.add(buildJsonObject {
+                    put("rule_set", "res-${res.id.take(8)}")
+                    put("outbound", "direct")
+                })
+            }
         // resolve 动作（参考 Throne）：对 TUN 入站连接按策略预解析域名，
         // 让后续按域名匹配的规则能拿到 sniff 不到的域名（如直连 IP 场景）。
         val resolveStrategy = state.settings.dnsResolveStrategy.trim()
@@ -676,6 +724,9 @@ object SingBoxConfigGenerator {
             // 规则已在 rule_set 块中注入（inline format），此处无需重复；保留标记以便未来扩展
         }
         state.routeRules.filter { it.enabled }.forEach { rule ->
+            // ROUTE_OPTIONS 但没有任何可填字段时，生成空 route-options 会被内核拒绝，
+            // 直接跳过（用户在编辑器里没填任何 override / TLS 字段）。
+            if (rule.action == RuleAction.ROUTE_OPTIONS && !rule.hasRouteOptionsFields) return@forEach
             rules.add(buildRouteRule(rule, entryTag))
         }
         return rules
@@ -730,8 +781,20 @@ object SingBoxConfigGenerator {
             RuleAction.HIJACK_DNS -> put("action", "hijack-dns")
             RuleAction.ROUTE_OPTIONS -> {
                 put("action", "route-options")
-                // route-options 至少需要一个 override 字段；当前用 override_address_override 兜底
-                // 用户在编辑器里填的 override 字段（如有）会单独输出
+                // route-options 至少要有一个 override/网络策略字段，否则内核拒绝配置
+                // （见 option/rule_action.go 的 RouteOptionsActionOptions）。
+                // 路由规则里用户可填 tls_fragment 系列；此处无字段可填时用
+                // override_port=0 兜底会改变语义，因此直接跳过该动作的生成
+                // —— 由调用方在 buildRouteRule 里过滤掉空 route-options 规则。
+                if (rule.tlsFragment || rule.tlsRecordFragment) {
+                    if (rule.tlsRecordFragment) put("tls_record_fragment", true)
+                    if (rule.tlsFragment) put("tls_fragment", true)
+                    if (rule.tlsFragmentFallbackDelay.isNotBlank()) {
+                        put("tls_fragment_fallback_delay", rule.tlsFragmentFallbackDelay)
+                    }
+                }
+                if (rule.overrideAddress.isNotBlank()) put("override_address", rule.overrideAddress)
+                if (rule.overridePort > 0) put("override_port", rule.overridePort)
             }
         }
     }
@@ -897,13 +960,28 @@ object SingBoxConfigGenerator {
                         if (r.rcode.isNotBlank() && r.rcode != "success") put("rcode", r.rcode)
                     }
                     "route-options" -> {
+                        // DNS 的 route-options 只接受 timeout/strategy/disable_cache/
+                        // rewrite_ttl/client_subnet/remove_client_subnet
+                        // （见 option/rule_action.go 的 AbstractDNSRouteActionOptions）。
+                        // rcode/answer/ns/extra 属于 predefined 动作，放这里会被内核拒绝。
                         put("action", "route-options")
+                        if (r.ipStrategy.isNotBlank() && r.ipStrategy != "prefer_ipv4") {
+                            put("strategy", r.ipStrategy)
+                        }
+                        if (r.disableCache) put("disable_cache", true)
+                        r.rewriteTtl?.let { put("rewrite_ttl", it) }
+                        r.clientSubnet?.takeIf { it.isNotBlank() }?.let { put("client_subnet", it) }
+                        if (r.removeClientSubnet) put("remove_client_subnet", true)
+                        if (r.timeout.isNotBlank()) put("timeout", r.timeout)
+                    }
+                    "pre-defined" -> {
+                        // predefined 才承载 rcode/answer/ns/extra
+                        put("action", "predefined")
                         if (r.rcode.isNotBlank() && r.rcode != "success") put("rcode", r.rcode)
                         if (r.answers.isNotEmpty()) putJsonArray("answer") { r.answers.forEach(::add) }
                         if (r.ns.isNotEmpty()) putJsonArray("ns") { r.ns.forEach(::add) }
                         if (r.extra.isNotEmpty()) putJsonArray("extra") { r.extra.forEach(::add) }
                     }
-                    "pre-defined" -> put("action", "pre-defined")
                     else -> {
                         // route：server 已在上面校验非空
                         put("server", server!!)

@@ -755,7 +755,9 @@ class SingBoxConfigGeneratorTest {
     }
 
     @Test
-    fun `manual dns rule route-options emits override answers`() {
+    fun `manual dns rule route-options emits dns option fields only`() {
+        // DNS 的 route-options 只接受 timeout/strategy/disable_cache/rewrite_ttl/
+        // client_subnet/remove_client_subnet；answer/ns/extra 属于 predefined 动作。
         val rule = DnsRule(
             name = "rewrite",
             domains = listOf("example.com"),
@@ -763,6 +765,7 @@ class SingBoxConfigGeneratorTest {
             action = "route-options",
             answers = listOf("1.2.3.4"),
             ns = listOf("ns1.example.com"),
+            rewriteTtl = 60,
             timeout = "4s",
         )
         val state = AppState(
@@ -771,11 +774,33 @@ class SingBoxConfigGeneratorTest {
         )
         val dr = parse(state)["dns"]!!.jsonObject["rules"]!!.jsonArray.first().jsonObject
         assertEquals("route-options", dr["action"]!!.jsonPrimitive.content)
-        assertEquals("1.2.3.4", dr["answer"]!!.jsonArray[0].jsonPrimitive.content)
-        assertEquals("ns1.example.com", dr["ns"]!!.jsonArray[0].jsonPrimitive.content)
+        assertEquals(60, dr["rewrite_ttl"]!!.jsonPrimitive.content.toInt())
         assertEquals("4s", dr["timeout"]!!.jsonPrimitive.content)
+        // answer/ns 不得出现在 route-options 下（内核会拒绝）
+        assertNull(dr["answer"])
+        assertNull(dr["ns"])
         // route-options 不写 server
         assertNull(dr["server"])
+    }
+
+    @Test
+    fun `manual dns rule predefined carries rcode and answers`() {
+        val rule = DnsRule(
+            name = "fixed",
+            domains = listOf("example.com"),
+            server = "d1",
+            action = "pre-defined",
+            rcode = "nxdomain",
+            answers = listOf("1.2.3.4"),
+        )
+        val state = AppState(
+            dnsRules = listOf(rule),
+            dnsServers = listOf(DnsServer(tag = "d1", type = DnsServerType.UDP, address = "223.5.5.5")),
+        )
+        val dr = parse(state)["dns"]!!.jsonObject["rules"]!!.jsonArray.first().jsonObject
+        assertEquals("predefined", dr["action"]!!.jsonPrimitive.content)
+        assertEquals("nxdomain", dr["rcode"]!!.jsonPrimitive.content)
+        assertEquals("1.2.3.4", dr["answer"]!!.jsonArray[0].jsonPrimitive.content)
     }
 
     @Test
@@ -920,6 +945,153 @@ class SingBoxConfigGeneratorTest {
         assertTrue(
             rule!!["domain_suffix"]!!.jsonArray.any { it.jsonPrimitive.content == "cn" },
         )
+    }
+
+    @Test
+    fun `china ip resource is referenced by a route rule`() {
+        // 只声明 inline rule_set 而不被 route.rules 引用 = 死配置，China IP 永不生效
+        val res = com.sbai.data.Resource(
+            id = "abcdef123456",
+            name = "china",
+            resType = com.sbai.data.ResourceType.CHINA_IP,
+            content = "36.33.64.0/20\n114.114.114.0/24",
+        )
+        val cfg = parse(
+            AppState(
+                settings = com.sbai.data.AppSettings(resources = listOf(res)),
+            ),
+        )
+        val route = cfg["route"]!!.jsonObject
+        val setTags = route["rule_set"]!!.jsonArray.map { it.jsonObject["tag"]!!.jsonPrimitive.content }
+        assertTrue("rule_set 必须声明", setTags.contains("res-abcdef12"))
+
+        // inline rule_set 的 rules 不得带 outbound（HeadlessRule 无此字段，内核会拒绝）
+        val inline = route["rule_set"]!!.jsonArray.map { it.jsonObject }
+            .first { it["tag"]!!.jsonPrimitive.content == "res-abcdef12" }
+        inline["rules"]!!.jsonArray.forEach {
+            assertNull("HeadlessRule 没有 outbound 字段", it.jsonObject["outbound"])
+        }
+
+        // 必须有 route rule 引用该 rule_set 并指向 direct
+        val ref = routeRules(cfg).firstOrNull {
+            it.jsonObject["rule_set"]?.jsonPrimitive?.content == "res-abcdef12"
+        }?.jsonObject
+        assertNotNull("China IP 规则集必须被 route rule 引用", ref)
+        assertEquals("direct", ref!!["outbound"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `fakeip filter rules precede the fakeip catch-all`() {
+        // DNS 规则按序匹配：buildDnsRules 末尾是「query_type A/AAAA → fakeip」无条件兜底，
+        // fakeIP 过滤规则若排在它之后就永远匹配不到。
+        val cfg = parse(
+            AppState(
+                dnsServers = listOf(
+                    DnsServer(tag = "fake", type = DnsServerType.FAKEIP),
+                    DnsServer(tag = "real", type = DnsServerType.UDP, address = "223.5.5.5"),
+                ),
+                settings = com.sbai.data.AppSettings(dnsFakeipFilter = listOf("*.lan")),
+            ),
+        )
+        val rules = dnsRules(cfg).map { it.jsonObject }
+        val filterIdx = rules.indexOfFirst {
+            it["domain"]?.jsonArray?.any { d -> d.jsonPrimitive.content == "*.lan" } == true
+        }
+        val catchAllIdx = rules.indexOfFirst {
+            it["query_type"]?.jsonArray?.size == 2 &&
+                it["server"]?.jsonPrimitive?.content == "fake"
+        }
+        assertTrue("fakeIP 过滤规则必须存在", filterIdx >= 0)
+        assertTrue("fakeIP catch-all 必须存在", catchAllIdx >= 0)
+        assertTrue(
+            "fakeIP 过滤规则（index=$filterIdx）必须排在 catch-all（index=$catchAllIdx）之前",
+            filterIdx < catchAllIdx,
+        )
+    }
+
+    @Test
+    fun `nameserver policy rule precedes fakeip catch-all`() {
+        val cfg = parse(
+            AppState(
+                dnsServers = listOf(
+                    DnsServer(tag = "fake", type = DnsServerType.FAKEIP),
+                    DnsServer(tag = "cn", type = DnsServerType.UDP, address = "223.5.5.5"),
+                ),
+                settings = com.sbai.data.AppSettings(dnsNameserverPolicy = listOf("*.cn=cn")),
+            ),
+        )
+        val rules = dnsRules(cfg).map { it.jsonObject }
+        val policyIdx = rules.indexOfFirst {
+            it["server"]?.jsonPrimitive?.content == "cn" &&
+                it["domain_suffix"]?.jsonArray?.any { d -> d.jsonPrimitive.content == "cn" } == true
+        }
+        val catchAllIdx = rules.indexOfFirst { it["query_type"]?.jsonArray?.size == 2 }
+        assertTrue(policyIdx >= 0)
+        assertTrue(catchAllIdx >= 0)
+        assertTrue("nameserver-policy 规则必须排在 fakeIP catch-all 之前", policyIdx < catchAllIdx)
+    }
+
+    @Test
+    fun `fallback cidr becomes match_response dns rule`() {
+        val cfg = parse(
+            AppState(
+                settings = com.sbai.data.AppSettings(
+                    dnsFallbackServers = listOf("tls://8.8.8.8"),
+                    dnsFallbackIpcidr = listOf("240.0.0.0/4"),
+                ),
+            ),
+        )
+        val dns = cfg["dns"]!!.jsonObject
+        val servers = dns["servers"]!!.jsonArray.map { it.jsonObject }
+        val fallbackServer = servers.firstOrNull {
+            it["type"]?.jsonPrimitive?.content == "tls" &&
+                it["server"]?.jsonPrimitive?.content == "8.8.8.8"
+        }
+        assertNotNull(fallbackServer)
+        val rule = dnsRules(cfg).firstOrNull {
+            it.jsonObject["server"]?.jsonPrimitive?.content == fallbackServer!!["tag"]!!.jsonPrimitive.content
+        }?.jsonObject
+        assertNotNull(rule)
+        assertEquals(true, rule!!["match_response"]!!.jsonPrimitive.content.toBoolean())
+        assertTrue(rule["ip_cidr"]!!.jsonArray.any { it.jsonPrimitive.content == "240.0.0.0/4" })
+    }
+
+    @Test
+    fun `fallback geosite and domain become separate match_response rules`() {
+        val cfg = parse(
+            AppState(
+                settings = com.sbai.data.AppSettings(
+                    dnsFallbackServers = listOf("tls://8.8.8.8"),
+                    dnsFallbackGeosite = listOf("geolocation-!cn"),
+                    dnsFallbackDomain = listOf("+.google.com"),
+                ),
+            ),
+        )
+        val dns = cfg["dns"]!!.jsonObject
+        val fallbackTag = dns["servers"]!!.jsonArray.map { it.jsonObject }
+            .first { it["type"]?.jsonPrimitive?.content == "tls" }["tag"]!!.jsonPrimitive.content
+        val mine = dnsRules(cfg).filter {
+            it.jsonObject["server"]?.jsonPrimitive?.content == fallbackTag
+        }.map { it.jsonObject }
+        // geosite 与 domain 各自独立成规则，且都带 match_response
+        assertEquals(2, mine.size)
+        assertTrue(mine.all { it["match_response"]!!.jsonPrimitive.content.toBoolean() })
+        assertTrue(mine.any { it["geosite"]?.jsonArray?.any { g -> g.jsonPrimitive.content == "geolocation-!cn" } == true })
+        assertTrue(mine.any { it["domain"]?.jsonArray?.any { g -> g.jsonPrimitive.content == "+.google.com" } == true })
+    }
+
+    @Test
+    fun `no fallback rules when no fallback server configured`() {
+        // 只配过滤条件但没配 fallback server 时，不得生成任何引用不存在 server 的规则
+        val cfg = parse(
+            AppState(
+                settings = com.sbai.data.AppSettings(
+                    dnsFallbackIpcidr = listOf("240.0.0.0/4"),
+                    dnsFallbackGeosite = listOf("geolocation-!cn"),
+                ),
+            ),
+        )
+        assertTrue(dnsRules(cfg).none { it.jsonObject["match_response"]?.jsonPrimitive?.content == "true" })
     }
 
     @Test
@@ -1097,7 +1269,27 @@ class SingBoxConfigGeneratorTest {
         assertEquals("sniff", ruleAction(RuleAction.SNIFF)["action"]!!.jsonPrimitive.content)
         assertEquals("resolve", ruleAction(RuleAction.RESOLVE)["action"]!!.jsonPrimitive.content)
         assertEquals("hijack-dns", ruleAction(RuleAction.HIJACK_DNS)["action"]!!.jsonPrimitive.content)
-        assertEquals("route-options", ruleAction(RuleAction.ROUTE_OPTIONS)["action"]!!.jsonPrimitive.content)
+        // 空 route-options 会被内核拒绝，生成器直接跳过该规则；填了字段才生成
+        val emptyOpts = parse(
+            AppState(routeRules = listOf(RouteRule(action = RuleAction.ROUTE_OPTIONS, domains = listOf("a.com")))),
+        )["route"]!!.jsonObject["rules"]!!.jsonArray
+        assertTrue(
+            "未填任何字段的 route-options 不得生成",
+            emptyOpts.none { it.jsonObject["action"]?.jsonPrimitive?.content == "route-options" },
+        )
+        val withFields = parse(
+            AppState(
+                routeRules = listOf(
+                    RouteRule(
+                        action = RuleAction.ROUTE_OPTIONS,
+                        domains = listOf("a.com"),
+                        tlsFragment = true,
+                    ),
+                ),
+            ),
+        )["route"]!!.jsonObject["rules"]!!.jsonArray.last().jsonObject
+        assertEquals("route-options", withFields["action"]!!.jsonPrimitive.content)
+        assertEquals(true, withFields["tls_fragment"]!!.jsonPrimitive.content.toBoolean())
         // route 动作：outbound 而非 action
         assertEquals("direct", ruleAction(RuleAction.ROUTE_DIRECT)["outbound"]!!.jsonPrimitive.content)
     }

@@ -88,6 +88,18 @@ data class RouteRule(
     /** 拦截方式（仅 BLOCK）：default=返回拒绝 / drop=直接丢弃 */
     val rejectMethod: String = "default",
 
+    // ---- route-options 动作字段（仅 ROUTE_OPTIONS；内核要求至少一个，否则拒绝配置）----
+    /** 覆盖目标地址 */
+    val overrideAddress: String = "",
+    /** 覆盖目标端口；0 = 不覆盖 */
+    val overridePort: Int = 0,
+    /** TLS ClientHello 分片（tls.fragment） */
+    val tlsFragment: Boolean = false,
+    /** TLS 记录分片（tls.record_fragment） */
+    val tlsRecordFragment: Boolean = false,
+    /** TLS 分片回退延迟（duration 字符串） */
+    val tlsFragmentFallbackDelay: String = "",
+
     val logic: RuleLogic = RuleLogic.AND,
     val invert: Boolean = false,                      // 逻辑运算 invert
 
@@ -107,6 +119,11 @@ data class RouteRule(
     val hasDomainContent: Boolean
         get() = domains.isNotEmpty() || domainSuffixes.isNotEmpty() ||
                 domainKeywords.isNotEmpty() || domainRegexes.isNotEmpty()
+
+    /** ROUTE_OPTIONS 是否填了至少一个内核认可的字段（空 route-options 会被拒绝启动） */
+    val hasRouteOptionsFields: Boolean
+        get() = overrideAddress.isNotBlank() || overridePort > 0 ||
+                tlsFragment || tlsRecordFragment
 }
 
 /** 路由规则集（可勾选 IPv4 / IPv6，默认全选） */
@@ -224,6 +241,8 @@ data class DnsRule(
     val rewriteTtl: Int? = null,
     /** 本条规则级别的 ECS 覆盖 */
     val clientSubnet: String? = null,
+    /** 移除查询里的 ECS 记录并抑制 dns.client_subnet（与 clientSubnet 互斥） */
+    val removeClientSubnet: Boolean = false,
     /** 规则动作：route=路由到 server / route-options=改写应答 / reject=拒绝 / pre-defined=预定义 */
     val action: String = "route",
     /** reject 方式的 rcode（route-options / reject 时用）：success / refused / formerror / notimp / nxdomain */
