@@ -44,6 +44,7 @@ import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.Preview
 import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Route
+import androidx.compose.material.icons.filled.Http
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.VpnKey
@@ -220,6 +221,14 @@ fun SettingsScreen() {
                             icon = Icons.Filled.Security,
                             checked = settings.strictRoute,
                         ) { store.updateSettings(settings.copy(strictRoute = it)) }
+                    }
+                    item {
+                        SbSwitchItem(
+                            title = "系统 HTTP 代理下发",
+                            subtitle = "platform.http_proxy（Android 10+）：尊重系统代理的应用走本地代理，不进隧道",
+                            icon = Icons.Filled.Http,
+                            checked = settings.tunHttpProxyEnabled,
+                        ) { store.updateSettings(settings.copy(tunHttpProxyEnabled = it)) }
                     }
                     item {
                         Column(Modifier.padding(16.dp)) {

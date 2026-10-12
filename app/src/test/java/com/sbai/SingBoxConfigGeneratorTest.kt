@@ -1011,6 +1011,29 @@ class SingBoxConfigGeneratorTest {
     }
 
     @Test
+    fun `tun platform http proxy emitted only when enabled`() {
+        val off = parse(AppState())
+        assertNull(off["inbounds"]!!.jsonArray.first().jsonObject["platform"])
+
+        val on = parse(
+            AppState(
+                settings = com.sbai.data.AppSettings(
+                    tunHttpProxyEnabled = true,
+                    tunHttpProxyPort = 7890,
+                    tunHttpProxyBypassDomains = listOf("*.lan"),
+                ),
+            ),
+        )
+        val proxy = on["inbounds"]!!.jsonArray.first().jsonObject["platform"]!!.jsonObject["http_proxy"]!!.jsonObject
+        assertEquals(true, proxy["enabled"]!!.jsonPrimitive.content.toBoolean())
+        assertEquals("127.0.0.1", proxy["server"]!!.jsonPrimitive.content)
+        assertEquals(7890, proxy["server_port"]!!.jsonPrimitive.content.toInt())
+        assertTrue(
+            proxy["bypass_domain"]!!.jsonArray.any { it.jsonPrimitive.content == "*.lan" },
+        )
+    }
+
+    @Test
     fun `tun inbound has no removed legacy sniff fields`() {
         val cfg = parse(AppState())
         val tun = cfg["inbounds"]!!.jsonArray.first().jsonObject

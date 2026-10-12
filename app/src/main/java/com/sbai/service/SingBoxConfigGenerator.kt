@@ -335,6 +335,23 @@ object SingBoxConfigGenerator {
                     // （内核 option/tun.go 已无这两个字段，带上会被拒绝启动）；
                     // 嗅探改由 route.rules 的 {"action":"sniff"} 承担（见 buildRouteRules 首条）。
 
+                    // 系统 HTTP 代理下发（Android 10+；内核 tun platform.http_proxy）
+                    // 让尊重系统代理的应用走本地代理而不进隧道；老版本系统由平台层忽略。
+                    if (state.settings.tunHttpProxyEnabled) {
+                        putJsonObject("platform") {
+                            putJsonObject("http_proxy") {
+                                put("enabled", true)
+                                put("server", "127.0.0.1")
+                                put("server_port", state.settings.tunHttpProxyPort)
+                                if (state.settings.tunHttpProxyBypassDomains.isNotEmpty()) {
+                                    putJsonArray("bypass_domain") {
+                                        state.settings.tunHttpProxyBypassDomains.forEach(::add)
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     when (state.settings.perAppProxy.mode) {
                         PerAppProxyMode.INCLUDE ->
                             putJsonArray("include_package") { state.settings.perAppProxy.packages.forEach(::add) }

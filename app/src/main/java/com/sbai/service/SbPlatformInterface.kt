@@ -6,6 +6,7 @@ import android.net.IpPrefix
 import android.net.LinkProperties
 import android.net.Network
 import android.net.NetworkCapabilities
+import android.net.ProxyInfo
 import android.net.VpnService
 import android.net.wifi.WifiManager
 import android.os.Build
@@ -104,6 +105,27 @@ class SbPlatformInterface(
             applyRoutes(builder, options, inet4.isNotEmpty(), inet6.isNotEmpty())
             options.includePackage.toList().forEachInstalled { builder.addAllowedApplication(it) }
             options.excludePackage.toList().forEachInstalled { builder.addDisallowedApplication(it) }
+        }
+
+        // HTTP 代理下发给系统（Android 10+）：内核 tun 的 platform.http_proxy 打开时，
+        // 尊重系统代理的应用会走该代理而不进隧道。用于「只代理部分应用」的另一种实现，
+        // 无需把其余应用加进 exclude_package。
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && options.isHTTPProxyEnabled) {
+            val bypass = options.httpProxyBypassDomain.toList()
+            val match = options.httpProxyMatchDomain.toList()
+            val proxy = when {
+                match.isNotEmpty() -> ProxyInfo.buildDirectProxy(
+                    options.httpProxyServer,
+                    options.httpProxyServerPort,
+                    match,
+                )
+                else -> ProxyInfo.buildDirectProxy(
+                    options.httpProxyServer,
+                    options.httpProxyServerPort,
+                    bypass,
+                )
+            }
+            builder.setHttpProxy(proxy)
         }
 
         closeTun()

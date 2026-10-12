@@ -485,6 +485,16 @@ data class AppSettings(
     val ipv6Route: Boolean = true,
     val autoDetectInterface: Boolean = true,
     val strictRoute: Boolean = true,
+    /**
+     * 系统 HTTP 代理下发（Android 10+）：开启后内核 tun 生成 platform.http_proxy，
+     * 尊重系统代理的应用走该代理而不进隧道。适合「只代理忽略系统代理的应用」场景，
+     * 无需把其余应用逐个加进 exclude_package。
+     */
+    val tunHttpProxyEnabled: Boolean = false,
+    /** 系统 HTTP 代理监听端口（仅 tunHttpProxyEnabled 时生效） */
+    val tunHttpProxyPort: Int = 2080,
+    /** 系统 HTTP 代理旁路域名（这些域名不走该代理） */
+    val tunHttpProxyBypassDomains: List<String> = emptyList(),
     val finalOutbound: String = "",   // 留空 = 自动（跟随入口 tag）
     val dnsStrategy: String = "prefer_ipv4",   // prefer_ipv4 / prefer_ipv6 / ipv4_only / ipv6_only
     val perAppProxy: PerAppProxy = PerAppProxy(),
