@@ -400,6 +400,8 @@ object SingBoxConfigGenerator {
     private fun buildDnsServers(state: AppState, entryTag: String): List<JsonObject> {
         val result = mutableListOf<JsonObject>()
         val servers = state.dnsServers.filter { it.enabled && it.tag.isNotBlank() }
+        // detour / address_resolver 只能引用真实存在的 outbound/endpoint tag
+        val validDetours = buildOutboundTagSet(state, entryTag)
 
         if (servers.isEmpty()) {
             result.add(buildJsonObject {
@@ -450,8 +452,13 @@ object SingBoxConfigGenerator {
                         }
                     }
                 }
-                s.detour?.takeIf { it.isNotBlank() }?.let { put("detour", it) }
-                s.addressResolver?.takeIf { it.isNotBlank() }?.let { put("address_resolver", it) }
+                // detour / address_resolver 引用不存在的 outbound 会被内核拒绝启动
+                // （典型场景：删了节点后 DNS 服务器里还留着它的 tag）。
+                // 这里校验后丢弃无效引用，而不是让整份配置起不来。
+                s.detour?.takeIf { it.isNotBlank() && it in validDetours }
+                    ?.let { put("detour", it) }
+                s.addressResolver?.takeIf { it.isNotBlank() && it in validDetours }
+                    ?.let { put("address_resolver", it) }
                 s.clientSubnet?.takeIf { it.isNotBlank() }?.let { put("client_subnet", it) }
                 if (s.echEnabled && s.type in ECH_CAPABLE) {
                     putJsonObject("tls") {
@@ -472,6 +479,23 @@ object SingBoxConfigGenerator {
     private val ECH_CAPABLE = setOf(
         DnsServerType.TLS, DnsServerType.HTTPS, DnsServerType.QUIC, DnsServerType.H3,
     )
+
+    /**
+     * 生成配置中实际存在的 outbound/endpoint tag 集合，
+     * 用于校验 DNS server 的 detour / address_resolver 引用。
+     */
+    private fun buildOutboundTagSet(state: AppState, entryTag: String): Set<String> {
+        val tags = mutableSetOf("direct", "block", entryTag)
+        state.proxyNodes
+            .filter { it.enabled && it.outboundJson.isNotBlank() }
+            .forEach { tags.add(nodeTag(it)) }
+        val lb = state.loadBalance
+        if (lb.enabled && state.proxyNodes.any { it.enabled && it.outboundJson.isNotBlank() }) {
+            tags.add(if (lb.mode == LoadBalanceMode.MANUAL) "lb-selector" else "lb")
+        }
+        if (!lb.enabled && tags.size > 3) tags.add("proxy")
+        return tags
+    }
 
     private fun splitHostAndPath(address: String): Pair<String, String?> {
         val noScheme = address.substringAfter("://")

@@ -879,12 +879,64 @@ class SingBoxConfigGeneratorTest {
     }
 
     @Test
-    fun `tsbai is default tun stack`() {
+    fun `dns server with stale detour tag drops the reference instead of rejecting config`() {
+        // 删掉节点后 DNS 服务器里还留着它的 tag → 引用不存在的 outbound →
+        // 内核拒绝整份配置 → VPN 起不来。生成器应丢弃无效引用。
+        val state = AppState(
+            dnsServers = listOf(
+                DnsServer(
+                    tag = "d1",
+                    type = DnsServerType.HTTPS,
+                    address = "https://dns.google/dns-query",
+                    detour = "deleted-node",
+                ),
+            ),
+        )
+        val d1 = parse(state)["dns"]!!.jsonObject["servers"]!!.jsonArray.first().jsonObject
+        assertNull("无效 detour 必须被丢弃", d1["detour"])
+    }
+
+    @Test
+    fun `dns server with valid detour keeps the reference`() {
+        val node = ProxyNode(
+            name = "n1",
+            outboundJson = """{"type":"vless","tag":"n1","server":"1.2.3.4","server_port":443,"uuid":"x"}""",
+        )
+        val state = AppState(
+            proxyNodes = listOf(node),
+            dnsServers = listOf(
+                DnsServer(
+                    tag = "d1",
+                    type = DnsServerType.HTTPS,
+                    address = "https://dns.google/dns-query",
+                    detour = "n1",
+                ),
+            ),
+        )
+        val d1 = parse(state)["dns"]!!.jsonObject["servers"]!!.jsonArray.first().jsonObject
+        assertEquals("n1", d1["detour"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `default tun stack maps to a kernel-registered name`() {
+        // 内核只注册 system/gvisor/mixed/go。tsbAI 是 sb-AI 的品牌名，
+        // 必须下发 "go"，否则内核以 unknown stack 拒绝启动（默认栈 = 全新安装必崩）。
         val cfg = parse(AppState())
         assertEquals(
-            "tsbAI",
+            "go",
             cfg["inbounds"]!!.jsonArray.first().jsonObject["stack"]!!.jsonPrimitive.content,
         )
+    }
+
+    /** 任何 TunStack 都不得产出内核不认识的栈名 */
+    @Test
+    fun `every tun stack maps to a kernel-registered wire name`() {
+        val supported = setOf("system", "gvisor", "mixed", "go")
+        com.sbai.data.TunStack.entries.forEach { stack ->
+            val cfg = parse(AppState(settings = com.sbai.data.AppSettings(tunStack = stack)))
+            val wire = cfg["inbounds"]!!.jsonArray.first().jsonObject["stack"]!!.jsonPrimitive.content
+            assertTrue("${stack.name} 下发了内核不支持的栈名: $wire", wire in supported)
+        }
     }
 
     // ---- Clash 专有字段不得泄漏到 sing-box 配置（会让内核拒绝启动）----

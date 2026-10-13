@@ -412,18 +412,30 @@ data class Subscription(
     val filterRegion: String = "",
 )
 
-/** TUN 网络栈（默认 TSB_AI：sb-lxf 内核的 Go TUN 栈，含 splice/GSO/multi_queue/oom-killer） */
+/**
+ * TUN 网络栈。
+ *
+ * 注意 wireName 必须是 sb-lxf 内核实际注册的栈名。内核（sing-box 1.15 基线）
+ * 只注册 system / gvisor / mixed / go 四个值；`tsbAI` 仅出现在内核的
+ * `multi_queue is only supported by the go / tsbAI stack` 错误文案里，
+ * 并非可配置的 stack 值——此前 TSB_AI 直接输出 "tsbAI" 会被内核以
+ * `unknown stack: tsbAI` 拒绝，表现为 VPN 起不来（默认栈就是这个，等于全新安装必崩）。
+ *
+ * tsbAI 作为 sb-AI 的栈品牌名保留在 UI，实际下发内核的 "go"（sing-box 1.15
+ * 的纯 Go TUN 栈，含 splice/GSO/multi_queue/oom-killer），即需求里
+ * 「把官方 Go TUN 栈命名为 tsbAI」的落地方式。
+ */
 @Serializable
 enum class TunStack(val displayName: String, val wireName: String) {
-    /** tsbAI — sb-lxf 专用 Go TUN 栈（含 splice/GSO/multi_queue/oom-killer，默认首选） */
-    TSB_AI("tsbAI（纯Go栈+splice）", "tsbAI"),
-    /** 默认：mixed（sing-box-lx 有 gVisor tag 时默认 mixed） */
+    /** tsbAI — sb-lxf 的 Go TUN 栈（splice/GSO/multi_queue/oom-killer，默认首选） */
+    TSB_AI("tsbAI（纯Go栈+splice）", "go"),
+    /** mixed：TCP 走 system、UDP 走 gVisor */
     MIXED("Mixed（TCP+gVisor/UDP+system）", "mixed"),
     /** 全系统栈：利用宿主内核 TCP，最低内存开销 */
     SYSTEM("System（系统栈）", "system"),
     /** 全 gVisor 用户态栈：最大兼容性，更高内存 */
     GVISOR("gVisor（用户态栈）", "gvisor"),
-    /** Go TUN 栈（sing-box 1.15+ 新引入，不依赖 gVisor，纯 Go 实现，低内存）— 别名 */
+    /** Go 栈的原始名（与 TSB_AI 等价，保留供导入配置识别） */
     GO("Go（纯Go栈）", "go"),
 }
 
