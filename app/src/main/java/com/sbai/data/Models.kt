@@ -549,9 +549,17 @@ data class Resource(
 
 enum class ResourceType(val displayName: String) {
     CHINA_IP("China IP 列表"),
+
+    // 以下类型已无 UI 入口（资源管理并入路由页后只保留 China IP），
+    // 但枚举值不能删：已保存的配置里可能存着这些字符串，删掉会让
+    // kotlinx.serialization 反序列化整份 AppState 失败并回退默认配置。
+    @Deprecated("无 UI 入口，仅为兼容旧配置保留", ReplaceWith("CHINA_IP"))
     GEOIP("GeoIP"),
+    @Deprecated("无 UI 入口，仅为兼容旧配置保留", ReplaceWith("CHINA_IP"))
     HOSTS("Hosts"),
+    @Deprecated("无 UI 入口，仅为兼容旧配置保留", ReplaceWith("CHINA_IP"))
     RULE_SET("规则集"),
+    @Deprecated("无 UI 入口，仅为兼容旧配置保留", ReplaceWith("CHINA_IP"))
     CUSTOM("自定义"),
 }
 

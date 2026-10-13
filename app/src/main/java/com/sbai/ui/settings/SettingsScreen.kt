@@ -130,7 +130,8 @@ fun SettingsScreen(onOpenDnsAdvanced: () -> Unit = {}, onOpenRouteResources: () 
     // ---- 备份导入模式选择（merge / replace） ----
     var pendingImport by remember { mutableStateOf<AppState?>(null) }
 
-    val backupJson = Json { prettyPrint = true; encodeDefaults = true; ignoreUnknownKeys = true }
+    // 与 RuleStore 同口径：未知枚举值回退默认值，避免整份备份因一个字段解析失败而导入不了
+    val backupJson = Json { prettyPrint = true; encodeDefaults = true; ignoreUnknownKeys = true; coerceInputValues = true }
 
     val exportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/json"),

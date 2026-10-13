@@ -19,6 +19,10 @@ class RuleStore private constructor(context: Context) {
 
     private val json = Json {
         ignoreUnknownKeys = true
+        // 未知枚举值/空字段回退到默认值，而不是让整份 AppState 反序列化失败。
+        // 失败会导致 load() 回退 AppState() —— 用户全部配置静默丢失
+        // （新增枚举字段后旧配置必然触发过一次，属于高危回归点）。
+        coerceInputValues = true
         encodeDefaults = true
         prettyPrint = false
     }
