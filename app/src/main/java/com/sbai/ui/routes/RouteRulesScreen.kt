@@ -633,6 +633,7 @@ private fun RouteRuleEditorDialog(
     var sourcePorts by remember { mutableStateOf(initial.sourcePorts.joinToString("\n")) }
     var sourcePortRanges by remember { mutableStateOf(initial.sourcePortRanges.joinToString("\n")) }
     var packageNames by remember { mutableStateOf(initial.packageNames.joinToString("\n")) }
+    var packageNameRegexes by remember { mutableStateOf(initial.packageNameRegexes.joinToString("\n")) }
     var processNames by remember { mutableStateOf(initial.processNames.joinToString("\n")) }
     var processPaths by remember { mutableStateOf(initial.processPaths.joinToString("\n")) }
     var users by remember { mutableStateOf(initial.users.joinToString("\n")) }
@@ -711,6 +712,7 @@ private fun RouteRuleEditorDialog(
                 sourcePorts = sourcePorts.toLines().mapNotNull { it.toIntOrNull() },
                 sourcePortRanges = sourcePortRanges.toLines(),
                 packageNames = packageNames.toLines(),
+                packageNameRegexes = packageNameRegexes.toLines(),
                 processNames = processNames.toLines(),
                 processPaths = processPaths.toLines(),
                 users = users.toLines(),
@@ -734,6 +736,13 @@ private fun RouteRuleEditorDialog(
                 tlsFragmentFallbackDelay = tlsFragmentFallbackDelay.trim(),
                 logic = logic,
                 invert = invert,
+                // IPv4/IPv6 勾选 → 内核的 ip_version：全选=0（不限）、仅4=4、仅6=6
+                ipVersion = when {
+                    ipv4 && ipv6 -> 0
+                    ipv4 -> 4
+                    ipv6 -> 6
+                    else -> 0
+                },
                 ipv4 = ipv4,
                 ipv6 = ipv6,
                 dnsTag = dnsTag.ifBlank { null },
@@ -1045,10 +1054,14 @@ private fun RouteRuleEditorDialog(
                             }
                         }
                         Button(onClick = { showAppPicker = true }) { Text("选择应用") }
+                        // 包名正则：Android 上不需要 root（内核按 uid 反查包名）
+                        MultiLineField("包名正则（一行一条，如 ^com[.]tencent[.]）", packageNameRegexes) {
+                            packageNameRegexes = it
+                        }
                     }
 
                     // sb-AI 不集成 root / Magisk 功能：进程级字段（process_name / process_path /
-                    // user / user_id）在 Android 无 root 时不生效，UI 不暴露。
+                    // process_path_regex / user / user_id）在 Android 无 root 时不生效，UI 不暴露。
                     // Android 上包名即进程身份，使用应用包名选择器即可等价替代。
                 }
 

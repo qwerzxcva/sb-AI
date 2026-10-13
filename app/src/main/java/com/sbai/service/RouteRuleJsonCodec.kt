@@ -93,13 +93,31 @@ object RouteRuleJsonCodec {
             val action = sources.mapNotNull { it["action"]?.jsonPrimitive?.content }.firstOrNull()
             val invert = sources.any { it["invert"]?.jsonPrimitive?.booleanOrNull == true } ||
                     rule["invert"]?.jsonPrimitive?.booleanOrNull == true
+            // 只有明确指定了非内置 outbound 时才保留 tag（direct/block 是内置语义）
+            val explicitOutbound = outbound?.takeIf {
+                it.isNotBlank() && it != "direct" && it != "block"
+            }.orEmpty()
+            // IP 版本勾选：内核没有单独的 ipv4/ipv6 开关字段，只有 ip_version。
+            // ip_version=4 → 仅 IPv4，=6 → 仅 IPv6，缺省 → 两个都勾。
+            val parsedIpVersion = sources.mapNotNull { it["ip_version"]?.jsonPrimitive?.intOrNull }
+                .firstOrNull() ?: 0
+            val ipv4 = parsedIpVersion != 6
+            val ipv6 = parsedIpVersion != 4
 
-            // action=reject（含 no_drop）等价于 BLOCK；action=route/resolve/sniff 等映射
-            val resolvedAction = when {
-                action == "reject" -> RuleAction.REJECT
-                outbound == "block" -> RuleAction.REJECT
-                outbound == "direct" -> RuleAction.ROUTE_DIRECT
-                else -> RuleAction.ROUTE_PROXY
+            // action 映射必须覆盖内核全部枚举，否则粘贴 JSON 时会默默把
+            // route-options / sniff / resolve / hijack-dns 改成 ROUTE_PROXY（语义被篡改）。
+            val resolvedAction = when (action) {
+                "route" -> if (outbound == "direct") RuleAction.ROUTE_DIRECT else RuleAction.ROUTE_PROXY
+                "route-options" -> RuleAction.ROUTE_OPTIONS
+                "reject" -> RuleAction.REJECT
+                "hijack-dns" -> RuleAction.HIJACK_DNS
+                "sniff" -> RuleAction.SNIFF
+                "resolve" -> RuleAction.RESOLVE
+                else -> when (outbound) {
+                    "block" -> RuleAction.REJECT
+                    "direct" -> RuleAction.ROUTE_DIRECT
+                    else -> RuleAction.ROUTE_PROXY
+                }
             }
 
             ParseResult.Success(
@@ -137,6 +155,31 @@ object RouteRuleJsonCodec {
                     sourceIpIsPrivate = sources.any { it["source_ip_is_private"]?.jsonPrimitive?.booleanOrNull == true },
                     ipIsPrivate = sources.any { it["ip_is_private"]?.jsonPrimitive?.booleanOrNull == true },
                     networkIsExpensive = sources.any { it["network_is_expensive"]?.jsonPrimitive?.booleanOrNull == true },
+                    // route-options / reject 动作字段（粘贴导入时不能丢）
+                    outboundTag = explicitOutbound,
+                    ipVersion = sources.mapNotNull { it["ip_version"]?.jsonPrimitive?.intOrNull }
+                        .firstOrNull() ?: 0,
+                    rejectMethod = sources.mapNotNull { it["reject_method"]?.jsonPrimitive?.content }
+                        .firstOrNull() ?: "default",
+                    overrideAddress = sources.mapNotNull { it["override_address"]?.jsonPrimitive?.content }
+                        ?.firstOrNull().orEmpty(),
+                    overridePort = sources.mapNotNull { it["override_port"]?.jsonPrimitive?.intOrNull }
+                        ?.firstOrNull() ?: 0,
+                    tlsFragment = sources.any { it["tls_fragment"]?.jsonPrimitive?.booleanOrNull == true },
+                    tlsRecordFragment = sources.any { it["tls_record_fragment"]?.jsonPrimitive?.booleanOrNull == true },
+                    tlsFragmentFallbackDelay = sources
+                        .mapNotNull { it["tls_fragment_fallback_delay"]?.jsonPrimitive?.content }
+                        ?.firstOrNull().orEmpty(),
+                    udpConnect = sources.any { it["udp_connect"]?.jsonPrimitive?.booleanOrNull == true },
+                    udpTimeout = sources.mapNotNull { it["udp_timeout"]?.jsonPrimitive?.content }
+                        ?.firstOrNull().orEmpty(),
+                    udpDisableDomainUnmapping = sources.any {
+                        it["udp_disable_domain_unmapping"]?.jsonPrimitive?.booleanOrNull == true
+                    },
+                    dnsTag = sources.mapNotNull { it["dns_tag"]?.jsonPrimitive?.content }
+                        ?.firstOrNull(),
+                    ipv4 = ipv4,
+                    ipv6 = ipv6,
                     logic = if (logical && mode == "or") RuleLogic.OR else RuleLogic.AND,
                     invert = invert,
                 ),
@@ -172,6 +215,23 @@ object RouteRuleJsonCodec {
                 if (rule.protocols.isNotEmpty()) b.putJsonArray("protocol") { rule.protocols.forEach { add(it) } }
                 if (rule.ports.isNotEmpty()) b.putJsonArray("port") { rule.ports.forEach { add(it) } }
                 if (rule.portRanges.isNotEmpty()) b.putJsonArray("port_range") { rule.portRanges.forEach { add(it) } }
+                if (rule.ipVersion == 4 || rule.ipVersion == 6) b.put("ip_version", rule.ipVersion)
+            }
+            // 动作字段（reject / route-options 专属，粘贴片段时一并导出）
+            if (rule.action == RuleAction.REJECT && rule.rejectMethod != "default") {
+                b.put("reject_method", rule.rejectMethod)
+            }
+            if (rule.action == RuleAction.ROUTE_OPTIONS) {
+                if (rule.overrideAddress.isNotBlank()) b.put("override_address", rule.overrideAddress)
+                if (rule.overridePort > 0) b.put("override_port", rule.overridePort)
+                if (rule.tlsFragment) b.put("tls_fragment", true)
+                if (rule.tlsRecordFragment) b.put("tls_record_fragment", true)
+                if (rule.tlsFragmentFallbackDelay.isNotBlank()) {
+                    b.put("tls_fragment_fallback_delay", rule.tlsFragmentFallbackDelay)
+                }
+                if (rule.udpConnect) b.put("udp_connect", true)
+                if (rule.udpTimeout.isNotBlank()) b.put("udp_timeout", rule.udpTimeout)
+                if (rule.udpDisableDomainUnmapping) b.put("udp_disable_domain_unmapping", true)
             }
         }
 
