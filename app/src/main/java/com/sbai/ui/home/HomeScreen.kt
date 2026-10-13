@@ -481,7 +481,8 @@ fun HomeScreen(onOpenSettingsLoadBalance: () -> Unit = {}) {
                                         }
                                     }
                                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                        group.items.take(30).forEach { item ->
+                                        val shown = group.items.take(30)
+                                        shown.forEach { item ->
                                             val selected = item.tag == group.selected
                                             FilterChip(
                                                 selected = selected,
@@ -494,6 +495,14 @@ fun HomeScreen(onOpenSettingsLoadBalance: () -> Unit = {}) {
                                                     val delay = if (item.delay > 0) "${item.delay}ms" else ""
                                                     Text(if (delay.isBlank()) item.tag else "${item.tag} · $delay")
                                                 },
+                                            )
+                                        }
+                                        if (group.items.size > shown.size) {
+                                            Text(
+                                                "还有 ${group.items.size - shown.size} 个",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier.padding(start = 4.dp, top = 8.dp),
                                             )
                                         }
                                     }
