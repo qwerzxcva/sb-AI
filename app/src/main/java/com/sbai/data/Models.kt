@@ -171,6 +171,13 @@ data class RouteRuleSet(
     val downloadDetour: String? = null,
     val ipv4: Boolean = true,
     val ipv6: Boolean = true,
+    /**
+     * 远程规则集最近一次下载结果。内核自己下载，App 只做状态展示，
+     * 因此这三个字段目前仅用于 UI 提示，不参与配置生成。
+     */
+    val lastUpdatedAt: Long = 0L,
+    val lastSizeBytes: Long = 0L,
+    val lastError: String? = null,
 )
 
 @Serializable

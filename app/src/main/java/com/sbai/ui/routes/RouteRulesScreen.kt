@@ -85,6 +85,7 @@ import com.sbai.ui.components.RestoreBottomBarOnDispose
 import com.sbai.ui.components.SbGroup
 import com.sbai.ui.components.SbItem
 import com.sbai.ui.components.SbSwitchItem
+import com.sbai.ui.monitor.formatBytes
 import com.sbai.ui.theme.LocalSbStyleTokens
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
@@ -1265,9 +1266,26 @@ private fun RuleSetManagerDialog(
                                 buildString {
                                     append(if (rs.type == RuleSetType.REMOTE) "remote" else "local")
                                     if (!rs.ipv4 || !rs.ipv6) append(if (rs.ipv4) " · 仅IPv4" else " · 仅IPv6")
+                                    // 远程规则集状态（参考 LxBox 的 SrsStatusButton）
+                                    if (rs.type == RuleSetType.REMOTE) {
+                                        when {
+                                            rs.lastError != null -> append(" · 下载失败：${rs.lastError}")
+                                            rs.lastUpdatedAt > 0L -> {
+                                                append(" · 已缓存")
+                                                if (rs.lastSizeBytes > 0L) {
+                                                    append(" ${formatBytes(rs.lastSizeBytes)}")
+                                                }
+                                                append(" · ${formatRuleSetTime(rs.lastUpdatedAt)}")
+                                            }
+                                            else -> append(" · 未下载")
+                                        }
+                                    }
                                 },
                                 style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                color = when {
+                                    rs.lastError != null -> MaterialTheme.colorScheme.error
+                                    else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                },
                             )
                         }
                         Switch(checked = rs.enabled, onCheckedChange = { onToggle(rs) })
@@ -1563,6 +1581,11 @@ private fun DnsDropdown(value: String, options: List<String>, onChange: (String)
 
 private fun String.toLines(): List<String> =
     lines().map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+
+/** 规则集缓存时间：同一天只显示时刻，跨天显示日期 */
+private fun formatRuleSetTime(epochMs: Long): String =
+    java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.getDefault())
+        .format(java.util.Date(epochMs))
 
 /**
  * 规则编辑器里默认可见的动作：官方 route 的两种常见出口 + reject。
