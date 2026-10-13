@@ -63,16 +63,18 @@ class WarpClient {
     private fun postReg(body: String): Pair<String, String> {
         val errors = mutableListOf<String>()
         for (host in API_HOSTS) {
+            var conn: HttpURLConnection? = null
             try {
                 val url = URL("$host/$VERSION/reg")
-                val conn = url.openConnection() as HttpURLConnection
-                conn.requestMethod = "POST"
-                conn.connectTimeout = TIMEOUT_MS
-                conn.readTimeout = TIMEOUT_MS
-                conn.doOutput = true
-                conn.setRequestProperty("Content-Type", "application/json")
-                conn.setRequestProperty("User-Agent", USER_AGENT)
-                conn.setRequestProperty("CF-Client-Version", CLIENT_VERSION_HEADER)
+                conn = (url.openConnection() as HttpURLConnection).apply {
+                    requestMethod = "POST"
+                    connectTimeout = TIMEOUT_MS
+                    readTimeout = TIMEOUT_MS
+                    doOutput = true
+                    setRequestProperty("Content-Type", "application/json")
+                    setRequestProperty("User-Agent", USER_AGENT)
+                    setRequestProperty("CF-Client-Version", CLIENT_VERSION_HEADER)
+                }
                 OutputStreamWriter(conn.outputStream, StandardCharsets.UTF_8).use { it.write(body) }
 
                 val code = conn.responseCode
@@ -90,6 +92,9 @@ class WarpClient {
                 throw e  // HTTP 响应是终局，不换 host
             } catch (e: Exception) {
                 errors.add("$host: ${e.message}")
+            } finally {
+                // 反复注册尝试时避免连接/ socket 被持有不释放
+                runCatching { conn?.disconnect() }
             }
         }
         throw WarpException("network error: ${errors.joinToString("; ")}")

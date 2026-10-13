@@ -79,9 +79,15 @@ object NodeAutoDisabler {
         return state.copy(proxyNodes = newList)
     }
 
+    /**
+     * 与 SingBoxConfigGenerator.nodeTag 保持一致的 tag 推导（含 name/id 兜底）。
+     * 此前兜底只到 node.name：当 outboundJson 无 tag 且 name 为空时，
+     * 生成器用的是 node.id，这里却用空串去比对 → 定位不到被拒节点，
+     * 自动禁用失效，VPN 直接起不来。
+     */
     private fun nodeTag(node: ProxyNode): String = runCatching {
         json.parseToJsonElement(node.outboundJson).jsonObject["tag"]?.jsonPrimitive?.content
-    }.getOrNull() ?: node.name
+    }.getOrNull() ?: node.name.ifBlank { node.id }
 
     /**
      * 供 UI 展示：把带 disabledReason 的节点列出（自动禁用的坏节点清单）。

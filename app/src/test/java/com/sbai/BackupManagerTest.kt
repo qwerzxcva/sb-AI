@@ -86,4 +86,59 @@ class BackupManagerTest {
         val merged = BackupManager.merge(current, AppState())
         assertEquals("p1", merged.activeProfileId)
     }
+
+    /**
+     * 回归测试：mergeSettings 曾只覆盖 21 个字段，AppSettings 增长到 49 个后
+     * 新增字段在导入时被静默丢弃（导出再导入，DNS 高级设置全部丢失）。
+     * 这里抽样各类新字段，确保它们都参与合并。
+     */
+    @Test
+    fun `merge settings preserves newly added dns and tun fields`() {
+        val incoming = AppSettings(
+            dnsFallbackServers = listOf("tls://8.8.8.8"),
+            dnsFallbackIpcidr = listOf("240.0.0.0/4"),
+            dnsFakeipFilter = listOf("*.lan"),
+            dnsNameserverPolicy = listOf("*.cn=223.5.5.5"),
+            dnsCacheCapacity = 4096,
+            dnsOptimistic = true,
+            dnsQueryTimeout = "5s",
+            dnsResolveStrategy = "prefer_ipv4",
+            dnsReverseMapping = true,
+            tlsRecordFragment = true,
+            tunMultiQueue = true,
+            idleSuspendDuration = 300_000L,
+            tunHttpProxyEnabled = true,
+            tunHttpProxyPort = 7890,
+        )
+        val merged = BackupManager.merge(AppState(), AppState(settings = incoming))
+        val s = merged.settings
+        assertEquals(listOf("tls://8.8.8.8"), s.dnsFallbackServers)
+        assertEquals(listOf("240.0.0.0/4"), s.dnsFallbackIpcidr)
+        assertEquals(listOf("*.lan"), s.dnsFakeipFilter)
+        assertEquals(listOf("*.cn=223.5.5.5"), s.dnsNameserverPolicy)
+        assertEquals(4096, s.dnsCacheCapacity)
+        assertTrue(s.dnsOptimistic)
+        assertEquals("5s", s.dnsQueryTimeout)
+        assertEquals("prefer_ipv4", s.dnsResolveStrategy)
+        assertTrue(s.dnsReverseMapping)
+        assertTrue(s.tlsRecordFragment)
+        assertTrue(s.tunMultiQueue)
+        assertEquals(300_000L, s.idleSuspendDuration)
+        assertTrue(s.tunHttpProxyEnabled)
+        assertEquals(7890, s.tunHttpProxyPort)
+    }
+
+    /** 导入全默认值时不得抹掉现有的高级设置 */
+    @Test
+    fun `merge settings default incoming does not wipe existing dns settings`() {
+        val current = AppSettings(
+            dnsFallbackServers = listOf("tls://8.8.8.8"),
+            dnsFakeipFilter = listOf("*.lan"),
+            tlsRecordFragment = true,
+        )
+        val merged = BackupManager.merge(AppState(settings = current), AppState())
+        assertEquals(listOf("tls://8.8.8.8"), merged.settings.dnsFallbackServers)
+        assertEquals(listOf("*.lan"), merged.settings.dnsFakeipFilter)
+        assertTrue(merged.settings.tlsRecordFragment)
+    }
 }

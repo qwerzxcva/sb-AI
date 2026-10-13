@@ -47,32 +47,72 @@ object BackupManager {
     /**
      * settings 字段级合并：只覆盖「导入中显式设置（非默认值）的字段」。
      * 用「与默认值比较」判断字段是否显式设置。
+     *
+     * 注意：这里必须逐字段覆盖 AppSettings 的全部字段。早期版本只列了 21 个，
+     * 之后新增的 28 个（DNS fallback / fakeIP / 缓存 / geoip、TLS 分片、
+     * multi_queue、idle-suspend、http_proxy…）在导入时被静默丢弃——
+     * 用户导出的配置再导入，这些设置全部丢失。新增字段时请同步补到这里。
      */
     private fun mergeSettings(current: com.sbai.data.AppSettings, incoming: com.sbai.data.AppSettings): com.sbai.data.AppSettings {
-        val default = com.sbai.data.AppSettings()
+        val d = com.sbai.data.AppSettings()
+        // 逐字段：导入值非默认 → 用导入；否则保留现有
         return com.sbai.data.AppSettings(
-            logLevel = if (incoming.logLevel != default.logLevel) incoming.logLevel else current.logLevel,
-            mtu = if (incoming.mtu != default.mtu) incoming.mtu else current.mtu,
-            ipv6Route = if (incoming.ipv6Route != default.ipv6Route) incoming.ipv6Route else current.ipv6Route,
-            autoDetectInterface = if (incoming.autoDetectInterface != default.autoDetectInterface) incoming.autoDetectInterface else current.autoDetectInterface,
-            strictRoute = if (incoming.strictRoute != default.strictRoute) incoming.strictRoute else current.strictRoute,
+            logLevel = if (incoming.logLevel != d.logLevel) incoming.logLevel else current.logLevel,
+            mtu = if (incoming.mtu != d.mtu) incoming.mtu else current.mtu,
+            ipv6Route = if (incoming.ipv6Route != d.ipv6Route) incoming.ipv6Route else current.ipv6Route,
+            autoDetectInterface = if (incoming.autoDetectInterface != d.autoDetectInterface) incoming.autoDetectInterface else current.autoDetectInterface,
+            strictRoute = if (incoming.strictRoute != d.strictRoute) incoming.strictRoute else current.strictRoute,
             finalOutbound = if (incoming.finalOutbound.isNotBlank()) incoming.finalOutbound else current.finalOutbound,
-            dnsStrategy = if (incoming.dnsStrategy != default.dnsStrategy) incoming.dnsStrategy else current.dnsStrategy,
-            perAppProxy = if (incoming.perAppProxy != default.perAppProxy) incoming.perAppProxy else current.perAppProxy,
-            configOverride = if (incoming.configOverride != default.configOverride) incoming.configOverride else current.configOverride,
-            autoStartOnBoot = if (incoming.autoStartOnBoot != default.autoStartOnBoot) incoming.autoStartOnBoot else current.autoStartOnBoot,
-            themeMode = if (incoming.themeMode != default.themeMode) incoming.themeMode else current.themeMode,
-            dynamicColor = if (incoming.dynamicColor != default.dynamicColor) incoming.dynamicColor else current.dynamicColor,
-            tunAddress = if (incoming.tunAddress != default.tunAddress) incoming.tunAddress else current.tunAddress,
-            tunAddress6 = if (incoming.tunAddress6 != default.tunAddress6) incoming.tunAddress6 else current.tunAddress6,
+            dnsStrategy = if (incoming.dnsStrategy != d.dnsStrategy) incoming.dnsStrategy else current.dnsStrategy,
+            perAppProxy = if (incoming.perAppProxy != d.perAppProxy) incoming.perAppProxy else current.perAppProxy,
+            configOverride = if (incoming.configOverride != d.configOverride) incoming.configOverride else current.configOverride,
+            autoStartOnBoot = if (incoming.autoStartOnBoot != d.autoStartOnBoot) incoming.autoStartOnBoot else current.autoStartOnBoot,
+            themeMode = if (incoming.themeMode != d.themeMode) incoming.themeMode else current.themeMode,
+            dynamicColor = if (incoming.dynamicColor != d.dynamicColor) incoming.dynamicColor else current.dynamicColor,
+            tunAddress = if (incoming.tunAddress != d.tunAddress) incoming.tunAddress else current.tunAddress,
+            tunAddress6 = if (incoming.tunAddress6 != d.tunAddress6) incoming.tunAddress6 else current.tunAddress6,
             subscriptionUserAgent = if (incoming.subscriptionUserAgent.isNotBlank()) incoming.subscriptionUserAgent else current.subscriptionUserAgent,
-            subscriptionSendHwid = if (incoming.subscriptionSendHwid != default.subscriptionSendHwid) incoming.subscriptionSendHwid else current.subscriptionSendHwid,
+            subscriptionSendHwid = if (incoming.subscriptionSendHwid != d.subscriptionSendHwid) incoming.subscriptionSendHwid else current.subscriptionSendHwid,
             subscriptionHwid = if (incoming.subscriptionHwid.isNotBlank()) incoming.subscriptionHwid else current.subscriptionHwid,
             subscriptionDeviceOs = if (incoming.subscriptionDeviceOs.isNotBlank()) incoming.subscriptionDeviceOs else current.subscriptionDeviceOs,
             subscriptionVerOs = if (incoming.subscriptionVerOs.isNotBlank()) incoming.subscriptionVerOs else current.subscriptionVerOs,
             subscriptionDeviceModel = if (incoming.subscriptionDeviceModel.isNotBlank()) incoming.subscriptionDeviceModel else current.subscriptionDeviceModel,
-            tunStack = if (incoming.tunStack != default.tunStack) incoming.tunStack else current.tunStack,
+            tunStack = if (incoming.tunStack != d.tunStack) incoming.tunStack else current.tunStack,
+            tunMultiQueue = if (incoming.tunMultiQueue != d.tunMultiQueue) incoming.tunMultiQueue else current.tunMultiQueue,
             resources = mergeById(current.resources, incoming.resources) { it.id },
+
+            // ---- DNS 高级 ----
+            dnsFallbackServers = if (incoming.dnsFallbackServers != d.dnsFallbackServers) incoming.dnsFallbackServers else current.dnsFallbackServers,
+            dnsFallbackGeoip = if (incoming.dnsFallbackGeoip != d.dnsFallbackGeoip) incoming.dnsFallbackGeoip else current.dnsFallbackGeoip,
+            dnsFallbackGeosite = if (incoming.dnsFallbackGeosite != d.dnsFallbackGeosite) incoming.dnsFallbackGeosite else current.dnsFallbackGeosite,
+            dnsFallbackIpcidr = if (incoming.dnsFallbackIpcidr != d.dnsFallbackIpcidr) incoming.dnsFallbackIpcidr else current.dnsFallbackIpcidr,
+            dnsFallbackDomain = if (incoming.dnsFallbackDomain != d.dnsFallbackDomain) incoming.dnsFallbackDomain else current.dnsFallbackDomain,
+            dnsFakeipFilter = if (incoming.dnsFakeipFilter != d.dnsFakeipFilter) incoming.dnsFakeipFilter else current.dnsFakeipFilter,
+            dnsFakeipFilterMode = if (incoming.dnsFakeipFilterMode != d.dnsFakeipFilterMode) incoming.dnsFakeipFilterMode else current.dnsFakeipFilterMode,
+            dnsFakeipFilterPatterns = if (incoming.dnsFakeipFilterPatterns != d.dnsFakeipFilterPatterns) incoming.dnsFakeipFilterPatterns else current.dnsFakeipFilterPatterns,
+            dnsNameserverPolicy = if (incoming.dnsNameserverPolicy != d.dnsNameserverPolicy) incoming.dnsNameserverPolicy else current.dnsNameserverPolicy,
+            dnsCacheCapacity = if (incoming.dnsCacheCapacity != d.dnsCacheCapacity) incoming.dnsCacheCapacity else current.dnsCacheCapacity,
+            dnsDisableCache = if (incoming.dnsDisableCache != d.dnsDisableCache) incoming.dnsDisableCache else current.dnsDisableCache,
+            dnsDisableExpire = if (incoming.dnsDisableExpire != d.dnsDisableExpire) incoming.dnsDisableExpire else current.dnsDisableExpire,
+            dnsOptimistic = if (incoming.dnsOptimistic != d.dnsOptimistic) incoming.dnsOptimistic else current.dnsOptimistic,
+            dnsOptimisticTimeout = if (incoming.dnsOptimisticTimeout.isNotBlank()) incoming.dnsOptimisticTimeout else current.dnsOptimisticTimeout,
+            dnsQueryTimeout = if (incoming.dnsQueryTimeout.isNotBlank()) incoming.dnsQueryTimeout else current.dnsQueryTimeout,
+            dnsResolveStrategy = if (incoming.dnsResolveStrategy.isNotBlank()) incoming.dnsResolveStrategy else current.dnsResolveStrategy,
+            dnsReverseMapping = if (incoming.dnsReverseMapping != d.dnsReverseMapping) incoming.dnsReverseMapping else current.dnsReverseMapping,
+
+            // ---- DPI 硬化 ----
+            tlsFragment = if (incoming.tlsFragment != d.tlsFragment) incoming.tlsFragment else current.tlsFragment,
+            tlsRecordFragment = if (incoming.tlsRecordFragment != d.tlsRecordFragment) incoming.tlsRecordFragment else current.tlsRecordFragment,
+            tlsFragmentFallbackDelay = if (incoming.tlsFragmentFallbackDelay != d.tlsFragmentFallbackDelay) incoming.tlsFragmentFallbackDelay else current.tlsFragmentFallbackDelay,
+
+            // ---- TUN 空闲挂起 ----
+            idleSuspendDuration = if (incoming.idleSuspendDuration != d.idleSuspendDuration) incoming.idleSuspendDuration else current.idleSuspendDuration,
+            idleTeardownDuration = if (incoming.idleTeardownDuration != d.idleTeardownDuration) incoming.idleTeardownDuration else current.idleTeardownDuration,
+
+            // ---- 系统 HTTP 代理下发 ----
+            tunHttpProxyEnabled = if (incoming.tunHttpProxyEnabled != d.tunHttpProxyEnabled) incoming.tunHttpProxyEnabled else current.tunHttpProxyEnabled,
+            tunHttpProxyPort = if (incoming.tunHttpProxyPort != d.tunHttpProxyPort) incoming.tunHttpProxyPort else current.tunHttpProxyPort,
+            tunHttpProxyBypassDomains = if (incoming.tunHttpProxyBypassDomains != d.tunHttpProxyBypassDomains) incoming.tunHttpProxyBypassDomains else current.tunHttpProxyBypassDomains,
         )
     }
 }

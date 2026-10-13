@@ -78,6 +78,27 @@ class NodeAutoDisablerTest {
         assertNull(NodeAutoDisabler.disableRejectedNode(state, "initialize outbound[0] vless[missing]: boom"))
     }
 
+    /**
+     * 回归测试：outboundJson 无 tag 且 name 为空时，生成器用 node.id 作为
+     * outbound tag。auto-disabler 此前只兜底到 node.name（空串），
+     * 定位不到被拒节点 → disableRejectedNode 返回 null → VPN 启动失败。
+     */
+    @Test
+    fun `disable rejected node when tag falls back to node id`() {
+        val noTagNode = ProxyNode(
+            id = "uuid-1234",
+            name = "",
+            outboundJson = """{"type":"vless","server":"1.2.3.4","server_port":443,"uuid":"x"}""",
+        )
+        val state = AppState(proxyNodes = listOf(noTagNode))
+        val next = NodeAutoDisabler.disableRejectedNode(
+            state,
+            "initialize outbound[0] vless[uuid-1234]: boom",
+        )
+        assertNotNull("必须能用 node.id 兜底定位到被拒节点", next)
+        assertTrue(!next!!.proxyNodes.first().enabled)
+    }
+
     @Test
     fun `body fingerprint ignores tag and name`() {
         val a = ProxyNode(name = "x", outboundJson = """{"type":"vless","tag":"t1","server":"1.1.1.1","server_port":443}""")

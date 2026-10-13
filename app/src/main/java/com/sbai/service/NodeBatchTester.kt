@@ -53,8 +53,7 @@ object NodeBatchTester {
             val batchResults = batch.map { node ->
                 async(Dispatchers.IO) {
                     val tag = nodeTag(node)
-                    val delay = if (tag == null) -1 else
-                        (SbCommandClient.urlTestOutbound(groupTag, tag, timeoutMs) ?: -1)
+                    val delay = SbCommandClient.urlTestOutbound(groupTag, tag, timeoutMs) ?: -1
                     NodeTestResult(node, delay)
                 }
             }.awaitAll()
@@ -81,10 +80,15 @@ object NodeBatchTester {
         }
     }
 
-    private fun nodeTag(node: ProxyNode): String? = runCatching {
+    /**
+     * 与 SingBoxConfigGenerator.nodeTag 保持完全一致的 tag 推导。
+     * 此前这里缺失 tag 时返回 null → testNodes 记 -1 → 订阅后处理把节点删掉；
+     * 而生成器实际是用 name/id 兜底的，节点本身没问题。
+     */
+    private fun nodeTag(node: ProxyNode): String = runCatching {
         kotlinx.serialization.json.Json.parseToJsonElement(node.outboundJson)
             .let { it as kotlinx.serialization.json.JsonObject }
             .get("tag")?.let { it as kotlinx.serialization.json.JsonPrimitive }
             ?.content
-    }.getOrNull()
+    }.getOrNull() ?: node.name.ifBlank { node.id }
 }
