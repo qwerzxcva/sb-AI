@@ -987,6 +987,17 @@ class SingBoxConfigGeneratorTest {
     }
 
     @Test
+    fun `default remote dns uses a tls-capable hostname not a bare ip`() {
+        // https 类型 DNS server 需要能做 TLS 证书校验的域名；裸 IP 会握手失败
+        val cfg = parse(AppState())
+        val servers = cfg["dns"]!!.jsonObject["servers"]!!.jsonArray.map { it.jsonObject }
+        val remote = servers.first { it["tag"]!!.jsonPrimitive.content == "dns-remote" }
+        assertEquals("https", remote["type"]!!.jsonPrimitive.content)
+        val host = remote["server"]!!.jsonPrimitive.content
+        assertTrue("DoH server 必须是域名而非 IP: $host", host.any { it.isLetter() })
+    }
+
+    @Test
     fun `remote rule set format matches url extension`() {
         // .srs 是二进制规则集，写成 source 会让内核按 JSON 解析二进制而失败
         val cfg = parse(

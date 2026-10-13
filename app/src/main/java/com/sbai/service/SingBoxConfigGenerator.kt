@@ -398,10 +398,13 @@ object SingBoxConfigGenerator {
                 put("type", "udp")
                 put("server", "223.5.5.5")
             })
+            // 默认远程 DNS 用 DoH：必须是可以做 TLS 证书校验的域名，
+            // 写裸 IP 会导致握手/校验失败，表现为「有网但解析不出域名」。
             result.add(buildJsonObject {
                 put("tag", "dns-remote")
                 put("type", "https")
-                put("server", "8.8.8.8")
+                put("server", "dns.alidns.com")
+                put("path", "/dns-query")
                 put("detour", entryTag)
             })
             return result
