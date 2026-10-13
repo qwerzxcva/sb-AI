@@ -275,7 +275,9 @@ fun NodeEditorScreen(
                         if (obj["type"] == null || obj["tag"] == null) {
                             error = "outbound 必须包含 type 与 tag"; return@TextButton
                         }
-                        val nodeTag = obj["tag"]!!.jsonPrimitive.content
+                        val nodeTag = (obj["tag"] as? kotlinx.serialization.json.JsonPrimitive)
+                            ?.content
+                            ?: obj["tag"]?.toString().orEmpty()
                         onSave(initial.copy(name = tag.trim().ifBlank { nodeTag }, outboundJson = json))
                     }) { Text("保存") }
                 },

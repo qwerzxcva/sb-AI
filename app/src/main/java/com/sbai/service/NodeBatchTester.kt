@@ -68,7 +68,10 @@ object NodeBatchTester {
     fun applyResults(store: RuleStore, results: List<NodeTestResult>) {
         if (results.isEmpty()) return
         val byId = results.associate { it.node.id to it.delay }
-        store.updateCommitted { s ->
+        // 用异步 update 而非 updateCommitted：整份 AppState 含所有节点原始 outbound JSON，
+        // 同步 commit() 会把主线程阻塞数秒（批量测速后首页卡住的直接原因）。
+        // 延迟值只服务于 UI 展示，:core 下次启动会 reload 读盘。
+        store.update { s ->
             s.copy(
                 proxyNodes = s.proxyNodes.map { node ->
                     val delay = byId[node.id]

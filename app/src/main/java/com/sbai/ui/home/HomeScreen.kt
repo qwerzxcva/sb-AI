@@ -207,7 +207,8 @@ fun HomeScreen(onOpenSettingsLoadBalance: () -> Unit = {}) {
                     ?: "lb"
                 val delay = SbCommandClient.urlTestOutbound(groupTag, node.name, timeoutMs = 5000)
                 if (delay != null && delay > 0) {
-                    store.updateCommitted { s ->
+                    // 异步 update：延迟值只服务 UI 展示，不值得同步 commit() 整份配置阻塞主线程
+                    store.update { s ->
                         s.copy(proxyNodes = s.proxyNodes.map { n ->
                             if (n.id == node.id) n.copy(urlTestDelay = delay, urlTestTime = System.currentTimeMillis()) else n
                         })
