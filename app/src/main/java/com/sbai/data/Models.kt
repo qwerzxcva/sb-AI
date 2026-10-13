@@ -455,6 +455,21 @@ val TUN_STACK_UI_OPTIONS = listOf(TunStack.TSB_AI, TunStack.MIXED, TunStack.SYST
 @Serializable
 enum class LogLevel(val wireName: String) { TRACE("trace"), DEBUG("debug"), INFO("info"), WARN("warn"), ERROR("error"), FATAL("fatal"), PANIC("panic") }
 
+/**
+ * 分流模式（参考 Karing / Clash 的 规则-全局-直连）。
+ *
+ * 落到 sing-box 上就是 route.final 的取值：
+ *  - RULES：留空，生成器自动选入口 tag（未命中规则走默认出口）
+ *  - GLOBAL：固定为入口 tag，所有流量走代理
+ *  - DIRECT：direct，所有流量直连
+ */
+@Serializable
+enum class RouteMode(val displayName: String) {
+    RULES("规则"),
+    GLOBAL("全局"),
+    DIRECT("直连"),
+}
+
 /** 分应用代理（include/exclude 名单） */
 @Serializable
 enum class PerAppProxyMode { OFF, INCLUDE, EXCLUDE }
@@ -558,6 +573,12 @@ data class AppSettings(
     /** 系统 HTTP 代理旁路域名（这些域名不走该代理） */
     val tunHttpProxyBypassDomains: List<String> = emptyList(),
     val finalOutbound: String = "",   // 留空 = 自动（跟随入口 tag）
+    /**
+     * 分流模式（参考 Karing / Clash 的 规则-全局-直连）。
+     * finalOutbound 是手动覆盖，非空时优先级高于本模式；
+     * 本模式为 GLOBAL/DIRECT 时，生成器据此改写 route.final。
+     */
+    val routeMode: RouteMode = RouteMode.RULES,
     val dnsStrategy: String = "prefer_ipv4",   // prefer_ipv4 / prefer_ipv6 / ipv4_only / ipv6_only
     val perAppProxy: PerAppProxy = PerAppProxy(),
     // ---- 拆分隧道（已移除，用户反馈：写规则不好么？）----

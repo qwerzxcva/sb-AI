@@ -216,6 +216,45 @@ private fun RouteRulesPage(externalOpenRuleSetManager: Boolean = false, onExtern
             contentBottomPadding = BottomBarClearance,
             header = {
                 Spacer(Modifier.height(16.dp))
+                // 分流模式（参考 Karing / Clash 的规则-全局-直连切换）：
+                // 规则 = 按下方规则列表分流（route.final 留空自动）
+                // 全局 = 所有流量走代理（route.final 设为入口 tag）
+                // 直连 = 所有流量不走代理（route.final = direct）
+                SbGroup(title = "分流模式") {
+                    item {
+                        Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                            // 手动填了 finalOutbound 时以它为准，UI 上标注出来
+                            val manualOverride = state.settings.finalOutbound.isNotBlank()
+                            val currentMode = if (manualOverride) null else state.settings.routeMode
+                            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                                com.sbai.data.RouteMode.entries.forEachIndexed { i, mode ->
+                                    SegmentedButton(
+                                        selected = currentMode == mode,
+                                        onClick = {
+                                            // 选手动覆盖时清空，让模式生效
+                                            val cleared = if (manualOverride) {
+                                                state.settings.copy(finalOutbound = "")
+                                            } else {
+                                                state.settings
+                                            }
+                                            store.updateSettings(cleared.copy(routeMode = mode))
+                                        },
+                                        shape = SegmentedButtonDefaults.itemShape(
+                                            index = i,
+                                            count = com.sbai.data.RouteMode.entries.size,
+                                        ),
+                                    ) { Text(mode.displayName) }
+                                }
+                            }
+                            Text(
+                                routeModeSummary(state.settings),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
                 // 规则集入口（不再与路由规则并列成两个有序列表，避免优先级混淆）
                 SbGroup(title = "") {
                     item {
@@ -1308,6 +1347,23 @@ private val PRIMARY_ACTIONS = setOf(
     com.sbai.data.RuleAction.ROUTE_DIRECT,
     com.sbai.data.RuleAction.REJECT,
 )
+
+/**
+ * 分流模式（参考 Karing / Clash 的 规则-全局-直连 切换）。
+ * 实现在 data.RouteMode（可序列化，随配置持久化）。
+ * route.final 的取值由生成器按「手动 finalOutbound > routeMode」决定，
+ * 因此 UI 只需要读 settings.routeMode；手动覆盖时单独提示。
+ */
+private fun routeModeSummary(settings: com.sbai.data.AppSettings): String =
+    if (settings.finalOutbound.isNotBlank()) {
+        "已手动指定 route.final = ${settings.finalOutbound}，点任意模式可清除手动覆盖"
+    } else {
+        when (settings.routeMode) {
+            com.sbai.data.RouteMode.GLOBAL -> "所有流量都走代理，忽略下方规则"
+            com.sbai.data.RouteMode.DIRECT -> "所有流量都直连，忽略下方规则"
+            com.sbai.data.RouteMode.RULES -> "按下方规则列表分流，未命中的流量走默认出口"
+        }
+    }
 
 /** 每个动作对应的 sing-box 官方语义（Rule Action 文档） */
 private fun actionSemantics(action: RuleAction): String = when (action) {

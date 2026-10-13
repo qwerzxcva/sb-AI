@@ -1850,4 +1850,62 @@ class SingBoxConfigGeneratorTest {
         )
         assertTrue("只填 geosite 的规则被当成空规则丢弃", rule.hasAnyCondition)
     }
+
+    /** 分流模式：GLOBAL 忽略规则列表，DIRECT 全部直连，RULES 跟随入口 tag */
+    @Test
+    fun `route mode drives route dot final`() {
+        fun finalOf(mode: com.sbai.data.RouteMode): String? {
+            val cfg = parse(
+                AppState(
+                    proxyNodes = listOf(
+                        ProxyNode(
+                            name = "n1",
+                            outboundJson = """{"type":"vless","tag":"n1","server":"1.2.3.4","server_port":443,"uuid":"x"}"""
+                        ),
+                    ),
+                    settings = com.sbai.data.AppSettings(routeMode = mode),
+                ),
+            )
+            return cfg["route"]!!.jsonObject["final"]?.jsonPrimitive?.content
+        }
+        assertEquals(
+            "RULES 模式 final 应跟随入口 tag（单节点 = 节点自身 tag）",
+            "n1",
+            finalOf(com.sbai.data.RouteMode.RULES),
+        )
+        assertEquals(
+            "GLOBAL 模式 final 也走入口 tag",
+            "n1",
+            finalOf(com.sbai.data.RouteMode.GLOBAL),
+        )
+        assertEquals(
+            "DIRECT 模式 final 必须是 direct",
+            "direct",
+            finalOf(com.sbai.data.RouteMode.DIRECT),
+        )
+    }
+
+    /** 手动 finalOutbound 优先于分流模式 */
+    @Test
+    fun `manual finalOutbound overrides route mode`() {
+        val cfg = parse(
+            AppState(
+                proxyNodes = listOf(
+                    ProxyNode(
+                        name = "n1",
+                        outboundJson = """{"type":"vless","tag":"n1","server":"1.2.3.4","server_port":443,"uuid":"x"}"""
+                    ),
+                ),
+                settings = com.sbai.data.AppSettings(
+                    routeMode = com.sbai.data.RouteMode.DIRECT,
+                    finalOutbound = "lb",
+                ),
+            ),
+        )
+        assertEquals(
+            "手动 finalOutbound 必须优先于 routeMode",
+            "lb",
+            cfg["route"]!!.jsonObject["final"]?.jsonPrimitive?.content,
+        )
+    }
 }

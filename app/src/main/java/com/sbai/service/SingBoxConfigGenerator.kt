@@ -7,6 +7,7 @@ import com.sbai.data.DnsServerType
 import com.sbai.data.LoadBalanceMode
 import com.sbai.data.OverridePriority
 import com.sbai.data.PerAppProxyMode
+import com.sbai.data.RouteMode
 import com.sbai.data.RouteRule
 import com.sbai.data.RuleAction
 import com.sbai.data.RuleLogic
@@ -307,7 +308,14 @@ object SingBoxConfigGenerator {
                         })
                     }
                 }
-                put("final", state.settings.finalOutbound.ifBlank { entryTag })
+                // route.final：手动填的 finalOutbound 优先；否则按分流模式决定。
+                // GLOBAL = 固定走入口 tag（忽略规则列表），DIRECT = 全部直连。
+                val finalTag = when {
+                    state.settings.finalOutbound.isNotBlank() -> state.settings.finalOutbound
+                    state.settings.routeMode == RouteMode.DIRECT -> "direct"
+                    else -> entryTag
+                }
+                put("final", finalTag)
                 put("auto_detect_interface", state.settings.autoDetectInterface)
             }
 
