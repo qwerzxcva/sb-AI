@@ -413,31 +413,36 @@ data class Subscription(
 )
 
 /**
- * TUN 网络栈。
+ * TUN 网络栈：UI 只暴露四种实现，其余栈（Go 原始名 / 其他实现）
+ * 全部并入 tsbAI，借鉴其代码与架构来优化 tsbAI，不再作为独立选项出现。
  *
- * 注意 wireName 必须是 sb-lxf 内核实际注册的栈名。内核（sing-box 1.15 基线）
- * 只注册 system / gvisor / mixed / go 四个值；`tsbAI` 仅出现在内核的
- * `multi_queue is only supported by the go / tsbAI stack` 错误文案里，
- * 并非可配置的 stack 值——此前 TSB_AI 直接输出 "tsbAI" 会被内核以
- * `unknown stack: tsbAI` 拒绝，表现为 VPN 起不来（默认栈就是这个，等于全新安装必崩）。
+ * 注意 wireName 必须是内核实际注册的栈名。内核（sing-box 1.15 基线）只注册
+ * system / gvisor / mixed / go；`tsbAI` 仅出现在内核的
+ * `multi_queue is only supported by the go / tsbAI stack` 错误文案里，并非可配置的
+ * stack 值——直接输出 "tsbAI" 会被内核以 `unknown stack: tsbAI` 拒绝，
+ * 表现为 VPN 起不来（默认栈就是这个，等于全新安装必崩）。
  *
- * tsbAI 作为 sb-AI 的栈品牌名保留在 UI，实际下发内核的 "go"（sing-box 1.15
- * 的纯 Go TUN 栈，含 splice/GSO/multi_queue/oom-killer），即需求里
- * 「把官方 Go TUN 栈命名为 tsbAI」的落地方式。
+ * 因此 tsbAI 作为产品名保留，实际下发 "go"；GO 枚举只作为已写入配置的
+ * 兼容别名存在（导入识别用），不进入 UI 选项。
  */
 @Serializable
 enum class TunStack(val displayName: String, val wireName: String) {
-    /** tsbAI — sb-lxf 的 Go TUN 栈（splice/GSO/multi_queue/oom-killer，默认首选） */
-    TSB_AI("tsbAI（纯Go栈+splice）", "go"),
+    /** tsbAI — 合并 Go 栈后的 sb-lxf TUN 栈（splice/GSO/multi_queue/oom-killer，默认首选） */
+    TSB_AI("tsbAI", "go"),
     /** mixed：TCP 走 system、UDP 走 gVisor */
-    MIXED("Mixed（TCP+gVisor/UDP+system）", "mixed"),
+    MIXED("Mixed", "mixed"),
     /** 全系统栈：利用宿主内核 TCP，最低内存开销 */
-    SYSTEM("System（系统栈）", "system"),
+    SYSTEM("System", "system"),
     /** 全 gVisor 用户态栈：最大兼容性，更高内存 */
-    GVISOR("gVisor（用户态栈）", "gvisor"),
-    /** Go 栈的原始名（与 TSB_AI 等价，保留供导入配置识别） */
-    GO("Go（纯Go栈）", "go"),
+    GVISOR("gVisor", "gvisor"),
+
+    /** Go 栈原始名：与 TSB_AI 等价，仅供解析历史配置识别，UI 不展示 */
+    @kotlinx.serialization.SerialName("go")
+    GO("Go", "go"),
 }
+
+/** UI 里出现的 TUN 栈选项（GO 是历史兼容别名，不出现在选项里） */
+val TUN_STACK_UI_OPTIONS = listOf(TunStack.TSB_AI, TunStack.MIXED, TunStack.SYSTEM, TunStack.GVISOR)
 
 @Serializable
 enum class LogLevel(val wireName: String) { TRACE("trace"), DEBUG("debug"), INFO("info"), WARN("warn"), ERROR("error"), FATAL("fatal"), PANIC("panic") }

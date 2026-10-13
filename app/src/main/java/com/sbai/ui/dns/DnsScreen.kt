@@ -99,13 +99,13 @@ fun DnsScreen() {
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun DnsScreenBody() {
+fun DnsScreenBody(initialTab: Int = 0) {
     val context = LocalContext.current
     val store = remember { RuleStore.get(context) }
     val state by store.state.collectAsState()
     val tokens = LocalSbStyleTokens.current
 
-    var tab by remember { mutableIntStateOf(0) }
+    var tab by remember { mutableIntStateOf(initialTab) }
     var editingServer by remember { mutableStateOf<DnsServer?>(null) }
     var editingGroup by remember { mutableStateOf<DnsGroup?>(null) }
     var editingRule by remember { mutableStateOf<DnsRule?>(null) }

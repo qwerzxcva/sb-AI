@@ -28,6 +28,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -41,8 +42,6 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
-import com.kyant.backdrop.backdrops.layerBackdrop
-import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import com.sbai.data.RuleStore
 import com.sbai.ui.components.BottomBarController
 import com.sbai.ui.components.SbGlassBottomBar
@@ -80,13 +79,13 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun MainScaffold() {
     val navController = rememberNavController()
-    var showLoadBalancePage by remember { mutableStateOf(false) }
+    // 设置页跳转到路由页时指定初始 Tab：0=路由规则，1=DNS
+    var routesInitialTab by remember { mutableIntStateOf(0) }
+    // 由设置页触发：跳转到路由页后自动打开「规则集与资源」对话框
+    var showRouteRuleSetManager by remember { mutableStateOf(false) }
     val items = listOf(Screen.Home, Screen.Routes, Screen.Monitor, Screen.Settings)
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
-
-    // Kototoro 同款液态玻璃底栏：页面内容捕获为 LayerBackdrop，底栏采样折射
-    val pageBackdrop = rememberLayerBackdrop()
 
     // 下滑隐藏 / 上滑显示底栏；BottomBarController 为跨组件真源，
     // 编辑器关闭时显式恢复（修复「二级页上滑隐藏后返回列表唤不出底栏」bug）
@@ -117,19 +116,48 @@ private fun MainScaffold() {
         NavHost(
             navController = navController,
             startDestination = Screen.Home.route,
-            modifier = Modifier
-                .fillMaxSize()
-                .layerBackdrop(pageBackdrop),
+            modifier = Modifier.fillMaxSize(),
         ) {
-            composable(Screen.Home.route) { HomeScreen(onOpenLoadBalance = { showLoadBalancePage = true }) }
-            composable(Screen.Routes.route) { RouteRulesScreen() }
+            composable(Screen.Home.route) {
+                HomeScreen(onOpenSettingsLoadBalance = {
+                    navController.navigate(Screen.Settings.route) {
+                        popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                        launchSingleTop = true
+                        restoreState = true
+                    }
+                })
+            }
+            composable(Screen.Routes.route) {
+                RouteRulesScreen(
+                    initialTab = routesInitialTab,
+                    openRuleSetManager = showRouteRuleSetManager,
+                )
+            }
             composable(Screen.Monitor.route) { MonitorScreen() }
-            composable(Screen.Settings.route) { SettingsScreen() }
+            composable(Screen.Settings.route) {
+                SettingsScreen(
+                    onOpenDnsAdvanced = {
+                        routesInitialTab = 1
+                        navController.navigate(Screen.Routes.route) {
+                            popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
+                    },
+                    onOpenRouteResources = {
+                        showRouteRuleSetManager = true
+                        navController.navigate(Screen.Routes.route) {
+                            popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
+                    },
+                )
+            }
         }
 
-        // FlClash 风格：底栏胶囊 + 右侧独立圆形 VPN 开关按钮        // 下滑隐藏时整行不参与绘制：layerBackdrop 会录制整个 NavHost 供底栏模糊采样，
-        // 隐藏后继续绘制等于每帧白录一层 + 跑一遍 blur，滑动时是纯浪费的 GPU 开销。
-        // 用 barVisible（离散状态）而非 barOffset（动画中间值）判断，避免浮点比较。
+        // FlClash 风格：底栏胶囊 + 右侧独立圆形 VPN 开关按钮
+        // 下滑隐藏时整行不参与绘制（barVisible 是离散状态，不用浮点中间值比较）。
         if (barVisible) {
             Row(
                 modifier = Modifier
@@ -143,7 +171,6 @@ private fun MainScaffold() {
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 SbGlassBottomBar(
-                    pageBackdrop = pageBackdrop,
                     items = items.map { SbNavItem(it.route, it.title, it.icon) },
                     currentRoute = currentRoute,
                     onSelect = { route ->
@@ -159,13 +186,6 @@ private fun MainScaffold() {
                 // 与 NavigationBar 等高（80dp），上下平齐；圆形按钮直径 = 底栏高度
                 VpnToggleButton(size = 80.dp)
             }
-        }
-
-        // 负载均衡全屏二级页（首页「负载均衡设置」入口）
-        if (showLoadBalancePage) {
-            com.sbai.ui.settings.SettingsLoadBalanceScreen(
-                onBack = { showLoadBalancePage = false },
-            )
         }
     }
 }

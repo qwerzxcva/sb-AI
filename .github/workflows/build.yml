@@ -49,6 +49,17 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
+      - name: Android Lint (静态分析)
+        run: ./gradlew :app:lintDebug --stacktrace
+
+      - name: Upload lint report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sb-AI-lint
+          path: app/build/reports/lint-results-debug.*
+          retention-days: 14
+
       - name: Run unit tests
         run: ./gradlew :app:testDebugUnitTest --stacktrace
 
@@ -62,6 +73,31 @@ jobs:
           unzip -l "$APK" | grep -E '^\s+[0-9]+.*lib/' | awk '{print $4}' | cut -d/ -f2 | sort -u > /tmp/abis.txt
           cat /tmp/abis.txt
           test "$(cat /tmp/abis.txt)" = "arm64-v8a"
+
+      # 产物一致性：manifest 里 :core 进程 / specialUse FGS 声明一旦丢失，
+      # VPN 会在真机上以 SecurityException 崩，但编译与单测都发现不了。
+      - name: Verify manifest declarations (core process + FGS type)
+        run: |
+          APK=$(ls app/build/outputs/apk/release/*.apk | head -1)
+          echo "Checking $APK"
+          AAPT2=$(ls "$ANDROID_HOME"/build-tools/*/aapt2 | head -1)
+          echo "aapt2: $AAPT2"
+          "$AAPT2" dump xmltree --file AndroidManifest.xml "$APK" > /tmp/manifest.txt
+          FAIL=0
+          check() {
+            if ! grep -q "$1" /tmp/manifest.txt; then
+              echo "❌ missing in manifest: $1"
+              FAIL=1
+            else
+              echo "✓ $1"
+            fi
+          }
+          check '":core"'
+          check 'foregroundServiceType'
+          check 'PROPERTY_SPECIAL_USE_FGS_SUBTYPE'
+          check 'com.sbai.action.START_VPN'
+          check 'android.net.VpnService'
+          exit $FAIL
 
       - name: Upload release APK artifact
         uses: actions/upload-artifact@v4

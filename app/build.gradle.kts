@@ -98,6 +98,16 @@ android {
             useLegacyPackaging = true
         }
     }
+
+    lint {
+        // CI 里 lint 是质量门禁：Error 直接失败，Warning 不阻断但会进报告。
+        // 关闭 fatal 会让 lint 变成纯报告，等于白跑——保持默认（Error → build 失败）。
+        warningsAsErrors = false
+        abortOnError = true
+        checkDependencies = true
+        // 编译期已由 Kotlin 编译器保证的类型/空安全不重复报
+        disable += setOf("MissingTranslation")
+    }
 }
 
 dependencies {

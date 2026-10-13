@@ -31,6 +31,7 @@ import androidx.compose.material.icons.filled.Article
 import androidx.compose.material.icons.filled.Badge
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.ContentCut
+import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.EditNote
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
@@ -97,7 +98,7 @@ import kotlinx.serialization.json.Json
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
-fun SettingsScreen() {
+fun SettingsScreen(onOpenDnsAdvanced: () -> Unit = {}, onOpenRouteResources: () -> Unit = {}) {
     val context = LocalContext.current
     val store = remember { RuleStore.get(context) }
     val state by store.state.collectAsState()
@@ -115,7 +116,6 @@ fun SettingsScreen() {
     var profileNameInput by remember { mutableStateOf("") }
     var editingProfile by remember { mutableStateOf<ConfigProfile?>(null) }
     // ---- 资源管理编辑状态 ----
-    var editingResource by remember { mutableStateOf<com.sbai.data.Resource?>(null) }
     // ---- 备份导入模式选择（merge / replace） ----
     var pendingImport by remember { mutableStateOf<AppState?>(null) }
 
@@ -263,29 +263,33 @@ fun SettingsScreen() {
                             )
                         }
                     }
-                    // TUN 网络栈（system / gvisor / mixed / go / tsbAI）
+                    // TUN 网络栈：只保留 tsbAI / mixed / system / gVisor 四种
                     item {
                         Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
                             Text("TUN 网络栈", style = MaterialTheme.typography.labelLarge)
                             Spacer(Modifier.height(8.dp))
+                            val stackOptions = listOf(
+                                com.sbai.data.TunStack.TSB_AI,
+                                com.sbai.data.TunStack.MIXED,
+                                com.sbai.data.TunStack.SYSTEM,
+                                com.sbai.data.TunStack.GVISOR,
+                            )
                             SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                                TunStack.entries.forEachIndexed { i, stack ->
+                                stackOptions.forEachIndexed { i, stack ->
                                     SegmentedButton(
                                         selected = settings.tunStack == stack,
                                         onClick = { store.updateSettings(settings.copy(tunStack = stack)) },
-                                        shape = SegmentedButtonDefaults.itemShape(index = i, count = TunStack.entries.size),
-                                    ) { Text(stack.displayName.split("（")[0]) }
+                                        shape = SegmentedButtonDefaults.itemShape(index = i, count = stackOptions.size),
+                                    ) { Text(stack.displayName) }
                                 }
                             }
-                            val isGoStack = settings.tunStack == TunStack.TSB_AI || settings.tunStack == TunStack.GO
+                            val isGoStack = settings.tunStack == com.sbai.data.TunStack.TSB_AI
                             Text(
                                 when {
-                                    settings.tunStack == TunStack.TSB_AI ->
-                                        "tsbAI = sb-lxf 内核的 Go TUN 栈，含 splice/GSO/multi_queue/oom-killer，内存占用低。"
                                     isGoStack ->
-                                        "go = sing-box 1.15+ 新纯 Go TUN 栈，不依赖 gVisor，内存占用更低；需使用对应版本内核。"
+                                        "tsbAI = sb-lxf 内核的 TUN 栈，合并了 Go 栈实现（splice/GSO/multi_queue/oom-killer），内存占用低。"
                                     else ->
-                                        "system / gvisor / mixed 为标准网络栈。"
+                                        "mixed = TCP 走 system / UDP 走 gVisor；system = 纯系统栈最省内存；gVisor = 用户态栈兼容性最好。"
                                 },
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -415,188 +419,20 @@ fun SettingsScreen() {
                 SbSpacer()
             }
 
-            // ---- DNS 高级功能（fallback / fakeIP filter / nameserver-policy）----
+            // ---- DNS 高级：已并入「路由 → DNS → 高级」，这里只留跳转入口 ----
             item {
-                var showDnsAdvanced by rememberSaveable { mutableStateOf(false) }
-                SbGroup(title = "DNS 高级（${settings.dnsFallbackServers.size}个fallback / ${settings.dnsFakeipFilter.size}个fakeIP过滤 / ${settings.dnsFakeipFilterPatterns.size}个正则）") {
+                SbGroup(title = "DNS 高级") {
                     item {
                         SbItem(
-                            title = if (showDnsAdvanced) "收起 DNS 高级设置" else "展开 DNS 高级设置",
-                            subtitle = "fallback + fallback-filter / fakeIP 排除列表 / nameserver-policy（参考 FlClash/Bettbox）",
-                            icon = if (showDnsAdvanced) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                            onClick = { showDnsAdvanced = !showDnsAdvanced },
+                            title = "Fallback / fakeIP 过滤 / nameserver-policy",
+                            subtitle = "这些设置已并入 路由 → DNS → 高级 Tab，点此前往",
+                            icon = Icons.Filled.Dns,
+                            onClick = onOpenDnsAdvanced,
                         )
-                    }
-                    if (!showDnsAdvanced) {
-                        return@SbGroup
-                    }
-                    // fallback DNS 服务器列表
-                    item {
-                        Column(Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
-                            Text("Fallback DNS（一行一个地址）", style = MaterialTheme.typography.labelLarge)
-                            Text("当主 DNS 返回的结果被 fallback-filter 判定为污染时使用", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Spacer(Modifier.height(4.dp))
-                            var fallbackText by remember { mutableStateOf(settings.dnsFallbackServers.joinToString("\n")) }
-                            OutlinedTextField(
-                                value = fallbackText, onValueChange = { fallbackText = it },
-                                modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp),
-                                minLines = 3,
-                                textStyle = MaterialTheme.typography.bodySmall,
-                            )
-                            Spacer(Modifier.height(4.dp))
-                            Text("示例：tls://8.8.4.4 / https://1.1.1.1/dns-query", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Spacer(Modifier.height(4.dp))
-                            androidx.compose.material3.OutlinedButton(
-                                onClick = {
-                                    val servers = fallbackText.lines().map { it.trim() }.filter { it.isNotEmpty() }
-                                    store.updateSettings(settings.copy(dnsFallbackServers = servers))
-                                },
-                            ) { Text("保存") }
-                        }
-                    }
-                    // fallback-filter 配置
-                    item {
-                        Column(Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
-                            Text("Fallback Filter", style = MaterialTheme.typography.labelLarge)
-                            Spacer(Modifier.height(4.dp))
-                            // geosite 列表
-                            Column(Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
-                                Text("命中这些 geosite 时只用 fallback（如 gfw）", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                var geositeText by remember { mutableStateOf(settings.dnsFallbackGeosite.joinToString("\n")) }
-                                OutlinedTextField(
-                                    value = geositeText, onValueChange = { geositeText = it },
-                                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-                                    minLines = 2,
-                                    textStyle = MaterialTheme.typography.bodySmall,
-                                )
-                                Spacer(Modifier.height(4.dp))
-                                androidx.compose.material3.OutlinedButton(
-                                    onClick = {
-                                        val sites = geositeText.lines().map { it.trim() }.filter { it.isNotEmpty() }
-                                        store.updateSettings(settings.copy(dnsFallbackGeosite = sites))
-                                    },
-                                ) { Text("保存 geosite") }
-                            }
-                            // ipcidr 列表
-                            Column(Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
-                                Text("命中这些 IP 段时认为污染（如 240.0.0.0/4）", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                var ipcidrText by remember { mutableStateOf(settings.dnsFallbackIpcidr.joinToString("\n")) }
-                                OutlinedTextField(
-                                    value = ipcidrText, onValueChange = { ipcidrText = it },
-                                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-                                    minLines = 2,
-                                    textStyle = MaterialTheme.typography.bodySmall,
-                                )
-                                Spacer(Modifier.height(4.dp))
-                                androidx.compose.material3.OutlinedButton(
-                                    onClick = {
-                                        val ipcidrs = ipcidrText.lines().map { it.trim() }.filter { it.isNotEmpty() }
-                                        store.updateSettings(settings.copy(dnsFallbackIpcidr = ipcidrs))
-                                    },
-                                ) { Text("保存 ipcidr") }
-                            }
-                            // domain 列表
-                            Column(Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
-                                Text("命中这些域名时认为污染（如 +.google.com）", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                var domainText by remember { mutableStateOf(settings.dnsFallbackDomain.joinToString("\n")) }
-                                OutlinedTextField(
-                                    value = domainText, onValueChange = { domainText = it },
-                                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-                                    minLines = 2,
-                                    textStyle = MaterialTheme.typography.bodySmall,
-                                )
-                                Spacer(Modifier.height(4.dp))
-                                androidx.compose.material3.OutlinedButton(
-                                    onClick = {
-                                        val domains = domainText.lines().map { it.trim() }.filter { it.isNotEmpty() }
-                                        store.updateSettings(settings.copy(dnsFallbackDomain = domains))
-                                    },
-                                ) { Text("保存 domain") }
-                            }
-                            // geoip 污染判定：用启用的 China IP 资源作为「国内段」白名单
-                            SbSwitchItem(
-                                title = "GeoIP 污染判定",
-                                subtitle = "解析结果落在国内 IP 段时保留主 DNS；否则按上面的过滤规则切 fallback（需先在资源管理里配置 China IP 列表）",
-                                checked = settings.dnsFallbackGeoip,
-                            ) { store.updateSettings(settings.copy(dnsFallbackGeoip = it)) }
-                        }
-                    }
-                    // fakeIP filter
-                    item {
-                        Column(Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
-                            Text("fakeIP 排除域名", style = MaterialTheme.typography.labelLarge)
-                            Text("这些域名不走 fakeIP，直接返回真实 IP（参考 FlClash fake-ip-filter）", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Spacer(Modifier.height(4.dp))
-                            var fakeipText by remember { mutableStateOf(settings.dnsFakeipFilter.joinToString("\n")) }
-                            OutlinedTextField(
-                                value = fakeipText, onValueChange = { fakeipText = it },
-                                modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp),
-                                minLines = 3,
-                                textStyle = MaterialTheme.typography.bodySmall,
-                            )
-                            Spacer(Modifier.height(4.dp))
-                            Text("示例：*.lan / stun.* / +.pool.ntp.org /+.stun.*", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Spacer(Modifier.height(4.dp))
-                            androidx.compose.material3.OutlinedButton(
-                                onClick = {
-                                    val filters = fakeipText.lines().map { it.trim() }.filter { it.isNotEmpty() }
-                                    store.updateSettings(settings.copy(dnsFakeipFilter = filters))
-                                },
-                            ) { Text("保存") }
-                        }
-                    }
-                    // fakeIP 排除正则（FlClash/Bettbox 的 fake-ip-filter-pattern）
-                    item {
-                        Column(Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
-                            Text("fakeIP 排除正则（fakeip-filter-pattern）", style = MaterialTheme.typography.labelLarge)
-                            Text("正则匹配的域名不走 fakeIP，优先于上方域名列表（参考 FlClash / Bettbox）", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Spacer(Modifier.height(4.dp))
-                            var patternText by remember { mutableStateOf(settings.dnsFakeipFilterPatterns.joinToString("\n")) }
-                            OutlinedTextField(
-                                value = patternText, onValueChange = { patternText = it },
-                                modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp),
-                                minLines = 3,
-                                textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace),
-                            )
-                            Spacer(Modifier.height(4.dp))
-                            Text("示例：\\n'.*\\\\.local$' / 'stun\\\\..*' / '\\.lan$' / '\\+\\.stun\\\\.qq\\\\.com'", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Spacer(Modifier.height(4.dp))
-                            androidx.compose.material3.OutlinedButton(
-                                onClick = {
-                                    val patterns = patternText.lines().map { it.trim() }.filter { it.isNotEmpty() }
-                                    store.updateSettings(settings.copy(dnsFakeipFilterPatterns = patterns))
-                                },
-                            ) { Text("保存") }
-                        }
-                    }
-                    // nameserver-policy
-                    item {
-                        Column(Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
-                            Text("nameserver-policy（按域名指定 DNS）", style = MaterialTheme.typography.labelLarge)
-                            Text("格式：key=value，每行一条。key 支持域名通配符 / geosite: 规则；优先级高于默认服务器", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Spacer(Modifier.height(4.dp))
-                            var policyText by remember { mutableStateOf(settings.dnsNameserverPolicy.joinToString("\n")) }
-                            OutlinedTextField(
-                                value = policyText, onValueChange = { policyText = it },
-                                modifier = Modifier.fillMaxWidth().heightIn(min = 96.dp),
-                                minLines = 5,
-                                textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace),
-                            )
-                            Spacer(Modifier.height(4.dp))
-                            Text("示例：\n'geosite:cn': 'https://doh.pub/dns-query'\n'+.internal': '10.0.0.1'\n'*.baidu.com': '223.5.5.5'", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Spacer(Modifier.height(4.dp))
-                            androidx.compose.material3.OutlinedButton(
-                                onClick = {
-                                    val policies = policyText.lines().map { it.trim() }.filter { it.isNotEmpty() && it.contains("=") }
-                                    store.updateSettings(settings.copy(dnsNameserverPolicy = policies))
-                                },
-                            ) { Text("保存") }
-                        }
                     }
                 }
                 SbSpacer()
             }
-
             // ---- DPI 硬化：TLS 分片（参考 LxBox 016）----
             item {
                 SbGroup(title = "DPI 硬化") {
@@ -698,91 +534,16 @@ fun SettingsScreen() {
                 SbSpacer()
             }
 
-            // ---- 资源管理（与路由规则/DNS 规则功能重叠，默认收起以精简设置页）----
+            // ---- China IP 资源：已并入「路由 → 规则集」管理，这里只留跳转入口 ----
             item {
-                var showResources by rememberSaveable { mutableStateOf(false) }
-                SbGroup(title = "资源管理（${settings.resources.size}）") {
+                SbGroup(title = "China IP 资源") {
                     item {
                         SbItem(
-                            title = if (showResources) "收起资源管理" else "展开资源管理",
-                            subtitle = "IP 列表 / GeoIP / 规则集；路由与 DNS 规则已覆盖大多数场景",
-                            icon = if (showResources) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                            onClick = { showResources = !showResources },
+                            title = "China IP 列表（${settings.resources.size}）",
+                            subtitle = "已并入 路由 → 规则集，命中这些 IP 的连接直连",
+                            icon = Icons.Filled.Dns,
+                            onClick = onOpenRouteResources,
                         )
-                    }
-                    if (!showResources) return@SbGroup
-                    item {
-                        SbItem(
-                            title = "添加资源",
-                            subtitle = "新增 IP 列表/规则集等资源条目",
-                            icon = Icons.Filled.Add,
-                            onClick = {
-                                store.updateSettings(settings.copy(resources = settings.resources + com.sbai.data.Resource()))
-                            },
-                        )
-                    }
-                    if (settings.resources.isNotEmpty()) {
-                        item {
-                            Column(Modifier.padding(horizontal = 8.dp)) {
-                                settings.resources.forEach { res ->
-                                    val gap = System.currentTimeMillis() - res.lastUpdatedAt
-                                    val ageStr = if (res.lastUpdatedAt == 0L) "未更新" else "${gap / 3600_000}h 前"
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(vertical = 6.dp)
-                                            .background(
-                                                if (res.enabled) MaterialTheme.colorScheme.surfaceContainerHighest
-                                                else MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.5f),
-                                                RoundedCornerShape(8.dp),
-                                            )
-                                            .padding(horizontal = 12.dp, vertical = 8.dp),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically,
-                                    ) {
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text(
-                                                res.name,
-                                                style = MaterialTheme.typography.bodyMedium,
-                                                color = if (res.enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
-                                            )
-                                            Text(
-                                                "${res.resType.displayName} · ${ageStr}" +
-                                                    (res.lastError?.let { " · 错误: $it" }.orEmpty()),
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            )
-                                        }
-                                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                            androidx.compose.material3.OutlinedButton(
-                                                onClick = { editingResource = res },
-                                                contentPadding = androidx.compose.foundation.layout.PaddingValues(8.dp),
-                                            ) {
-                                                Text("编辑", style = MaterialTheme.typography.labelSmall)
-                                            }
-                                            androidx.compose.material3.OutlinedButton(
-                                                onClick = {
-                                                    store.updateSettings(settings.copy(resources = settings.resources.map { r ->
-                                                        if (r.id == res.id) r.copy(enabled = !r.enabled) else r
-                                                    }))
-                                                },
-                                                contentPadding = androidx.compose.foundation.layout.PaddingValues(8.dp),
-                                            ) {
-                                                Text(if (res.enabled) "禁用" else "启用", style = MaterialTheme.typography.labelSmall)
-                                            }
-                                            androidx.compose.material3.OutlinedButton(
-                                                onClick = {
-                                                    store.updateSettings(settings.copy(resources = settings.resources.filter { it.id != res.id }))
-                                                },
-                                                contentPadding = androidx.compose.foundation.layout.PaddingValues(8.dp),
-                                            ) {
-                                                Text("删除", style = MaterialTheme.typography.labelSmall)
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
                     }
                 }
                 SbSpacer()
@@ -1224,21 +985,6 @@ fun SettingsScreen() {
             },
         )
     }
-
-    if (editingResource != null) {
-        ResourceEditorDialog(
-            resource = editingResource!!,
-            onDismiss = { editingResource = null },
-            onSave = { updated ->
-                store.updateSettings(
-                    settings.copy(resources = settings.resources.map { r ->
-                        if (r.id == updated.id) updated else r
-                    })
-                )
-                editingResource = null
-            },
-        )
-    }
 }
 
 /** 覆盖示例：常用「UI 没有生成的补充项」写法 */
@@ -1323,100 +1069,3 @@ private fun CustomConfigEditorDialog(
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
     )
 }
-
-// ---------------------------------------------------------------------------
-// 资源管理编辑器对话框
-// ---------------------------------------------------------------------------
-
-@Composable
-private fun ResourceEditorDialog(
-    resource: com.sbai.data.Resource,
-    onDismiss: () -> Unit,
-    onSave: (com.sbai.data.Resource) -> Unit,
-) {
-    var name by remember { mutableStateOf(resource.name) }
-    var resType by remember { mutableStateOf(resource.resType) }
-    var url by remember { mutableStateOf(resource.url) }
-    var content by remember { mutableStateOf(resource.content) }
-    var updateIntervalHours by remember { mutableStateOf(resource.updateIntervalHours.toString()) }
-    
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("编辑资源") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(
-                    value = name,
-                    onValueChange = { name = it },
-                    label = { Text("资源名称") },
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                
-                // 资源类型选择
-                // 只有 CHINA_IP 会被配置生成器消费（注入 direct 路由 + geoip 白名单），
-                // 其余类型此前的 UI 选项是死配置：建了/更新了但完全不参与配置生成。
-                // 这里只暴露真正生效的类型，避免用户误配。
-                Column {
-                    Text("资源类型", style = MaterialTheme.typography.labelLarge)
-                    Spacer(Modifier.height(4.dp))
-                    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                        listOf(com.sbai.data.ResourceType.CHINA_IP).forEachIndexed { i, type ->
-                            SegmentedButton(
-                                selected = resType == type,
-                                onClick = { resType = type },
-                                shape = SegmentedButtonDefaults.itemShape(index = i, count = 1),
-                            ) { Text(type.displayName) }
-                        }
-                    }
-                    Text(
-                        "China IP 列表生效后：① 命中这些 IP 的连接走直连；" +
-                            "② 开启 GeoIP 污染判定时作为国内段白名单。一行一条 CIDR。",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                
-                OutlinedTextField(
-                    value = url,
-                    onValueChange = { url = it },
-                    label = { Text("更新 URL（可选，留空则仅手动维护）") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                )
-                
-                OutlinedTextField(
-                    value = content,
-                    onValueChange = { content = it },
-                    label = { Text("资源内容（可手动编辑）") },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 120.dp),
-                    minLines = 6,
-                )
-                
-                OutlinedTextField(
-                    value = updateIntervalHours,
-                    onValueChange = { updateIntervalHours = it },
-                    label = { Text("更新间隔（小时）") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                )
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = {
-                val interval = updateIntervalHours.toIntOrNull() ?: 24
-                onSave(resource.copy(
-                    name = name.trim(),
-                    resType = resType,
-                    url = url.trim(),
-                    content = content,
-                    updateIntervalHours = interval,
-                ))
-            }) { Text("保存") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
-    )
-}
-

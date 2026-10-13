@@ -1692,4 +1692,130 @@ class SingBoxConfigGeneratorTest {
         assertTrue("ts1" in refs)
         assertTrue("n1" in refs)
     }
+
+    // ---- 内核兼容性回归：任何配置组合都不得产出内核会拒绝的字段 ----
+
+    /** 内核（sing-box 1.15 基线 / sb-lxf）里已移除或从未存在的 inbound / route / dns 字段 */
+    private val KERNEL_REJECTED_KEYS = mapOf(
+        "inbounds" to setOf("sniff", "sniff_override_destination"),
+        "route.rules" to setOf("sniff", "sniff_override_destination"),
+        "dns.servers" to setOf("sniff", "predefined"),
+    )
+
+    @Test
+    fun `no kernel-rejected keys leak into generated config`() {
+        // 覆盖常见配置组合：每种 TunStack × LB 开关 × DNS/fakeIP/规则集开关
+        val tunStacks = listOf(
+            com.sbai.data.TunStack.TSB_AI,
+            com.sbai.data.TunStack.MIXED,
+            com.sbai.data.TunStack.SYSTEM,
+            com.sbai.data.TunStack.GVISOR,
+            com.sbai.data.TunStack.GO, // 历史别名也必须安全
+        )
+        for (stack in tunStacks) {
+            for (lbOn in listOf(false, true)) {
+                for (fakeipOn in listOf(false, true)) {
+                    val state = AppState(
+                        settings = com.sbai.data.AppSettings(
+                            tunStack = stack,
+                            tunMultiQueue = true,
+                            dnsDisableCache = true,
+                            tlsFragment = true,
+                            tlsRecordFragment = true,
+                        ),
+                        loadBalance = LoadBalanceConfig(enabled = lbOn),
+                        dnsServers = if (fakeipOn) {
+                            listOf(
+                                DnsServer(
+                                    tag = "fake",
+                                    type = DnsServerType.FAKEIP,
+                                    address = "",
+                                    inet4Range = "198.18.0.0/15",
+                                ),
+                            )
+                        } else {
+                            listOf(DnsServer(tag = "d1", type = DnsServerType.UDP, address = "223.5.5.5"))
+                        },
+                        routeRules = listOf(
+                            RouteRule(
+                                name = "r1",
+                                action = RuleAction.ROUTE_PROXY,
+                                domains = listOf("a.com"),
+                            ),
+                        ),
+                        routeRuleSets = listOf(
+                            RouteRuleSet(tag = "rs1", type = RuleSetType.LOCAL, localContent = "{\"rules\":[]}"),
+                        ),
+                    )
+                    val cfg = parse(state)
+                    val label = "stack=${stack.name} lb=$lbOn fakeip=$fakeipOn"
+                    cfg["inbounds"]!!.jsonArray.forEach { inbound ->
+                        KERNEL_REJECTED_KEYS["inbounds"]!!.forEach { key ->
+                            assertNull("$label: inbound 含内核已移除字段 $key", inbound.jsonObject[key])
+                        }
+                    }
+                    cfg["dns"]!!.jsonObject["servers"]!!.jsonArray.forEach { server ->
+                        KERNEL_REJECTED_KEYS["dns.servers"]!!.forEach { key ->
+                            assertNull("$label: dns server 含内核不识别字段 $key", server.jsonObject[key])
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /** DNS server 的 detour / address_resolver 必须始终引用真实存在的 outbound 或 endpoint */
+    @Test
+    fun `dns references never point at a missing outbound across option combos`() {
+        val state = AppState(
+            proxyNodes = listOf(
+                ProxyNode(
+                    name = "n1",
+                    outboundJson = """{"type":"vless","tag":"n1","server":"1.2.3.4","server_port":443,"uuid":"x"}"""
+                ),
+            ),
+            dnsServers = listOf(
+                DnsServer(
+                    tag = "d1",
+                    type = DnsServerType.HTTPS,
+                    address = "https://dns.google/dns-query",
+                    detour = "n1",
+                    addressResolver = "n1",
+                ),
+            ),
+        )
+        val cfg = parse(state)
+        val outboundTags = outbounds(cfg).mapNotNull { it.jsonObject["tag"]?.jsonPrimitive?.content }.toSet()
+        cfg["dns"]!!.jsonObject["servers"]!!.jsonArray.forEach { s ->
+            listOf("detour", "address_resolver").forEach { key ->
+                s.jsonObject[key]?.jsonPrimitive?.content?.let { ref ->
+                    assertTrue("dns $key=$ref 引用了不存在的 outbound", ref in outboundTags)
+                }
+            }
+        }
+    }
+
+    /** route rule 的 outbound 引用必须存在（否则内核拒绝整份配置） */
+    @Test
+    fun `route rule outbound references always resolve`() {
+        val state = AppState(
+            proxyNodes = listOf(
+                ProxyNode(
+                    name = "n1",
+                    outboundJson = """{"type":"vless","tag":"n1","server":"1.2.3.4","server_port":443,"uuid":"x"}"""
+                ),
+            ),
+            routeRules = listOf(
+                RouteRule(name = "p", action = RuleAction.ROUTE_PROXY, domains = listOf("a.com"), outboundTag = "n1"),
+                RouteRule(name = "d", action = RuleAction.ROUTE_DIRECT, domains = listOf("b.com"), outboundTag = "direct"),
+            ),
+        )
+        val cfg = parse(state)
+        val outboundTags = outbounds(cfg).mapNotNull { it.jsonObject["tag"]?.jsonPrimitive?.content }.toSet()
+        routeRules(cfg).forEach { rule ->
+            rule.jsonObject["outbound"]?.jsonPrimitive?.content?.let { ref ->
+                assertTrue("route rule outbound=$ref 引用了不存在的 outbound", ref in outboundTags)
+            }
+        }
+    }
 }

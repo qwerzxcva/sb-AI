@@ -15,55 +15,30 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
-import com.kyant.backdrop.backdrops.LayerBackdrop
-import com.kyant.backdrop.drawBackdrop
-import com.kyant.backdrop.effects.blur
-import com.kyant.backdrop.effects.colorControls
-import com.kyant.backdrop.effects.opacity
-import com.kyant.backdrop.highlight.Highlight
-import com.kyant.backdrop.shadow.Shadow
+import androidx.compose.material3.Surface
 
 /**
- * Kototoro 同款液态玻璃悬浮底栏（vendored kyant backdrop）。
+ * Kototoro 同款液态玻璃悬浮底栏。
  *
- * 用法：页面内容用 `Modifier.layerBackdrop(pageBackdrop)` 捕获，底栏用本组件采样并磨砂。
- * 与 haze 的区别：backdrop 是真·采样下方内容做折射/模糊（液态玻璃），
- * 带 highlight 顶光 + 柔和投影 + vibrancy，通透感更强。
+ * 这里不再用 backdrop 采样折射：pageBackdrop 会把整个 NavHost 录制成
+ * GraphicsLayer，首页节点列表每次重组/滚动都触发一次全屏离屏录制 + blur，
+ * 实测是首页卡顿的主要来源。改用高透明度 Surface + 阴影达到相近的悬浮观感。
  */
 @Composable
 fun SbGlassBottomBar(
-    pageBackdrop: LayerBackdrop,
     items: List<SbNavItem>,
     currentRoute: String?,
     onSelect: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val colors = MaterialTheme.colorScheme
-    androidx.compose.material3.Surface(
-        modifier = modifier
-            .clip(CircleShape)
-            .drawBackdrop(
-                backdrop = pageBackdrop,
-                shape = { CircleShape },
-                effects = {
-                    // 性能与质感的平衡：JSON 解析卡顿根因已修（第十二批），恢复 blur 8px 质感。
-                    // 降采样 2x 兜底性能（录制像素量 1/4）。
-                    blur(radius = 8f)
-                    colorControls(brightness = 0.1f, saturation = 1.18f, contrast = 1.0f)
-                    opacity(0.5f)
-                },
-                highlight = {
-                    Highlight(width = 0.5.dp, alpha = 0.25f)
-                },
-                shadow = {
-                    Shadow(radius = 12.dp, color = Color.Black.copy(alpha = 0.18f))
-                },
-            ),
+    Surface(
+        modifier = modifier.clip(CircleShape),
         shape = CircleShape,
-        color = Color.Transparent,
+        color = colors.surfaceContainerHigh.copy(alpha = 0.92f),
         contentColor = colors.onSurface,
         tonalElevation = 0.dp,
-        shadowElevation = 0.dp,
+        shadowElevation = 12.dp,
     ) {
         NavigationBar(
             containerColor = Color.Transparent,

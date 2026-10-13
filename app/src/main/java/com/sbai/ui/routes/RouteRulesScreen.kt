@@ -49,6 +49,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -93,25 +94,28 @@ private val PROTOCOL_OPTIONS = listOf(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun RouteRulesScreen() {
+fun RouteRulesScreen(initialTab: Int = 0, openRuleSetManager: Boolean = false) {
     // 路由 / DNS 合二为一：底栏只保留「路由」一个入口，页面内双 Tab 切换。
     // 与早期 cf6e0c8 的结构一致（该结构后来被本机 sync 提交覆盖回旧版）。
-    var page by remember { mutableIntStateOf(0) }
+    var page by remember { mutableIntStateOf(initialTab) }
+    var externalRuleSetRequest by remember { mutableStateOf(openRuleSetManager) }
     Column(Modifier.fillMaxSize()) {
         TabRow(selectedTabIndex = page) {
             Tab(selected = page == 0, onClick = { page = 0 }, text = { Text("路由") })
             Tab(selected = page == 1, onClick = { page = 1 }, text = { Text("DNS") })
         }
         when (page) {
-            0 -> RouteRulesPage()
-            else -> DnsScreenBody()
+            0 -> RouteRulesPage(externalOpenRuleSetManager = externalRuleSetRequest) {
+                externalRuleSetRequest = false
+            }
+            else -> DnsScreenBody(initialTab = if (page == 1) 3 else 0)
         }
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun RouteRulesPage() {
+private fun RouteRulesPage(externalOpenRuleSetManager: Boolean = false, onExternalRequestHandled: () -> Unit = {}) {
     val context = LocalContext.current
     val store = remember { RuleStore.get(context) }
     val state by store.state.collectAsState()
@@ -119,7 +123,16 @@ private fun RouteRulesPage() {
 
     var editingRule by remember { mutableStateOf<RouteRule?>(null) }
     var editingRuleSet by remember { mutableStateOf<RouteRuleSet?>(null) }
+    var editingChinaIp by remember { mutableStateOf<com.sbai.data.Resource?>(null) }
     var showRuleSetManager by remember { mutableStateOf(false) }
+
+    // 设置页跳转过来时自动打开「规则集与资源」
+    LaunchedEffect(externalOpenRuleSetManager) {
+        if (externalOpenRuleSetManager) {
+            showRuleSetManager = true
+            onExternalRequestHandled()
+        }
+    }
 
     // 规则编辑器：整页（二级页面），提前 return 覆盖列表页
     editingRule?.let { rule ->
@@ -137,6 +150,25 @@ private fun RouteRulesPage() {
             onDismiss = { editingRule = null },
             onSave = { store.upsertRouteRule(it); editingRule = null },
             onCreateRuleSet = { editingRuleSet = RouteRuleSet() },
+        )
+        return
+    }
+
+    // China IP 资源编辑器：与规则集同一层级管理
+    editingChinaIp?.let { res ->
+        ChinaIpResourceEditorDialog(
+            resource = res,
+            onDismiss = { editingChinaIp = null },
+            onSave = { updated ->
+                val exists = state.settings.resources.any { it.id == updated.id }
+                val next = if (exists) {
+                    state.settings.resources.map { r -> if (r.id == updated.id) updated else r }
+                } else {
+                    state.settings.resources + updated
+                }
+                store.updateSettings(state.settings.copy(resources = next))
+                editingChinaIp = null
+            },
         )
         return
     }
@@ -188,8 +220,8 @@ private fun RouteRulesPage() {
                 SbGroup(title = "") {
                     item {
                         SbItem(
-                            title = "规则集（${state.routeRuleSets.size}）",
-                            subtitle = "被路由规则按 tag 引用；本身不参与匹配顺序",
+                            title = "规则集与资源（${state.routeRuleSets.size} + ${state.settings.resources.size}）",
+                            subtitle = "规则集被路由规则按 tag 引用；China IP 资源命中即直连",
                             icon = Icons.Filled.Dataset,
                             onClick = { showRuleSetManager = true },
                         )
@@ -254,11 +286,30 @@ private fun RouteRulesPage() {
     if (showRuleSetManager) {
         RuleSetManagerDialog(
             ruleSets = state.routeRuleSets,
+            chinaIpResources = state.settings.resources.filter {
+                it.resType == com.sbai.data.ResourceType.CHINA_IP
+            },
             onDismiss = { showRuleSetManager = false },
             onAdd = { editingRuleSet = RouteRuleSet() },
             onEdit = { editingRuleSet = it },
             onDelete = { store.deleteRuleSet(it.id) },
             onToggle = { store.upsertRuleSet(it.copy(enabled = !it.enabled)) },
+            onAddChinaIp = { editingChinaIp = com.sbai.data.Resource() },
+            onEditChinaIp = { editingChinaIp = it },
+            onToggleChinaIp = { res ->
+                val s = state.settings
+                store.updateSettings(
+                    s.copy(
+                        resources = s.resources.map { r ->
+                            if (r.id == res.id) r.copy(enabled = !r.enabled) else r
+                        },
+                    ),
+                )
+            },
+            onDeleteChinaIp = { res ->
+                val s = state.settings
+                store.updateSettings(s.copy(resources = s.resources.filter { it.id != res.id }))
+            },
         )
     }
 }
@@ -561,10 +612,12 @@ private fun RouteRuleEditorDialog(
             }
 
                 Text("动作", style = MaterialTheme.typography.labelLarge)
-                // 常用动作直接可选；内核级高级动作（嗅探/解析/劫持DNS/路由选项）
-                // 默认收起，展开后才出现——普通用户只需要 代理/直连/拦截。
+                // 官方语义（sing-box Rule Action）：final actions = route / reject /
+                // hijack-dns；non-final = sniff / resolve / route-options。
+                // UI 只把 route 的三种常见出口（代理 / 直连）与 reject（拦截）提为常用，
+                // 其余内核级动作默认收起，展开后才出现。
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    RuleAction.entries.filter { it in PRIMARY_ACTIONS }.forEach { a ->
+                    PRIMARY_ACTIONS.forEach { a ->
                         FilterChip(
                             selected = action == a,
                             onClick = { action = a },
@@ -574,7 +627,7 @@ private fun RouteRuleEditorDialog(
                 }
                 var advancedExpanded by remember { mutableStateOf(action !in PRIMARY_ACTIONS) }
                 TextButton(onClick = { advancedExpanded = !advancedExpanded }) {
-                    Text(if (advancedExpanded) "▾ 隐藏高级动作" else "▸ 高级动作（嗅探/解析/劫持DNS/路由选项）")
+                    Text(if (advancedExpanded) "▾ 隐藏高级动作" else "▸ 高级动作（嗅探 / 仅解析 / 劫持DNS / 路由选项）")
                 }
                 if (advancedExpanded) {
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -587,6 +640,12 @@ private fun RouteRuleEditorDialog(
                         }
                     }
                 }
+                // 当前动作的内核语义说明（避免用户凭中文名猜行为）
+                Text(
+                    actionSemantics(action),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 if (isBlock) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("拦截方式：", style = MaterialTheme.typography.labelLarge)
@@ -891,15 +950,20 @@ private fun JsonPasteDialog(
 @Composable
 private fun RuleSetManagerDialog(
     ruleSets: List<RouteRuleSet>,
+    chinaIpResources: List<com.sbai.data.Resource>,
     onDismiss: () -> Unit,
     onAdd: () -> Unit,
     onEdit: (RouteRuleSet) -> Unit,
     onDelete: (RouteRuleSet) -> Unit,
     onToggle: (RouteRuleSet) -> Unit,
+    onAddChinaIp: () -> Unit,
+    onEditChinaIp: (com.sbai.data.Resource) -> Unit,
+    onToggleChinaIp: (com.sbai.data.Resource) -> Unit,
+    onDeleteChinaIp: (com.sbai.data.Resource) -> Unit,
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("规则集") },
+        title = { Text("规则集与资源") },
         text = {
             Column(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
@@ -937,6 +1001,38 @@ private fun RuleSetManagerDialog(
                 if (ruleSets.isEmpty()) {
                     Text("暂无规则集。", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
+
+                Spacer(Modifier.height(8.dp))
+                Text("China IP 资源", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    "命中这些 IP 的连接走直连；开启 GeoIP 污染判定时作为国内段白名单。一行一条 CIDR。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                chinaIpResources.forEach { res ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(res.name.ifBlank { "China IP" }, style = MaterialTheme.typography.titleSmall)
+                            val lines = res.content.lines().count { it.isNotBlank() }
+                            Text(
+                                "$lines 条 CIDR" + (res.lastError?.let { " · 错误: $it" }.orEmpty()),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Switch(checked = res.enabled, onCheckedChange = { onToggleChinaIp(res) })
+                        TextButton(onClick = { onEditChinaIp(res) }) { Text("编辑") }
+                        IconButton(onClick = { onDeleteChinaIp(res) }) {
+                            Icon(Icons.Filled.Delete, contentDescription = "删除", tint = MaterialTheme.colorScheme.error)
+                        }
+                    }
+                }
+                if (chinaIpResources.isEmpty()) {
+                    Text("暂无 China IP 资源。", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             }
         },
         confirmButton = {
@@ -945,7 +1041,12 @@ private fun RuleSetManagerDialog(
                 Text("添加规则集")
             }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("关闭") } },
+        dismissButton = {
+            Row {
+                TextButton(onClick = onAddChinaIp) { Text("＋ China IP") }
+                TextButton(onClick = onDismiss) { Text("关闭") }
+            }
+        },
     )
 }
 
@@ -1057,6 +1158,84 @@ private fun RuleSetEditorDialog(
     }
 }
 
+// ---------------------------------------------------------------------------
+// China IP 资源编辑器（原「设置 → 资源管理」，现并入路由规则页统一管理）
+// ---------------------------------------------------------------------------
+
+@Composable
+private fun ChinaIpResourceEditorDialog(
+    resource: com.sbai.data.Resource,
+    onDismiss: () -> Unit,
+    onSave: (com.sbai.data.Resource) -> Unit,
+) {
+    var name by remember { mutableStateOf(resource.name) }
+    var url by remember { mutableStateOf(resource.url) }
+    var content by remember { mutableStateOf(resource.content) }
+    var updateIntervalHours by remember { mutableStateOf(resource.updateIntervalHours.toString()) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (resource.content.isBlank()) "添加 China IP 资源" else "编辑 China IP 资源") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "命中这些 IP 的连接走直连；开启 GeoIP 污染判定时作为国内段白名单。一行一条 CIDR。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("资源名称") },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = url,
+                    onValueChange = { url = it },
+                    label = { Text("更新 URL（可选，留空则仅手动维护）") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                )
+                OutlinedTextField(
+                    value = content,
+                    onValueChange = { content = it },
+                    label = { Text("资源内容（一行一条 CIDR）") },
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 160.dp),
+                    minLines = 6,
+                    textStyle = MaterialTheme.typography.bodySmall.copy(
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                    ),
+                )
+                OutlinedTextField(
+                    value = updateIntervalHours,
+                    onValueChange = { updateIntervalHours = it },
+                    label = { Text("更新间隔（小时）") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                        keyboardType = androidx.compose.ui.text.input.KeyboardType.Number,
+                    ),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                val interval = updateIntervalHours.toIntOrNull() ?: 24
+                onSave(
+                    resource.copy(
+                        name = name.trim().ifBlank { "China IP" },
+                        resType = com.sbai.data.ResourceType.CHINA_IP,
+                        url = url.trim(),
+                        content = content,
+                        updateIntervalHours = interval,
+                    ),
+                )
+            }) { Text("保存") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
+}
+
 @Composable
 private fun MultiLineField(label: String, value: String, onChange: (String) -> Unit) {
     OutlinedTextField(value = value, onValueChange = onChange, label = { Text(label) }, modifier = Modifier.fillMaxWidth(), minLines = 2)
@@ -1107,8 +1286,8 @@ private fun String.toLines(): List<String> =
     lines().map { it.trim() }.filter { it.isNotEmpty() }.distinct()
 
 /**
- * 规则编辑器里默认可见的动作。
- * 其余（嗅探 / 仅解析 / 劫持DNS / 路由选项）是内核级高级动作，
+ * 规则编辑器里默认可见的动作：官方 route 的两种常见出口 + reject。
+ * 其余（嗅探 / 仅解析 / 劫持DNS / 路由选项）是内核级动作，
  * 普通用户用不到，默认收起、展开后才出现。
  */
 private val PRIMARY_ACTIONS = setOf(
@@ -1116,3 +1295,14 @@ private val PRIMARY_ACTIONS = setOf(
     com.sbai.data.RuleAction.ROUTE_DIRECT,
     com.sbai.data.RuleAction.REJECT,
 )
+
+/** 每个动作对应的 sing-box 官方语义（Rule Action 文档） */
+private fun actionSemantics(action: RuleAction): String = when (action) {
+    RuleAction.ROUTE_PROXY -> "route：把连接交给指定 outbound（留空 = 跟随默认出口）"
+    RuleAction.ROUTE_DIRECT -> "route：把连接交给 direct 直连（留空 = direct）"
+    RuleAction.REJECT -> "reject：拒绝连接（TCP 回 RST / UDP 回 ICMP；也可改为直接丢弃）"
+    RuleAction.SNIFF -> "sniff：对连接做协议嗅探，不改路由（默认全部嗅探器、超时 300ms）"
+    RuleAction.RESOLVE -> "resolve：把目标域名解析成 IP，不改路由"
+    RuleAction.HIJACK_DNS -> "hijack-dns：把 DNS 请求劫持给 sing-box DNS 模块"
+    RuleAction.ROUTE_OPTIONS -> "route-options：只修改路由选项（override 地址/端口、TLS 分片等），非终结动作"
+}
