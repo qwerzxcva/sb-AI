@@ -55,12 +55,18 @@ data class RouteRule(
     val domainSuffixes: List<String> = emptyList(),   // 域名后缀
     val domainKeywords: List<String> = emptyList(),   // 域名关键词
     val domainRegexes: List<String> = emptyList(),    // 域名正则
+    /** 内置 geosite 分类（如 cn / geolocation-!cn / private）；内核内置，无需远程下载 */
+    val geosites: List<String> = emptyList(),
     val ipCidrs: List<String> = emptyList(),          // 目标 IP / CIDR（IP 规则）
+    /** 内置 geoip 分类（如 cn / private）；内核内置，无需远程下载 */
+    val geoips: List<String> = emptyList(),
     val ruleSetTags: List<String> = emptyList(),      // 引用的规则集（含远程 IP 规则集 / URL）
 
     // network / protocol 允许多选
     val networks: List<String> = emptyList(),         // tcp / udp / icmp
     val protocols: List<String> = emptyList(),        // http / tls / quic / dns / ...
+    /** IP 版本限制：空 = 不限；4 / 6 = 只匹配对应版本 */
+    val ipVersion: Int = 0,
 
     val ports: List<Int> = emptyList(),               // 目标端口
     val portRanges: List<String> = emptyList(),       // 目标端口段 "8000:9000"
@@ -118,7 +124,8 @@ data class RouteRule(
 
     val hasDomainContent: Boolean
         get() = domains.isNotEmpty() || domainSuffixes.isNotEmpty() ||
-                domainKeywords.isNotEmpty() || domainRegexes.isNotEmpty()
+                domainKeywords.isNotEmpty() || domainRegexes.isNotEmpty() ||
+                geosites.isNotEmpty()
 
     /**
      * 是否填了任何匹配条件。
@@ -126,7 +133,8 @@ data class RouteRule(
      * 生成器直接跳过这种规则。
      */
     val hasAnyCondition: Boolean
-        get() = hasDomainContent || ipCidrs.isNotEmpty() || ruleSetTags.isNotEmpty() ||
+        get() = hasDomainContent || ipCidrs.isNotEmpty() || geoips.isNotEmpty() ||
+                ruleSetTags.isNotEmpty() ||
                 networks.isNotEmpty() || protocols.isNotEmpty() || ports.isNotEmpty() ||
                 portRanges.isNotEmpty() || sourceIpCidrs.isNotEmpty() ||
                 sourcePorts.isNotEmpty() || sourcePortRanges.isNotEmpty() ||

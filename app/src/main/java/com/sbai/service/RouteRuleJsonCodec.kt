@@ -110,7 +110,9 @@ object RouteRuleJsonCodec {
                     domainSuffixes = strings("domain_suffix"),
                     domainKeywords = strings("domain_keyword"),
                     domainRegexes = strings("domain_regex"),
+                    geosites = strings("geosite"),
                     ipCidrs = strings("ip_cidr"),
+                    geoips = strings("geoip"),
                     ruleSetTags = strings("rule_set"),
                     networks = strings("network"),
                     protocols = strings("protocol"),
@@ -158,9 +160,11 @@ object RouteRuleJsonCodec {
                 if (rule.domainSuffixes.isNotEmpty()) b.putJsonArray("domain_suffix") { rule.domainSuffixes.forEach { add(it) } }
                 if (rule.domainKeywords.isNotEmpty()) b.putJsonArray("domain_keyword") { rule.domainKeywords.forEach { add(it) } }
                 if (rule.domainRegexes.isNotEmpty()) b.putJsonArray("domain_regex") { rule.domainRegexes.forEach { add(it) } }
+                if (rule.geosites.isNotEmpty()) b.putJsonArray("geosite") { rule.geosites.forEach { add(it) } }
             }
             if (ip) {
                 if (rule.ipCidrs.isNotEmpty()) b.putJsonArray("ip_cidr") { rule.ipCidrs.forEach { add(it) } }
+                if (rule.geoips.isNotEmpty()) b.putJsonArray("geoip") { rule.geoips.forEach { add(it) } }
                 if (rule.ruleSetTags.isNotEmpty()) b.putJsonArray("rule_set") { rule.ruleSetTags.forEach { add(it) } }
             }
             if (transport) {

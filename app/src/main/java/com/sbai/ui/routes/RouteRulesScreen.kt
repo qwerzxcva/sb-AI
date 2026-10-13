@@ -443,6 +443,8 @@ private fun ruleSummary(rule: RouteRule): String = buildList {
     if (rule.domainKeywords.isNotEmpty()) add("关键词×${rule.domainKeywords.size}")
     if (rule.domainRegexes.isNotEmpty()) add("正则×${rule.domainRegexes.size}")
     if (rule.ipCidrs.isNotEmpty()) add("IP×${rule.ipCidrs.size}")
+    if (rule.geosites.isNotEmpty()) add("geosite×${rule.geosites.size}")
+    if (rule.geoips.isNotEmpty()) add("geoip×${rule.geoips.size}")
     if (rule.ruleSetTags.isNotEmpty()) add("规则集[${rule.ruleSetTags.joinToString()}]")
     if (rule.networks.isNotEmpty()) add("network:${rule.networks.joinToString()}")
     if (rule.protocols.isNotEmpty()) add("protocol:${rule.protocols.joinToString()}")
@@ -471,7 +473,9 @@ private fun RouteRuleEditorDialog(
     var suffixes by remember { mutableStateOf(initial.domainSuffixes.joinToString("\n")) }
     var keywords by remember { mutableStateOf(initial.domainKeywords.joinToString("\n")) }
     var regexes by remember { mutableStateOf(initial.domainRegexes.joinToString("\n")) }
+    var geosites by remember { mutableStateOf(initial.geosites.joinToString("\n")) }
     var ipCidrs by remember { mutableStateOf(initial.ipCidrs.joinToString("\n")) }
+    var geoips by remember { mutableStateOf(initial.geoips.joinToString("\n")) }
     var sets by remember { mutableStateOf(initial.ruleSetTags.joinToString("\n")) }
     var networks by remember { mutableStateOf(initial.networks.toSet()) }
     var protocols by remember { mutableStateOf(initial.protocols.toSet()) }
@@ -538,7 +542,9 @@ private fun RouteRuleEditorDialog(
                 domainSuffixes = suffixes.toLines(),
                 domainKeywords = keywords.toLines(),
                 domainRegexes = regexes.toLines(),
+                geosites = geosites.toLines(),
                 ipCidrs = ipCidrs.toLines(),
+                geoips = geoips.toLines(),
                 ruleSetTags = sets.toLines(),
                 networks = networks.toList().sorted(),
                 protocols = protocols.toList().sorted(),
@@ -676,10 +682,17 @@ private fun RouteRuleEditorDialog(
                     MultiLineField("域名后缀（一行一条）", suffixes) { suffixes = it }
                     MultiLineField("域名关键词（一行一条）", keywords) { keywords = it }
                     MultiLineField("域名正则（一行一条）", regexes) { regexes = it }
+                    MultiLineField("内置 geosite（一行一条，如 cn / geolocation-!cn / private）", geosites) { geosites = it }
+                    Text(
+                        "geosite 是内核内置分类，无需下载远程规则集；geolocation-!cn 表示「非中国站点」。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
 
                 EditorSection("目标 IP / 规则集") {
                     MultiLineField("目标 IP / CIDR（一行一条）", ipCidrs) { ipCidrs = it }
+                    MultiLineField("内置 geoip（一行一条，如 cn / private）", geoips) { geoips = it }
                     MultiLineField("规则集 tag 或 URL（一行一条；URL 自动建远程规则集）", sets) { sets = it }
                     TextButton(onClick = onCreateRuleSet) { Text("＋ 新建规则集") }
                     Row(verticalAlignment = Alignment.CenterVertically) {

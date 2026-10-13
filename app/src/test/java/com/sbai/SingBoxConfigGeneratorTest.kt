@@ -1818,4 +1818,36 @@ class SingBoxConfigGeneratorTest {
             }
         }
     }
+
+    /** 内置 geosite / geoip 必须下发为内核字段，且规则不得被当空规则丢弃 */
+    @Test
+    fun `builtin geosite and geoip are emitted and not dropped`() {
+        val state = AppState(
+            routeRules = listOf(
+                RouteRule(
+                    name = "cn-direct",
+                    action = RuleAction.ROUTE_DIRECT,
+                    geosites = listOf("cn", "private"),
+                    geoips = listOf("cn"),
+                ),
+            ),
+        )
+        val cfg = parse(state)
+        val rule = routeRules(cfg).first { it.jsonObject["outbound"]?.jsonPrimitive?.content == "direct" }.jsonObject
+        val geosite = rule["geosite"]!!.jsonArray.map { it.jsonPrimitive.content }
+        val geoip = rule["geoip"]!!.jsonArray.map { it.jsonPrimitive.content }
+        assertEquals(listOf("cn", "private"), geosite)
+        assertEquals(listOf("cn"), geoip)
+    }
+
+    /** 只填 geosite 的规则也必须被生成（hasAnyCondition 需认识新字段） */
+    @Test
+    fun `geosite-only rule is not dropped as empty`() {
+        val rule = RouteRule(
+            name = "gs",
+            action = RuleAction.ROUTE_PROXY,
+            geosites = listOf("geolocation-!cn"),
+        )
+        assertTrue("只填 geosite 的规则被当成空规则丢弃", rule.hasAnyCondition)
+    }
 }

@@ -1,6 +1,8 @@
 package com.kyant.backdrop.highlight
 
+import android.os.Build
 import androidx.annotation.FloatRange
+import androidx.annotation.RequiresApi
 import androidx.compose.foundation.shape.CornerBasedShape
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.Stable
@@ -24,6 +26,7 @@ interface HighlightStyle {
 
     val blendMode: BlendMode
 
+    @RequiresApi(Build.VERSION_CODES.TIRAMISU)
     fun DrawScope.createShader(
         shape: Shape,
         runtimeShaderCache: RuntimeShaderCache

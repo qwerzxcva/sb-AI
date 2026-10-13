@@ -904,9 +904,11 @@ object SingBoxConfigGenerator {
                     if (r.domainSuffixes.isNotEmpty()) putJsonArray("domain_suffix") { r.domainSuffixes.forEach(::add) }
                     if (r.domainKeywords.isNotEmpty()) putJsonArray("domain_keyword") { r.domainKeywords.forEach(::add) }
                     if (r.domainRegexes.isNotEmpty()) putJsonArray("domain_regex") { r.domainRegexes.forEach(::add) }
+                    if (r.geosites.isNotEmpty()) putJsonArray("geosite") { r.geosites.forEach(::add) }
                 }
                 Cat.IP -> {
                     if (r.ipCidrs.isNotEmpty()) putJsonArray("ip_cidr") { r.ipCidrs.forEach(::add) }
+                    if (r.geoips.isNotEmpty()) putJsonArray("geoip") { r.geoips.forEach(::add) }
                     val tags = resolveRuleSetTags(r)
                     if (tags.isNotEmpty()) putJsonArray("rule_set") { tags.forEach(::add) }
                     if (r.ipIsPrivate) put("ip_is_private", true)
@@ -918,6 +920,7 @@ object SingBoxConfigGenerator {
                     if (r.sourceIpIsPrivate) put("source_ip_is_private", true)
                 }
                 Cat.TRANSPORT -> {
+                    if (r.ipVersion == 4 || r.ipVersion == 6) put("ip_version", r.ipVersion)
                     if (r.networks.isNotEmpty()) putJsonArray("network") { r.networks.forEach(::add) }
                     if (r.protocols.isNotEmpty()) putJsonArray("protocol") { r.protocols.forEach(::add) }
                     if (r.ports.isNotEmpty()) putJsonArray("port") { r.ports.forEach(::add) }

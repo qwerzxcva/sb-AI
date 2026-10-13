@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -18,6 +19,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -26,6 +28,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.background
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.Article
 import androidx.compose.material.icons.filled.Badge
@@ -47,6 +50,7 @@ import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Route
 import androidx.compose.material.icons.filled.Http
 import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.VpnKey
 import androidx.compose.material.icons.filled.CheckCircle
@@ -58,6 +62,9 @@ import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SegmentedButton
@@ -78,6 +85,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.graphics.vector.ImageVector
+import com.sbai.ui.components.BottomBarClearance
+import com.sbai.ui.components.BottomBarController
+import com.sbai.ui.components.RestoreBottomBarOnDispose
 import com.sbai.data.AppState
 import com.sbai.data.ConfigProfile
 import com.sbai.data.LogLevel
@@ -158,14 +169,27 @@ fun SettingsScreen(onOpenDnsAdvanced: () -> Unit = {}, onOpenRouteResources: () 
         }.onFailure { backupMessage = "导入失败: ${it.message}" }
     }
 
-    Scaffold { padding ->
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .padding(horizontal = tokens.screenHorizontalPadding),
-        ) {
-            item { Spacer(Modifier.height(16.dp)) }
+    // 设置二级页：索引页只列分类，详情页承载原有全部分组。
+    // 索引页是新增的薄层，详情页内容与原 LazyColumn 完全一致（零行为变更）。
+    var settingsPage by remember { mutableStateOf<String?>(null) }
+
+    if (settingsPage == null) {
+        SettingsIndexPage(
+            onOpenPage = { settingsPage = it },
+            onOpenDnsAdvanced = onOpenDnsAdvanced,
+            onOpenRouteResources = onOpenRouteResources,
+        )
+    } else {
+        SettingsDetailPage(
+            title = SETTINGS_PAGE_TITLES[settingsPage] ?: "设置",
+            onBack = { settingsPage = null },
+        ) { padding ->
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+                    .padding(horizontal = tokens.screenHorizontalPadding),
+            ) {
 
             // ---- 外观 ----
             item {
@@ -861,8 +885,10 @@ fun SettingsScreen(onOpenDnsAdvanced: () -> Unit = {}, onOpenRouteResources: () 
                 }
                 Spacer(Modifier.height(120.dp))
             }
+            }
         }
     }
+
 
     if (showAppPicker) {
         AppPickerDialog(
@@ -1068,4 +1094,146 @@ private fun CustomConfigEditorDialog(
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
     )
+}
+
+// ---------------------------------------------------------------------------
+// 设置二级页：索引页（分类列表）+ 详情页外壳
+// 详情页内容沿用原有全部分组，索引页只是新增的导航薄层。
+// ---------------------------------------------------------------------------
+
+/** 索引页分类 key → 详情页标题 */
+private val SETTINGS_PAGE_TITLES = mapOf(
+    "all" to "设置",
+    "appearance" to "外观",
+    "kernel" to "内核与网络",
+    "proxy" to "代理出口",
+    "dns" to "DNS 高级",
+    "dpi" to "DPI 硬化",
+    "log" to "日志",
+    "perapp" to "分应用代理",
+    "chinaip" to "China IP 资源",
+    "override" to "配置覆盖",
+    "profiles" to "配置快照",
+    "subid" to "订阅身份",
+    "backup" to "备份与恢复",
+    "boot" to "启动",
+    "about" to "关于",
+)
+
+/**
+ * 设置索引页：把原一屏 13 个分组收敛成分类列表。
+ * 「全部设置」保留原样入口（不想分层的老用户路径不变）。
+ */
+@Composable
+private fun SettingsIndexPage(
+    onOpenPage: (String) -> Unit,
+    onOpenDnsAdvanced: () -> Unit,
+    onOpenRouteResources: () -> Unit,
+) {
+    val tokens = LocalSbStyleTokens.current
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = tokens.screenHorizontalPadding),
+        contentPadding = PaddingValues(bottom = BottomBarClearance),
+    ) {
+        item { Spacer(Modifier.height(16.dp)) }
+
+        // 已并入路由页的功能：给跳转入口，不在设置里重复实现
+        item {
+            SbGroup(title = "已并入路由页") {
+                item {
+                    SbItem(
+                        title = "DNS 高级",
+                        subtitle = "fallback / fakeIP 过滤 / nameserver-policy → 路由 → DNS → 高级",
+                        icon = Icons.Filled.Dns,
+                        onClick = onOpenDnsAdvanced,
+                    )
+                }
+                item {
+                    SbItem(
+                        title = "China IP 资源",
+                        subtitle = "命中即直连 → 路由 → 规则集与资源",
+                        icon = Icons.Filled.Dns,
+                        onClick = onOpenRouteResources,
+                    )
+                }
+            }
+            SbSpacer()
+        }
+
+        item {
+            Text(
+                "设置分类",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            )
+        }
+
+        item {
+            SbGroup(title = "") {
+                item {
+                    SbItem(
+                        title = "全部设置",
+                        subtitle = "展开所有分组（原有视图）",
+                        icon = Icons.Filled.Tune,
+                        onClick = { onOpenPage("all") },
+                    )
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+        }
+
+        val categories = listOf(
+            Triple("appearance", "外观", Icons.Filled.Palette),
+            Triple("kernel", "内核与网络", Icons.Filled.NetworkCheck),
+            Triple("proxy", "代理出口", Icons.Filled.Balance),
+            Triple("dpi", "DPI 硬化", Icons.Filled.Security),
+            Triple("perapp", "分应用代理", Icons.Filled.Apps),
+            Triple("override", "配置覆盖", Icons.Filled.Code),
+            Triple("profiles", "配置快照", Icons.Filled.Save),
+            Triple("subid", "订阅身份", Icons.Filled.VpnKey),
+            Triple("backup", "备份与恢复", Icons.Filled.Restore),
+            Triple("log", "日志", Icons.Filled.Article),
+            Triple("boot", "启动", Icons.Filled.PowerSettingsNew),
+            Triple("about", "关于", Icons.Filled.Info),
+        )
+        items(categories, key = { it.first }) { (key, title, icon) ->
+            SbGroup(title = "") {
+                item {
+                    SbItem(
+                        title = title,
+                        icon = icon,
+                        onClick = { onOpenPage(key) },
+                    )
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+        }
+    }
+}
+
+/** 设置详情页外壳：TopAppBar + 返回键 */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SettingsDetailPage(
+    title: String,
+    onBack: () -> Unit,
+    content: @Composable (PaddingValues) -> Unit,
+) {
+    BackHandler(enabled = true) { BottomBarController.show(); onBack() }
+    RestoreBottomBarOnDispose()
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text(title) },
+                navigationIcon = {
+                    IconButton(onClick = { BottomBarController.show(); onBack() }) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                    }
+                },
+            )
+        },
+    ) { padding -> content(padding) }
 }
