@@ -380,20 +380,24 @@ private fun aggregate(
 
 @Composable
 private fun TrafficByRuleCard(connections: List<SbCommandClient.ConnectionEntry>) {
+    // 聚合要对整个连接列表做 groupBy + sumOf + 排序；不缓存的话
+    // status 每秒变化都会让两张卡各重算一遍，即使当前 tab 不显示它们。
+    val rows = remember(connections) { aggregate(connections) { it.rule } }
     AggregationCard(
         title = "按路由规则统计",
         subtitle = "${connections.size} 条活跃连接",
-        rows = aggregate(connections) { it.rule },
+        rows = rows,
         emptyText = "暂无连接数据",
     )
 }
 
 @Composable
 private fun TrafficByOutboundCard(connections: List<SbCommandClient.ConnectionEntry>) {
+    val rows = remember(connections) { aggregate(connections) { it.outbound } }
     AggregationCard(
         title = "按出口统计",
         subtitle = "各出口承载的流量",
-        rows = aggregate(connections) { it.outbound },
+        rows = rows,
         emptyText = "暂无连接数据",
     )
 }

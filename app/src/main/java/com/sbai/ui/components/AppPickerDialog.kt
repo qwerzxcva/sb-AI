@@ -21,7 +21,9 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -31,6 +33,8 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.graphics.drawable.toBitmap
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /** 已安装应用选择器（带图标 + 搜索 + 多选） */
 data class AppEntry(
@@ -51,20 +55,30 @@ fun AppPickerDialog(
     var query by remember { mutableStateOf("") }
     var current by remember { mutableStateOf(selected) }
 
+    // 应用列表（名称/包名）同步加载，图标异步加载：
+    // getInstalledApplications + loadIcon 对每个应用都要解码一份 Bitmap，
+    // 主线程同步做会让对话框打开时明显卡顿。先出列表，图标后台逐条补。
     val apps = remember {
         val pm = context.packageManager
         pm.getInstalledApplications(PackageManager.GET_META_DATA)
             .asSequence()
             .filter { includeSystem || it.flags and ApplicationInfo.FLAG_SYSTEM == 0 }
-            .map { info ->
-                AppEntry(
-                    packageName = info.packageName,
-                    label = info.loadLabel(pm).toString(),
-                    icon = runCatching { info.loadIcon(pm).toBitmap(96, 96) }.getOrNull(),
-                )
-            }
+            .map { info -> AppEntry(info.packageName, info.loadLabel(pm).toString(), null) }
             .sortedBy { it.label.lowercase() }
             .toList()
+    }
+    val iconCache = remember { mutableStateMapOf<String, android.graphics.Bitmap>() }
+    LaunchedEffect(apps) {
+        withContext(Dispatchers.IO) {
+            val pm = context.packageManager
+            apps.forEach { entry ->
+                if (iconCache.containsKey(entry.packageName)) return@forEach
+                val bmp = runCatching {
+                    pm.getApplicationIcon(entry.packageName).toBitmap(96, 96)
+                }.getOrNull()
+                if (bmp != null) iconCache[entry.packageName] = bmp
+            }
+        }
     }
     val filtered = remember(query, apps) {
         if (query.isBlank()) apps else apps.filter {
@@ -109,9 +123,11 @@ fun AppPickerDialog(
                                     current = if (checked) current + app.packageName else current - app.packageName
                                 },
                             )
-                            if (app.icon != null) {
+                            // 图标从异步缓存取；未加载完成时占位保持对齐，加载后自动补上
+                            val icon = iconCache[app.packageName]
+                            if (icon != null) {
                                 Image(
-                                    bitmap = app.icon.asImageBitmap(),
+                                    bitmap = icon.asImageBitmap(),
                                     contentDescription = null,
                                     modifier = Modifier.size(32.dp),
                                 )

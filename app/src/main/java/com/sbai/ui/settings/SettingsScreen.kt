@@ -879,7 +879,13 @@ fun SettingsScreen() {
                         }
                         item {
                             val jsonStr = settings.configOverride.json.trim()
-                            val isValid = runCatching { kotlinx.serialization.json.Json.parseToJsonElement(jsonStr) }.isSuccess
+                            // JSON 校验按内容缓存：SettingsScreen 观察整个 AppState，
+                            // 节点延迟等无关变化会让这里每次重组都把整份 JSON 重解析一遍。
+                            val isValid = remember(jsonStr) {
+                                jsonStr.isEmpty() || runCatching {
+                                    kotlinx.serialization.json.Json.parseToJsonElement(jsonStr)
+                                }.isSuccess
+                            }
                             SbItem(
                                 title = "JSON 校验",
                                 subtitle = if (isValid) "格式正确" else "格式错误",
