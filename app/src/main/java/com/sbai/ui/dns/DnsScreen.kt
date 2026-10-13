@@ -721,6 +721,7 @@ private fun DnsRuleEditorDialog(
     var disableCache by remember { mutableStateOf(initial.disableCache) }
     var rewriteTtl by remember { mutableStateOf(initial.rewriteTtl?.toString() ?: "") }
     var clientSubnet by remember { mutableStateOf(initial.clientSubnet ?: "") }
+    var removeClientSubnet by remember { mutableStateOf(initial.removeClientSubnet) }
     var ruleAction by remember { mutableStateOf(initial.action.ifBlank { "route" }) }
     var rcode by remember { mutableStateOf(initial.rcode) }
     var answers by remember { mutableStateOf(initial.answers.joinToString("\n")) }
@@ -752,6 +753,7 @@ private fun DnsRuleEditorDialog(
                 disableCache = disableCache,
                 rewriteTtl = rewriteTtl.toIntOrNull(),
                 clientSubnet = clientSubnet.ifBlank { null },
+                removeClientSubnet = removeClientSubnet,
                 action = ruleAction,
                 rcode = rcode,
                 answers = answers.toLines(),
@@ -908,7 +910,20 @@ private fun DnsRuleEditorDialog(
                 OutlinedTextField(
                     value = clientSubnet, onValueChange = { clientSubnet = it },
                     label = { Text("本条规则 ECS client_subnet（可选）") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+                    enabled = !removeClientSubnet,
                 )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = removeClientSubnet, onCheckedChange = { removeClientSubnet = it })
+                    Spacer(Modifier.size(8.dp))
+                    Column {
+                        Text("移除查询里的 ECS 记录")
+                        Text(
+                            "remove_client_subnet：与上面的 client_subnet 互斥；打开后不透传客户端所在网段",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
                 OutlinedTextField(
                     value = timeout, onValueChange = { timeout = it },
                     label = { Text("查询超时（如 4s，可选）") }, singleLine = true, modifier = Modifier.fillMaxWidth(),

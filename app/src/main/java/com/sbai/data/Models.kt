@@ -413,7 +413,11 @@ data class Subscription(
     val removeInsecure: Boolean = false,
     /** 去除信息节点（机场把流量/到期/官网公告伪装成代理节点，名称含"剩余流量""套餐到期""官网"等） */
     val removeInfoNodes: Boolean = true,
-    /** 保留不可达分组（urlTest 后仍有可用节点才移除） */
+    /**
+     * 已废弃：原意「保留不可达分组」，但从未实现，且与 removeUnavailable
+     * 语义相反（用户已用后者表达「移除不可用」）。保留字段只为兼容旧配置。
+     */
+    @Deprecated("未实现且与 removeUnavailable 语义重复，勿在新代码中使用")
     val keepWorking: Boolean = false,
     /** 更新后自动测速（需内核运行；测速后可移除不可用节点/按延迟排序） */
     val urlTestAfterUpdate: Boolean = false,
