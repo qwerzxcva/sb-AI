@@ -42,6 +42,13 @@ class SbAiVpnService : VpnService() {
         if (intent?.action == SERVICE_INTERFACE) super.onBind(intent) else null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // Android 8+：若服务由 startForegroundService() 启动，必须在 5 秒内调用
+        // startForeground()，否则系统抛 ForegroundServiceDidNotStartInTimeException
+        // 杀进程。下面的 startVpn()/stopVpn() 有多个提前 return 分支
+        // （runtime 已存在 / 状态机守卫），任何一个都可能让 startForeground 不被调用。
+        // 因此先无条件把服务提到前台，再分发动作。
+        runCatching { startForegroundWithNotification() }
+            .onFailure { Log.w(TAG, "startForeground in onStartCommand failed", it) }
         when (intent?.action) {
             ACTION_START -> startVpn()
             ACTION_STOP -> stopVpn()
