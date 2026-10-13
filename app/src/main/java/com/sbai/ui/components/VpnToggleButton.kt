@@ -14,9 +14,13 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -27,8 +31,37 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.sbai.service.SbAiVpnService
 import com.sbai.service.SbCommandClient
+import com.sbai.service.VpnRuntimeState
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+/**
+ * 跨进程读取 VPN 运行态（:core 写入、UI 轮询）。
+ *
+ * 为什么需要：SbAiVpnService 的 status 是 `:core` 进程内的 StateFlow，UI 读不到；
+ * 此前只能靠 CommandClient 是否连上 CommandServer 判断，而那是遥测通道、有握手延迟，
+ * 会出现「VPN 在跑但界面显示已停止」。这里轮询 VpnRuntimeState 文件补上这个缺口。
+ *
+ * 轮询间隔 1s：状态文件极小（一次 read 几十字节），开销可忽略；
+ * 断开/不可读时回退到 [fallback]，不阻塞 UI。
+ */
+@Composable
+fun rememberVpnRunning(fallback: Boolean): Boolean {
+    val context = LocalContext.current
+    var running by remember { mutableStateOf(fallback) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            val snap = withContext(Dispatchers.IO) { VpnRuntimeState.read(context) }
+            // 文件缺失（从未启动过）时用 fallback；有文件就以文件为准
+            running = snap?.phase == VpnRuntimeState.Phase.RUNNING ||
+                (snap == null && fallback)
+            kotlinx.coroutines.delay(1_000L)
+        }
+    }
+    return running
+}
 
 /**
  * FlClash 风格 VPN 电源开关按钮：独立圆形按钮，悬浮在底栏旁。
@@ -47,6 +80,9 @@ fun VpnToggleButton(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val coreConnected by SbCommandClient.connectedToService.collectAsState()
+    // 跨进程运行态：遥测通道未连上时也能正确反映 VPN 是否在跑
+    val vpnRunning = rememberVpnRunning(fallback = coreConnected)
+    val isRunning = coreConnected || vpnRunning
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult(),
@@ -58,7 +94,7 @@ fun VpnToggleButton(
     }
 
     fun toggle() {
-        if (coreConnected) {
+        if (isRunning) {
             stopVpn(context)
             SbCommandClient.disconnect()
             return
@@ -76,7 +112,7 @@ fun VpnToggleButton(
     Surface(
         onClick = { toggle() },
         shape = CircleShape,
-        color = if (coreConnected) MaterialTheme.colorScheme.primary
+        color = if (isRunning) MaterialTheme.colorScheme.primary
         else MaterialTheme.colorScheme.surfaceVariant,
         tonalElevation = 0.dp,
         shadowElevation = 8.dp,
@@ -88,8 +124,8 @@ fun VpnToggleButton(
         Box(contentAlignment = Alignment.Center) {
             Icon(
                 imageVector = Icons.Filled.PowerSettingsNew,
-                contentDescription = if (coreConnected) "停止 VPN" else "启动 VPN",
-                tint = if (coreConnected) MaterialTheme.colorScheme.onPrimary
+                contentDescription = if (isRunning) "停止 VPN" else "启动 VPN",
+                tint = if (isRunning) MaterialTheme.colorScheme.onPrimary
                 else MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.size(size * 0.5f),
             )

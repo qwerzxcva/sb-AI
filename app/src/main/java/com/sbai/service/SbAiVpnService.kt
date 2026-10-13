@@ -64,6 +64,8 @@ class SbAiVpnService : VpnService() {
         }
         Log.i(TAG, "startVpn: current status=${_status.value}")
         _status.value = ServiceStatus.Starting
+        // 跨进程发布状态：UI 进程读不到本进程的 StateFlow
+        VpnRuntimeState.publish(this, VpnRuntimeState.Phase.STARTING, sinceMs = System.currentTimeMillis())
         startForegroundWithNotification()
 
         scope.launch {
@@ -130,12 +132,19 @@ class SbAiVpnService : VpnService() {
                     .onFailure { Log.w(TAG, "command client unavailable", it) }
 
                 _status.value = ServiceStatus.Running
+                VpnRuntimeState.publish(this@SbAiVpnService, VpnRuntimeState.Phase.RUNNING, sinceMs = System.currentTimeMillis())
                 persistError(null)   // 启动成功，清除旧错误
                 updateNotification(getString(R.string.vpn_notification_title))
                 Log.i(TAG, "startVpn: VPN running")
             } catch (t: Throwable) {
                 Log.e(TAG, "failed to start vpn", t)
                 _status.value = ServiceStatus.Error(t.message ?: "unknown")
+                VpnRuntimeState.publish(
+                    this@SbAiVpnService,
+                    VpnRuntimeState.Phase.ERROR,
+                    t.message ?: t.javaClass.simpleName,
+                    System.currentTimeMillis(),
+                )
                 persistError(t.message ?: t.javaClass.simpleName)   // 跨进程传给 UI 显示
                 // 必须在这里释放已登记的 native 资源：rt.start 可能已经建了 TUN fd
                 // 并起了 CommandServer，直接 stopSelf() 会让 sing-box 继续转发流量
@@ -163,12 +172,14 @@ class SbAiVpnService : VpnService() {
 
     private fun stopVpn() {
         _status.value = ServiceStatus.Stopping
+        VpnRuntimeState.publish(this@SbAiVpnService, VpnRuntimeState.Phase.STOPPING, sinceMs = System.currentTimeMillis())
         scope.launch {
             SbCommandClient.disconnect()
             runCatching { runtime?.stop() }
             runtime = null
             platformInterface = null
             _status.value = ServiceStatus.Stopped
+            VpnRuntimeState.publish(this@SbAiVpnService, VpnRuntimeState.Phase.STOPPED, sinceMs = System.currentTimeMillis())
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
         }

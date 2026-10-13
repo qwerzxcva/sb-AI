@@ -100,6 +100,7 @@ import com.sbai.ui.components.SbGroup
 import com.sbai.ui.components.SbItem
 import com.sbai.ui.components.SbSpacer
 import com.sbai.ui.components.SbSwitchItem
+import com.sbai.ui.components.rememberVpnRunning
 import com.sbai.ui.theme.LocalSbStyleTokens
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -119,6 +120,9 @@ fun HomeScreen(onOpenLoadBalance: () -> Unit = {}) {
     val status by SbAiVpnService.status.collectAsState()
     val proxyGroups by SbCommandClient.groups.collectAsState()
     val coreConnected by SbCommandClient.connectedToService.collectAsState()
+    // 跨进程运行态：遥测通道未握手成功时也能正确显示 VPN 是否在跑
+    val vpnRunning = rememberVpnRunning(fallback = coreConnected)
+    val coreRunning = coreConnected || vpnRunning
     val scope = rememberCoroutineScope()
     val tokens = LocalSbStyleTokens.current
 
@@ -224,7 +228,6 @@ fun HomeScreen(onOpenLoadBalance: () -> Unit = {}) {
     // 是否启用订阅分组视图（默认关：保持现有平铺列表行为，用户可切换）
     var groupBySubscription by remember { mutableStateOf(false) }
 
-    val running = status is SbAiVpnService.ServiceStatus.Running
     val lb = state.loadBalance
 
     // 节点过滤结果缓存：避免在 LazyListScope 里每次重组都重新解析全部节点 JSON（卡顿主因）
@@ -296,7 +299,7 @@ fun HomeScreen(onOpenLoadBalance: () -> Unit = {}) {
         kotlinx.coroutines.delay(500L)
         SbCommandClient.connectWithRetry(attempts = 5, delayMs = 1000L)
     }
-    val coreRunning = running || coreConnected
+    // 跨进程运行态（遥测未连上时以 VpnRuntimeState 文件为准）
     // 低频重试：每 10s 尝试重连，防止 :core 启动慢导致 UI 一直卡在「已停止」
     // 注意：不在 LaunchedEffect 中使用 while(true)，而是用 repeat 控制重试次数
     LaunchedEffect(coreRunning) {
@@ -362,7 +365,7 @@ fun HomeScreen(onOpenLoadBalance: () -> Unit = {}) {
                         Text(
                             // 跨进程真源：:core 进程的服务状态 UI 进程读不到，
                             // 以 CommandClient 是否连上 CommandServer（coreConnected）为准
-                            displayStatus(coreConnected, status),
+                            displayStatus(coreRunning, status),
                             style = MaterialTheme.typography.bodyMedium,
                             color = when {
                                 status is SbAiVpnService.ServiceStatus.Error -> MaterialTheme.colorScheme.error
