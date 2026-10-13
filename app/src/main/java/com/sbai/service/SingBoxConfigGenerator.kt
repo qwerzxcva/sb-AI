@@ -245,7 +245,10 @@ object SingBoxConfigGenerator {
                             when (rs.type) {
                                 RuleSetType.REMOTE -> {
                                     put("type", "remote")
-                                    put("format", "source")
+                                    // format 必须与 URL 内容匹配：.srs 是二进制规则集，
+                                    // 强行写 source 会让内核按 JSON 解析二进制而失败。
+                                    // 内核会按扩展名推导默认格式，这里显式写对，避免误判。
+                                    put("format", ruleSetFormat(rs.url))
                                     put("url", rs.url)
                                     rs.downloadDetour?.takeIf { it.isNotBlank() }
                                         ?.let { put("download_detour", it) }
@@ -290,7 +293,7 @@ object SingBoxConfigGenerator {
                         add(buildJsonObject {
                             put("tag", tag)
                             put("type", "remote")
-                            put("format", "source")
+                            put("format", ruleSetFormat(url))
                             put("url", url)
                         })
                     }
@@ -463,6 +466,19 @@ object SingBoxConfigGenerator {
         val slash = noScheme.indexOf('/')
         return if (slash >= 0) noScheme.substring(0, slash) to noScheme.substring(slash)
         else noScheme to null
+    }
+
+    /**
+     * 远程规则集格式：内核 option/rule_set.go 的 format 只接受 source/binary，
+     * 且会按 URL 扩展名推导默认值。.srs 是 sing-box 二进制规则集，
+     * 写成 source 会让内核按 JSON 解析二进制而失败。
+     * 与内核 ruleSetDefaultFormat 的判定保持一致。
+     */
+    private fun ruleSetFormat(url: String): String {
+        val path = url.substringBefore('?').substringBefore('#')
+        return if (path.endsWith(".srs", ignoreCase = true) ||
+            path.endsWith(".srs.gz", ignoreCase = true)
+        ) "binary" else "source"
     }
 
     /**

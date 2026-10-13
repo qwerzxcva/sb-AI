@@ -642,7 +642,8 @@ class SingBoxConfigGeneratorTest {
         assertTrue(urls.contains(url2))
         ruleSets.forEach { rs ->
             assertEquals("remote", rs.jsonObject["type"]!!.jsonPrimitive.content)
-            assertEquals("source", rs.jsonObject["format"]!!.jsonPrimitive.content)
+            // .srs URL 必须用 binary 格式（内核按扩展名判定）
+            assertEquals("binary", rs.jsonObject["format"]!!.jsonPrimitive.content)
         }
     }
 
@@ -983,6 +984,49 @@ class SingBoxConfigGeneratorTest {
         assertTrue(
             rule!!["domain_suffix"]!!.jsonArray.any { it.jsonPrimitive.content == "cn" },
         )
+    }
+
+    @Test
+    fun `remote rule set format matches url extension`() {
+        // .srs 是二进制规则集，写成 source 会让内核按 JSON 解析二进制而失败
+        val cfg = parse(
+            AppState(
+                routeRuleSets = listOf(
+                    com.sbai.data.RouteRuleSet(
+                        tag = "geoip-cn",
+                        type = RuleSetType.REMOTE,
+                        url = "https://example.com/geoip-cn.srs",
+                    ),
+                    com.sbai.data.RouteRuleSet(
+                        tag = "geosite-cn",
+                        type = RuleSetType.REMOTE,
+                        url = "https://example.com/geosite-cn.json",
+                    ),
+                ),
+            ),
+        )
+        val sets = cfg["route"]!!.jsonObject["rule_set"]!!.jsonArray.map { it.jsonObject }
+        val binary = sets.first { it["tag"]!!.jsonPrimitive.content == "geoip-cn" }
+        assertEquals("binary", binary["format"]!!.jsonPrimitive.content)
+        val source = sets.first { it["tag"]!!.jsonPrimitive.content == "geosite-cn" }
+        assertEquals("source", source["format"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `inline url rule set also detects srs format`() {
+        val cfg = parse(
+            AppState(
+                routeRules = listOf(
+                    RouteRule(
+                        action = RuleAction.ROUTE_DIRECT,
+                        ruleSetTags = listOf("https://example.com/geoip-cn.srs"),
+                    ),
+                ),
+            ),
+        )
+        val sets = cfg["route"]!!.jsonObject["rule_set"]!!.jsonArray.map { it.jsonObject }
+        val auto = sets.first { it["url"]?.jsonPrimitive?.content?.endsWith(".srs") == true }
+        assertEquals("binary", auto["format"]!!.jsonPrimitive.content)
     }
 
     @Test
