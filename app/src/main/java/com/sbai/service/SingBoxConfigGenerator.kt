@@ -1014,6 +1014,7 @@ object SingBoxConfigGenerator {
                     domainSuffixes = rule.domainSuffixes,
                     domainKeywords = rule.domainKeywords,
                     domainRegexes = rule.domainRegexes,
+                    geosites = rule.geosites,
                     server = dnsServer ?: defaultDnsTag,
                     ipStrategy = strategy ?: "",
                 ),
@@ -1066,8 +1067,10 @@ object SingBoxConfigGenerator {
                 if (r.domainSuffixes.isNotEmpty()) putJsonArray("domain_suffix") { r.domainSuffixes.forEach(::add) }
                 if (r.domainKeywords.isNotEmpty()) putJsonArray("domain_keyword") { r.domainKeywords.forEach(::add) }
                 if (r.domainRegexes.isNotEmpty()) putJsonArray("domain_regex") { r.domainRegexes.forEach(::add) }
+                if (r.geosites.isNotEmpty()) putJsonArray("geosite") { r.geosites.forEach(::add) }
                 if (r.ruleSetTags.isNotEmpty()) putJsonArray("rule_set") { r.ruleSetTags.forEach(::add) }
                 if (r.ipCidrs.isNotEmpty()) putJsonArray("ip_cidr") { r.ipCidrs.forEach(::add) }
+                if (r.geoips.isNotEmpty()) putJsonArray("geoip") { r.geoips.forEach(::add) }
                 if (r.networks.isNotEmpty()) putJsonArray("network") { r.networks.forEach(::add) }
                 if (r.ports.isNotEmpty()) putJsonArray("port") { r.ports.forEach(::add) }
                 if (r.queryTypes.isNotEmpty()) putJsonArray("query_type") { r.queryTypes.forEach(::add) }

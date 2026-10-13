@@ -258,8 +258,12 @@ data class DnsRule(
     val domainSuffixes: List<String> = emptyList(),
     val domainKeywords: List<String> = emptyList(),
     val domainRegexes: List<String> = emptyList(),
+    /** 内置 geosite 分类（如 cn / geolocation-!cn）；内核内置，无需远程下载 */
+    val geosites: List<String> = emptyList(),
     val ruleSetTags: List<String> = emptyList(),
     val ipCidrs: List<String> = emptyList(),
+    /** 内置 geoip 分类（如 cn / private）；内核内置，无需远程下载 */
+    val geoips: List<String> = emptyList(),
     val networks: List<String> = emptyList(),
     val ports: List<Int> = emptyList(),
     /** 查询类型：A / AAAA / CNAME / ... */

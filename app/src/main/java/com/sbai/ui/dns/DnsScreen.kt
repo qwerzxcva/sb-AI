@@ -458,8 +458,10 @@ private fun dnsRuleSummary(rule: DnsRule): String = buildList {
     if (rule.domainSuffixes.isNotEmpty()) add("后缀×${rule.domainSuffixes.size}")
     if (rule.domainKeywords.isNotEmpty()) add("关键词×${rule.domainKeywords.size}")
     if (rule.domainRegexes.isNotEmpty()) add("正则×${rule.domainRegexes.size}")
+    if (rule.geosites.isNotEmpty()) add("geosite×${rule.geosites.size}")
     if (rule.ruleSetTags.isNotEmpty()) add("规则集[${rule.ruleSetTags.joinToString()}]")
     if (rule.ipCidrs.isNotEmpty()) add("IP×${rule.ipCidrs.size}")
+    if (rule.geoips.isNotEmpty()) add("geoip×${rule.geoips.size}")
     if (rule.networks.isNotEmpty()) add("network:${rule.networks.joinToString()}")
     if (rule.ports.isNotEmpty()) add("port:${rule.ports.joinToString()}")
     if (rule.queryTypes.isNotEmpty()) add("type:${rule.queryTypes.joinToString()}")
@@ -707,6 +709,8 @@ private fun DnsRuleEditorDialog(
     var suffixes by remember { mutableStateOf(initial.domainSuffixes.joinToString("\n")) }
     var keywords by remember { mutableStateOf(initial.domainKeywords.joinToString("\n")) }
     var regexes by remember { mutableStateOf(initial.domainRegexes.joinToString("\n")) }
+    var geosites by remember { mutableStateOf(initial.geosites.joinToString("\n")) }
+    var geoips by remember { mutableStateOf(initial.geoips.joinToString("\n")) }
     var ipCidrs by remember { mutableStateOf(initial.ipCidrs.joinToString("\n")) }
     var sets by remember { mutableStateOf(initial.ruleSetTags.joinToString("\n")) }
     var networks by remember { mutableStateOf(initial.networks.joinToString("\n")) }
@@ -738,7 +742,8 @@ private fun DnsRuleEditorDialog(
                 name = name.trim(),
                 domains = domains.toLines(), domainSuffixes = suffixes.toLines(),
                 domainKeywords = keywords.toLines(), domainRegexes = regexes.toLines(),
-                ipCidrs = ipCidrs.toLines(), ruleSetTags = sets.toLines(),
+                geosites = geosites.toLines(),
+                ipCidrs = ipCidrs.toLines(), geoips = geoips.toLines(), ruleSetTags = sets.toLines(),
                 networks = networks.toLines(),
                 ports = portsText.toLines().mapNotNull { it.toIntOrNull() },
                 queryTypes = queryTypes.toList().sorted(),
@@ -803,7 +808,9 @@ private fun DnsRuleEditorDialog(
                 MultiLine("域名后缀（一行一条）", suffixes) { suffixes = it }
                 MultiLine("域名关键词（一行一条）", keywords) { keywords = it }
                 MultiLine("域名正则（一行一条）", regexes) { regexes = it }
+                MultiLine("内置 geosite（一行一条，如 cn / geolocation-!cn）", geosites) { geosites = it }
                 MultiLine("IP / CIDR（一行一条）", ipCidrs) { ipCidrs = it }
+                MultiLine("内置 geoip（一行一条，如 cn / private）", geoips) { geoips = it }
                 MultiLine(
                     "规则集 tag（一行一条）${if (ruleSetTags.isNotEmpty()) "，已有：${ruleSetTags.joinToString()}" else ""}",
                     sets,
