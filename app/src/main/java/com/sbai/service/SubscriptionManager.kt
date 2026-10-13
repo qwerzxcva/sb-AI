@@ -185,6 +185,9 @@ class SubscriptionManager(
         nodes: List<ProxyNode>,
     ) {
         var current = nodes
+        // 只有本轮真的测过速，removeUnavailable 才有依据；否则会用上一轮的
+        // 陈旧 -1 把节点误删（VPN 未连接时刷新就会整个清空订阅）。
+        var testedThisRound = false
 
         if (subscription.urlTestAfterUpdate && current.isNotEmpty()) {
             val groupTag = resolveTestGroupTag(subscription.id)
@@ -196,6 +199,7 @@ class SubscriptionManager(
                     NodeBatchTester.applyResults(store, results)
                     val delayById = results.associate { it.node.id to it.delay }
                     current = current.map { n -> delayById[n.id]?.let { n.copy(urlTestDelay = it) } ?: n }
+                    testedThisRound = true
                     Log.i(TAG, "subscription ${subscription.name}: post-refresh urltest ${results.size} nodes")
                 }
             } else {
@@ -204,9 +208,13 @@ class SubscriptionManager(
         }
 
         if (subscription.removeUnavailable) {
-            val before = current.size
-            current = current.filter { it.urlTestDelay >= 0 }
-            Log.i(TAG, "subscription ${subscription.name}: removed ${before - current.size} unavailable nodes")
+            if (testedThisRound) {
+                val before = current.size
+                current = current.filter { it.urlTestDelay >= 0 }
+                Log.i(TAG, "subscription ${subscription.name}: removed ${before - current.size} unavailable nodes")
+            } else {
+                Log.i(TAG, "subscription ${subscription.name}: skip removeUnavailable (no fresh test result)")
+            }
         }
 
         if (subscription.sortByLatency) {

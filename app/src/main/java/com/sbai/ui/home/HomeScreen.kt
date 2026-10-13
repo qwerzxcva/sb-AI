@@ -906,7 +906,7 @@ fun HomeScreen() {
                                 val uri = account.toWireguardUri()
                                 val parsed = com.sbai.service.ShareLinkParser.parse(uri)
                                 if (parsed == null) {
-                                    warpError = "生成节点失败：wireguard 解析失败"
+                                    withContextMain { warpError = "生成节点失败：wireguard 解析失败" }
                                 } else {
                                     store.upsertProxyNode(
                                         ProxyNode(name = "WARP", outboundJson = parsed.outboundJson),
@@ -916,9 +916,11 @@ fun HomeScreen() {
                                     }
                                 }
                             } catch (e: Exception) {
-                                warpError = "注册失败：${e.message}"
+                                // snapshot state 只能在主线程写；后台线程直接赋值会抛
+                                // IllegalStateException 让对话框卡在 busy 态
+                                withContextMain { warpError = "注册失败：${e.message}" }
                             } finally {
-                                warpBusy = false
+                                withContextMain { warpBusy = false }
                             }
                         }
                     },
@@ -1487,4 +1489,13 @@ private fun TextEditDialog(title: String, initial: String, onDismiss: () -> Unit
 // ---------------------------------------------------------------------------
 
 enum class NodeSortMode { NAME_ASC, LATENCY_ASC }
+
+/**
+ * 在后台协程里安全写 snapshot state。
+ * Compose 的 mutableStateOf 只能在主线程读写，后台线程直接赋值会抛
+ * IllegalStateException；统一走这个 helper 切到 Main。
+ */
+private suspend fun withContextMain(block: () -> Unit) {
+    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) { block() }
+}
 
