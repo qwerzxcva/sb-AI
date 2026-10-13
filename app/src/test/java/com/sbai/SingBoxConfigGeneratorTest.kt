@@ -1188,6 +1188,56 @@ class SingBoxConfigGeneratorTest {
     }
 
     @Test
+    fun `zero condition route rule is skipped not emitted as catch-all`() {
+        // 空条件规则 = 匹配全部流量，会遮蔽 final 与后续规则
+        val cfg = parse(
+            AppState(routeRules = listOf(RouteRule(action = RuleAction.ROUTE_PROXY))),
+        )
+        val rules = routeRules(cfg)
+        assertTrue(
+            "空条件规则不得生成",
+            rules.none {
+                it.jsonObject["outbound"] != null && it.jsonObject.size <= 2
+            },
+        )
+    }
+
+    @Test
+    fun `package and process regex fields are emitted`() {
+        val rule = RouteRule(
+            action = RuleAction.ROUTE_DIRECT,
+            packageNameRegexes = listOf("^com\\.foo"),
+            processPathRegexes = listOf("^/data/app"),
+        )
+        val cfg = parse(AppState(routeRules = listOf(rule)))
+        val rr = routeRules(cfg).last().jsonObject
+        assertEquals(
+            "^com\\.foo",
+            rr["package_name_regex"]!!.jsonArray[0].jsonPrimitive.content,
+        )
+        assertEquals(
+            "^/data/app",
+            rr["process_path_regex"]!!.jsonArray[0].jsonPrimitive.content,
+        )
+    }
+
+    @Test
+    fun `load balance group skipped when no nodes available`() {
+        // 节点全删/全禁用时 lbOutbounds 为空，内核拒绝空 outbounds 数组
+        val cfg = parse(
+            AppState(
+                loadBalance = com.sbai.data.LoadBalanceConfig(enabled = true),
+            ),
+        )
+        val tags = outbounds(cfg).map { it.jsonObject["tag"]!!.jsonPrimitive.content }
+        assertTrue("无节点时不得生成 lb 组", "lb" !in tags)
+        assertTrue("无节点时不得生成 lb-selector", "lb-selector" !in tags)
+        // final 不得指向不存在的组
+        val finalTag = cfg["route"]!!.jsonObject["final"]!!.jsonPrimitive.content
+        assertTrue("final 必须存在: $finalTag", finalTag in tags || finalTag == "direct")
+    }
+
+    @Test
     fun `tun excludes own subnet and loopback to avoid dns routing loop`() {
         val cfg = parse(AppState())
         val tun = cfg["inbounds"]!!.jsonArray.first().jsonObject

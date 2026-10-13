@@ -83,8 +83,9 @@ object SingBoxConfigGenerator {
         val lb = state.loadBalance
 
         val finalProxyTag = when {
-            lb.enabled && lb.mode == LoadBalanceMode.MANUAL -> "lb-selector"
-            lb.enabled -> "lb"
+            // 与 outbounds 生成同口径：没有可用节点时不指向 lb 组（该组不会生成）
+            lb.enabled && nodeTags.isNotEmpty() && lb.mode == LoadBalanceMode.MANUAL -> "lb-selector"
+            lb.enabled && nodeTags.isNotEmpty() -> "lb"
             nodeTags.size > 1 -> "proxy"
             nodeTags.size == 1 -> nodeTags[0]
             else -> "direct"
@@ -109,7 +110,11 @@ object SingBoxConfigGenerator {
         appendDnsPolicyRules(state, dnsServers, dnsRules, defaultDnsTag)
 
         val outbounds = buildJsonArray {
-            if (lb.enabled) {
+            // 节点全部禁用/删除时 lbOutbounds 为空，内核拒绝空 outbounds 数组，
+            // 且 route.final 还指向该组 → 直接起不来。这种情况不生成 LB 组，
+            // 让 finalProxyTag 落到 direct。
+            val lbEnabled = lb.enabled && nodeTags.isNotEmpty()
+            if (lbEnabled) {
                 val lbOutbounds = lb.outbounds.filter { it in nodeTags }.ifEmpty { nodeTags }
                 if (lb.mode == LoadBalanceMode.MANUAL) {
                     add(buildJsonObject {
@@ -763,6 +768,9 @@ object SingBoxConfigGenerator {
             // ROUTE_OPTIONS 但没有任何可填字段时，生成空 route-options 会被内核拒绝，
             // 直接跳过（用户在编辑器里没填任何 override / TLS 字段）。
             if (rule.action == RuleAction.ROUTE_OPTIONS && !rule.hasRouteOptionsFields) return@forEach
+            // 没有任何匹配条件的规则 = 匹配全部流量，会遮蔽 final 与后续所有规则。
+            // route-options 例外：它本来就靠 override 字段生效，不依赖匹配条件。
+            if (rule.action != RuleAction.ROUTE_OPTIONS && !rule.hasAnyCondition) return@forEach
             rules.add(buildRouteRule(rule, entryTag))
         }
         return rules
@@ -866,8 +874,18 @@ object SingBoxConfigGenerator {
                 }
                 Cat.APP -> {
                     if (r.packageNames.isNotEmpty()) putJsonArray("package_name") { r.packageNames.forEach(::add) }
+                    // 正则字段：RouteRuleJsonCodec 会从导入的 JSON 里解析
+                    // package_name_regex / process_path_regex（内核 option/rule_set.go
+                    // 的 DefaultHeadlessRule 支持），但此前生成端不输出 → 导入的
+                    // 正则规则永远匹配不到。
+                    if (r.packageNameRegexes.isNotEmpty()) {
+                        putJsonArray("package_name_regex") { r.packageNameRegexes.forEach(::add) }
+                    }
                     if (r.processNames.isNotEmpty()) putJsonArray("process_name") { r.processNames.forEach(::add) }
                     if (r.processPaths.isNotEmpty()) putJsonArray("process_path") { r.processPaths.forEach(::add) }
+                    if (r.processPathRegexes.isNotEmpty()) {
+                        putJsonArray("process_path_regex") { r.processPathRegexes.forEach(::add) }
+                    }
                     if (r.users.isNotEmpty()) putJsonArray("user") { r.users.forEach(::add) }
                     if (r.userIds.isNotEmpty()) putJsonArray("user_id") { r.userIds.forEach(::add) }
                 }

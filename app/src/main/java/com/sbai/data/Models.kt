@@ -120,6 +120,24 @@ data class RouteRule(
         get() = domains.isNotEmpty() || domainSuffixes.isNotEmpty() ||
                 domainKeywords.isNotEmpty() || domainRegexes.isNotEmpty()
 
+    /**
+     * 是否填了任何匹配条件。
+     * 全空的路由规则在 sing-box 里是「匹配全部流量」，会遮蔽 final 与后续规则，
+     * 生成器直接跳过这种规则。
+     */
+    val hasAnyCondition: Boolean
+        get() = hasDomainContent || ipCidrs.isNotEmpty() || ruleSetTags.isNotEmpty() ||
+                networks.isNotEmpty() || protocols.isNotEmpty() || ports.isNotEmpty() ||
+                portRanges.isNotEmpty() || sourceIpCidrs.isNotEmpty() ||
+                sourcePorts.isNotEmpty() || sourcePortRanges.isNotEmpty() ||
+                packageNames.isNotEmpty() || packageNameRegexes.isNotEmpty() ||
+                processNames.isNotEmpty() || processPaths.isNotEmpty() ||
+                processPathRegexes.isNotEmpty() || users.isNotEmpty() ||
+                userIds.isNotEmpty() || networkTypes.isNotEmpty() ||
+                wifiSsids.isNotEmpty() || wifiBssids.isNotEmpty() ||
+                inbounds.isNotEmpty() || sourceIpIsPrivate || ipIsPrivate ||
+                networkIsExpensive
+
     /** ROUTE_OPTIONS 是否填了至少一个内核认可的字段（空 route-options 会被拒绝启动） */
     val hasRouteOptionsFields: Boolean
         get() = overrideAddress.isNotBlank() || overridePort > 0 ||
