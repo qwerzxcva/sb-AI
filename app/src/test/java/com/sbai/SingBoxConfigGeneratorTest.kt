@@ -1908,4 +1908,67 @@ class SingBoxConfigGeneratorTest {
             cfg["route"]!!.jsonObject["final"]?.jsonPrimitive?.content,
         )
     }
+
+    /**
+     * 快速模板：每条模板生成的规则必须真的下发对应内核字段。
+     * 模板是用户最容易点的入口，漏字段等于「点了没效果」。
+     */
+    @Test
+    fun `rule templates emit their conditions`() {
+        fun conditionOf(name: String, field: String): List<String> {
+            val cfg = parse(AppState(routeRules = listOf(ruleTemplate(name))))
+            // reject 动作的规则没有 outbound 字段；其余动作都有。
+            val rule = routeRules(cfg).firstOrNull { r ->
+                if (name == "屏蔽广告") {
+                    r.jsonObject["action"]?.jsonPrimitive?.content == "reject"
+                } else {
+                    r.jsonObject["outbound"] != null
+                }
+            } ?: return emptyList()
+            return rule.jsonObject[field]?.jsonArray?.map { it.jsonPrimitive.content }
+                ?: emptyList()
+        }
+        assertEquals(listOf("cn"), conditionOf("国内站点直连", "geosite"))
+        assertEquals(listOf("cn"), conditionOf("国内站点直连", "geoip"))
+        assertEquals(listOf("category-ads-all"), conditionOf("屏蔽广告", "geosite"))
+        assertEquals(listOf("geolocation-!cn"), conditionOf("国外站点走代理", "geosite"))
+        assertEquals(listOf("private"), conditionOf("局域网直连", "geosite"))
+        assertEquals(3, conditionOf("局域网直连", "ip_cidr").size)
+    }
+
+    /** 模板必须能生成非空规则（hasAnyCondition 为 true），否则被生成器丢弃 */
+    @Test
+    fun `rule templates are never dropped as empty`() {
+        listOf("国内站点直连", "屏蔽广告", "国外站点走代理", "局域网直连").forEach { name ->
+            val rule = ruleTemplate(name)
+            assertTrue("模板「$name」会被当成空规则丢弃", rule.hasAnyCondition)
+        }
+    }
+
+    // 与 RouteRulesScreen 的快速模板保持一致；改名时两处都要改
+    private fun ruleTemplate(name: String): RouteRule = when (name) {
+        "国内站点直连" -> RouteRule(
+            name = name,
+            action = RuleAction.ROUTE_DIRECT,
+            geosites = listOf("cn"),
+            geoips = listOf("cn"),
+        )
+        "屏蔽广告" -> RouteRule(
+            name = name,
+            action = RuleAction.REJECT,
+            geosites = listOf("category-ads-all"),
+        )
+        "国外站点走代理" -> RouteRule(
+            name = name,
+            action = RuleAction.ROUTE_PROXY,
+            geosites = listOf("geolocation-!cn"),
+        )
+        else -> RouteRule(
+            name = name,
+            action = RuleAction.ROUTE_DIRECT,
+            geosites = listOf("private"),
+            geoips = listOf("private"),
+            ipCidrs = listOf("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"),
+        )
+    }
 }

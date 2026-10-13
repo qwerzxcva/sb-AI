@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -42,6 +43,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
@@ -125,6 +127,8 @@ private fun RouteRulesPage(externalOpenRuleSetManager: Boolean = false, onExtern
     var editingRuleSet by remember { mutableStateOf<RouteRuleSet?>(null) }
     var editingChinaIp by remember { mutableStateOf<com.sbai.data.Resource?>(null) }
     var showRuleSetManager by remember { mutableStateOf(false) }
+    // 模板添加/去重的反馈（Snackbar 文案）
+    var importResultMessage by remember { mutableStateOf<String?>(null) }
 
     // 设置页跳转过来时自动打开「规则集与资源」
     LaunchedEffect(externalOpenRuleSetManager) {
@@ -132,6 +136,42 @@ private fun RouteRulesPage(externalOpenRuleSetManager: Boolean = false, onExtern
             showRuleSetManager = true
             onExternalRequestHandled()
         }
+    }
+
+    // 快速模板：一条规则能搞定的常见分流场景（参考 Karing 的 Cases）
+    fun addTemplate(index: Int) {
+        val rule = when (index) {
+            0 -> RouteRule(
+                name = "国内站点直连",
+                action = RuleAction.ROUTE_DIRECT,
+                geosites = listOf("cn"),
+                geoips = listOf("cn"),
+            )
+            1 -> RouteRule(
+                name = "屏蔽广告",
+                action = RuleAction.REJECT,
+                geosites = listOf("category-ads-all"),
+            )
+            2 -> RouteRule(
+                name = "国外站点走代理",
+                action = RuleAction.ROUTE_PROXY,
+                geosites = listOf("geolocation-!cn"),
+            )
+            else -> RouteRule(
+                name = "局域网直连",
+                action = RuleAction.ROUTE_DIRECT,
+                geosites = listOf("private"),
+                geoips = listOf("private"),
+                ipCidrs = listOf("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"),
+            )
+        }
+        // 已存在同名规则则不重复添加
+        if (state.routeRules.any { it.name == rule.name }) {
+            importResultMessage = "「${rule.name}」已存在"
+            return
+        }
+        store.upsertRouteRule(rule)
+        importResultMessage = "已添加「${rule.name}」"
     }
 
     // 规则编辑器：整页（二级页面），提前 return 覆盖列表页
@@ -255,6 +295,43 @@ private fun RouteRulesPage(externalOpenRuleSetManager: Boolean = false, onExtern
                     }
                 }
                 Spacer(Modifier.height(12.dp))
+                // 常用分流模板（参考 Karing 的 Cases / 常见分流场景）：
+                // 一条规则能搞定的场景不让用户从零配
+                SbGroup(title = "快速模板") {
+                    item {
+                        SbItem(
+                            title = "国内站点直连",
+                            subtitle = "geosite:cn + geoip:cn → 直连",
+                            icon = Icons.Filled.Add,
+                            onClick = { addTemplate(0) },
+                        )
+                    }
+                    item {
+                        SbItem(
+                            title = "屏蔽广告",
+                            subtitle = "geosite:category-ads-all → 拦截",
+                            icon = Icons.Filled.Add,
+                            onClick = { addTemplate(1) },
+                        )
+                    }
+                    item {
+                        SbItem(
+                            title = "国外站点走代理",
+                            subtitle = "geosite:geolocation-!cn → 代理",
+                            icon = Icons.Filled.Add,
+                            onClick = { addTemplate(2) },
+                        )
+                    }
+                    item {
+                        SbItem(
+                            title = "局域网直连",
+                            subtitle = "私有网段 + geosite:private → 直连",
+                            icon = Icons.Filled.Add,
+                            onClick = { addTemplate(3) },
+                        )
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
                 // 规则集入口（不再与路由规则并列成两个有序列表，避免优先级混淆）
                 SbGroup(title = "") {
                     item {
@@ -319,6 +396,32 @@ private fun RouteRulesPage(externalOpenRuleSetManager: Boolean = false, onExtern
                 onEdit = { editingRule = rule },
                 onDelete = { store.deleteRouteRule(rule.id) },
             )
+        }
+    }
+
+    // 模板添加反馈：3 秒后自动消失
+    importResultMessage?.let { msg ->
+        LaunchedEffect(msg) {
+            kotlinx.coroutines.delay(3000)
+            importResultMessage = null
+        }
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(bottom = BottomBarClearance),
+            contentAlignment = Alignment.BottomCenter,
+        ) {
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.inverseSurface,
+            ) {
+                Text(
+                    msg,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.inverseOnSurface,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                )
+            }
         }
     }
 
@@ -513,6 +616,9 @@ private fun RouteRuleEditorDialog(
     var keywords by remember { mutableStateOf(initial.domainKeywords.joinToString("\n")) }
     var regexes by remember { mutableStateOf(initial.domainRegexes.joinToString("\n")) }
     var geosites by remember { mutableStateOf(initial.geosites.joinToString("\n")) }
+    // 快捷 chip 与输入框双向同步：chip 选中态从输入框内容反推，
+    // 点 chip 直接增删对应行（用户仍可在输入框里手打任意 geosite）。
+    val geositeLines = geosites.lines().map { it.trim() }.filter { it.isNotEmpty() }.toSet()
     var ipCidrs by remember { mutableStateOf(initial.ipCidrs.joinToString("\n")) }
     var geoips by remember { mutableStateOf(initial.geoips.joinToString("\n")) }
     var sets by remember { mutableStateOf(initial.ruleSetTags.joinToString("\n")) }
@@ -721,9 +827,47 @@ private fun RouteRuleEditorDialog(
                     MultiLineField("域名后缀（一行一条）", suffixes) { suffixes = it }
                     MultiLineField("域名关键词（一行一条）", keywords) { keywords = it }
                     MultiLineField("域名正则（一行一条）", regexes) { regexes = it }
-                    MultiLineField("内置 geosite（一行一条，如 cn / geolocation-!cn / private）", geosites) { geosites = it }
+                    Text("内置 geosite", style = MaterialTheme.typography.labelLarge)
                     Text(
-                        "geosite 是内核内置分类，无需下载远程规则集；geolocation-!cn 表示「非中国站点」。",
+                        "内核内置分类，无需下载远程规则集。点下面快捷项直接追加，也可在输入框手打。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    // 快捷勾选（参考 Karing 的 Rule Set build-in）：常用 geosite 一键追加
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        GEOSITE_PRESETS.forEach { preset ->
+                            val selected = preset.tag in geositeLines
+                            FilterChip(
+                                selected = selected,
+                                onClick = {
+                                    val current = geosites.lines()
+                                        .map { it.trim() }
+                                        .filter { it.isNotEmpty() }
+                                    geosites = if (selected) {
+                                        (current - preset.tag).joinToString("\n")
+                                    } else {
+                                        (current + preset.tag).joinToString("\n")
+                                    }
+                                },
+                                label = { Text(preset.tag) },
+                            )
+                        }
+                    }
+                    // 选中项的含义说明（避免用户凭 tag 名猜行为）
+                    val selectedHints = GEOSITE_PRESETS.filter { it.tag in geositeLines }
+                    if (selectedHints.isNotEmpty()) {
+                        Text(
+                            selectedHints.joinToString("\n") { "${it.tag}：${it.hint}" },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    MultiLineField("geosite（一行一条）", geosites) { geosites = it }
+                    Text(
+                        "geolocation-!cn = 非中国站点；private = 内网域名。",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -1346,6 +1490,30 @@ private val PRIMARY_ACTIONS = setOf(
     com.sbai.data.RuleAction.ROUTE_PROXY,
     com.sbai.data.RuleAction.ROUTE_DIRECT,
     com.sbai.data.RuleAction.REJECT,
+)
+
+/**
+ * geosite 快捷项（分类名与语义来自 sing-box 官方 geosite 文档）。
+ * tag 是 geosite:xxx 的 xxx 部分；hint 说明常见用法，帮用户决定用哪个动作。
+ *
+ * 注意：内核只内置了标准分类。category-* 系列在部分精简内核里可能缺失，
+ * 因此列表里只放 sing-box 官方文档明确列出的分类。
+ */
+private data class GeositePreset(val tag: String, val hint: String)
+
+private val GEOSITE_PRESETS = listOf(
+    GeositePreset("cn", "中国大陆站点（= geolocation-cn + tld-cn）"),
+    GeositePreset("geolocation-!cn", "非中国大陆站点"),
+    GeositePreset("private", "内网域名（.local / .lan 等）"),
+    GeositePreset("category-ads-all", "广告域名全集（含广告商）"),
+    GeositePreset("category-ads", "常见广告域名"),
+    GeositePreset("category-porn", "成人内容"),
+    GeositePreset("apple", "Apple 旗下域名"),
+    GeositePreset("google", "Google 旗下域名"),
+    GeositePreset("microsoft", "Microsoft 旗下域名"),
+    GeositePreset("telegram", "Telegram 域名"),
+    GeositePreset("netflix", "Netflix 域名"),
+    GeositePreset("youtube", "YouTube 域名"),
 )
 
 /**
