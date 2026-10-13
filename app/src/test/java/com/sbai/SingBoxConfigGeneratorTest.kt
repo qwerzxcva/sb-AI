@@ -1945,6 +1945,32 @@ class SingBoxConfigGeneratorTest {
         }
     }
 
+    /** 带远程规则集的模板：必须同时建 rule_set 且规则引用它 */
+    @Test
+    fun `template with remote rule set builds both`() {
+        val rule = RouteRule(
+            name = "屏蔽广告（完整规则集）",
+            action = RuleAction.REJECT,
+            ruleSetTags = listOf("ads-all"),
+        )
+        val rs = RouteRuleSet(
+            tag = "ads-all",
+            type = RuleSetType.REMOTE,
+            url = "https://raw.githubusercontent.com/KaringX/karing-ruleset/release/ACL4SSR/BanAD.srs",
+        )
+        val cfg = parse(AppState(routeRules = listOf(rule), routeRuleSets = listOf(rs)))
+        // rule_set 必须被声明
+        val declared = cfg["route"]!!.jsonObject["rule_set"]!!.jsonArray
+            .map { it.jsonObject["tag"]?.jsonPrimitive?.content }
+        assertTrue("模板自带规则集未声明", "ads-all" in declared)
+        // 规则必须引用它
+        val refs = routeRules(cfg)
+            .mapNotNull { it.jsonObject["rule_set"]?.jsonArray }
+            .flatten()
+            .map { it.jsonPrimitive.content }
+        assertTrue("规则未引用模板规则集", "ads-all" in refs)
+    }
+
     /**
      * 官方文档明确 route action 可继承 route-options 字段，因此代理/直连规则
      * 也能直接带 TLS 分片，不必拆成「一条 route + 一条 route-options」。

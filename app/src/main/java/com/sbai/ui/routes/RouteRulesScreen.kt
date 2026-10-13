@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.Dataset
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DragIndicator
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
@@ -142,39 +143,20 @@ private fun RouteRulesPage(externalOpenRuleSetManager: Boolean = false, onExtern
     }
 
     // 快速模板：一条规则能搞定的常见分流场景（参考 Karing 的 Cases）
-    fun addTemplate(index: Int) {
-        val rule = when (index) {
-            0 -> RouteRule(
-                name = "国内站点直连",
-                action = RuleAction.ROUTE_DIRECT,
-                geosites = listOf("cn"),
-                geoips = listOf("cn"),
-            )
-            1 -> RouteRule(
-                name = "屏蔽广告",
-                action = RuleAction.REJECT,
-                geosites = listOf("category-ads-all"),
-            )
-            2 -> RouteRule(
-                name = "国外站点走代理",
-                action = RuleAction.ROUTE_PROXY,
-                geosites = listOf("geolocation-!cn"),
-            )
-            else -> RouteRule(
-                name = "局域网直连",
-                action = RuleAction.ROUTE_DIRECT,
-                geosites = listOf("private"),
-                geoips = listOf("private"),
-                ipCidrs = listOf("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"),
-            )
-        }
+    fun addTemplate(template: RuleTemplate) {
         // 已存在同名规则则不重复添加
-        if (state.routeRules.any { it.name == rule.name }) {
-            importResultMessage = "「${rule.name}」已存在"
+        if (state.routeRules.any { it.name == template.name }) {
+            importResultMessage = "「${template.name}」已存在"
             return
         }
-        store.upsertRouteRule(rule)
-        importResultMessage = "已添加「${rule.name}」"
+        // 模板自带规则集时先建 rule_set（用户不用自己找 URL）
+        template.ruleSet?.let { rs ->
+            if (state.routeRuleSets.none { it.tag == rs.tag }) {
+                store.upsertRuleSet(rs)
+            }
+        }
+        store.upsertRouteRule(template.rule)
+        importResultMessage = "已添加「${template.name}」"
     }
 
     // 规则编辑器：整页（二级页面），提前 return 覆盖列表页
@@ -298,40 +280,18 @@ private fun RouteRulesPage(externalOpenRuleSetManager: Boolean = false, onExtern
                     }
                 }
                 Spacer(Modifier.height(12.dp))
-                // 常用分流模板（参考 Karing 的 Cases / 常见分流场景）：
+                // 常用分流模板（参考 Karing 的 Cases / LxBox 的预设目录）：
                 // 一条规则能搞定的场景不让用户从零配
                 SbGroup(title = "快速模板") {
-                    item {
-                        SbItem(
-                            title = "国内站点直连",
-                            subtitle = "geosite:cn + geoip:cn → 直连",
-                            icon = Icons.Filled.Add,
-                            onClick = { addTemplate(0) },
-                        )
-                    }
-                    item {
-                        SbItem(
-                            title = "屏蔽广告",
-                            subtitle = "geosite:category-ads-all → 拦截",
-                            icon = Icons.Filled.Add,
-                            onClick = { addTemplate(1) },
-                        )
-                    }
-                    item {
-                        SbItem(
-                            title = "国外站点走代理",
-                            subtitle = "geosite:geolocation-!cn → 代理",
-                            icon = Icons.Filled.Add,
-                            onClick = { addTemplate(2) },
-                        )
-                    }
-                    item {
-                        SbItem(
-                            title = "局域网直连",
-                            subtitle = "私有网段 + geosite:private → 直连",
-                            icon = Icons.Filled.Add,
-                            onClick = { addTemplate(3) },
-                        )
+                    RULE_TEMPLATES.forEach { template ->
+                        item {
+                            SbItem(
+                                title = template.name,
+                                subtitle = template.summary,
+                                icon = Icons.Filled.Add,
+                                onClick = { addTemplate(template) },
+                            )
+                        }
                     }
                 }
                 Spacer(Modifier.height(12.dp))
@@ -916,6 +876,21 @@ private fun RouteRuleEditorDialog(
 
                 EditorSection("目标 IP / 规则集") {
                     MultiLineField("目标 IP / CIDR（一行一条）", ipCidrs) { ipCidrs = it }
+                    // CIDR 快捷插入（参考 LxBox match_section 的 FieldPreset）：
+                    // 点一下把多行 CIDR 追加进字段，不用手打
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        CIDR_PRESETS.forEach { (label, value) ->
+                            AssistChip(
+                                onClick = {
+                                    val existing = ipCidrs.lines().map { it.trim() }
+                                        .filter { it.isNotEmpty() }
+                                    val merged = (existing + value.lines()).distinct()
+                                    ipCidrs = merged.joinToString("\n")
+                                },
+                                label = { Text(label) },
+                            )
+                        }
+                    }
                     MultiLineField("内置 geoip（一行一条，如 cn / private）", geoips) { geoips = it }
                     MultiLineField("规则集 tag 或 URL（一行一条；URL 自动建远程规则集）", sets) { sets = it }
                     TextButton(onClick = onCreateRuleSet) { Text("＋ 新建规则集") }
@@ -1598,6 +1573,97 @@ private val PRIMARY_ACTIONS = setOf(
     com.sbai.data.RuleAction.ROUTE_PROXY,
     com.sbai.data.RuleAction.ROUTE_DIRECT,
     com.sbai.data.RuleAction.REJECT,
+)
+
+/**
+ * CIDR 快捷插入（参考 LxBox `match_section.dart` 的 FieldPreset）。
+ * label = 菜单文案，value = 追加进字段的多行 CIDR（IPv4 + IPv6 一并给全）。
+ */
+private val CIDR_PRESETS = listOf(
+    "本机回环" to "127.0.0.0/8\n::1/128",
+    "局域网" to "10.0.0.0/8\n172.16.0.0/12\n192.168.0.0/16",
+    "全网段" to "0.0.0.0/0\n::/0",
+)
+
+/**
+ * 快速模板（参考 LxBox 的 SelectableRule 预设目录）。
+ *
+ * 与早期硬编码模板的差别：模板可自带远程规则集（ruleSet），点一下
+ * 连 rule_set 一起建好，用户不用自己找 .srs URL。
+ * summary 说明这条模板做什么，避免用户凭名字猜。
+ */
+private data class RuleTemplate(
+    val name: String,
+    val summary: String,
+    val rule: RouteRule,
+    val ruleSet: RouteRuleSet? = null,
+)
+
+private val RULE_TEMPLATES = listOf(
+    RuleTemplate(
+        name = "国内站点直连",
+        summary = "geosite:cn + geoip:cn → 直连",
+        rule = RouteRule(
+            name = "国内站点直连",
+            action = RuleAction.ROUTE_DIRECT,
+            geosites = listOf("cn"),
+            geoips = listOf("cn"),
+        ),
+    ),
+    RuleTemplate(
+        name = "国外站点走代理",
+        summary = "geosite:geolocation-!cn → 代理",
+        rule = RouteRule(
+            name = "国外站点走代理",
+            action = RuleAction.ROUTE_PROXY,
+            geosites = listOf("geolocation-!cn"),
+        ),
+    ),
+    RuleTemplate(
+        name = "局域网直连",
+        summary = "private + 三段私有 CIDR → 直连",
+        rule = RouteRule(
+            name = "局域网直连",
+            action = RuleAction.ROUTE_DIRECT,
+            geosites = listOf("private"),
+            geoips = listOf("private"),
+            ipCidrs = listOf("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"),
+        ),
+    ),
+    RuleTemplate(
+        name = "屏蔽广告",
+        summary = "内置 geosite:category-ads-all → 拦截（无需下载规则集）",
+        rule = RouteRule(
+            name = "屏蔽广告",
+            action = RuleAction.REJECT,
+            geosites = listOf("category-ads-all"),
+        ),
+    ),
+    // 带远程规则集的重型模板：reference LxBox block-ads 的做法，
+    // 连 rule_set 一起建，用户不用自己拼 URL
+    RuleTemplate(
+        name = "屏蔽广告（完整规则集）",
+        summary = "远程广告规则集 ~1MB → 拦截；覆盖比内置分类更全",
+        rule = RouteRule(
+            name = "屏蔽广告（完整规则集）",
+            action = RuleAction.REJECT,
+            ruleSetTags = listOf("ads-all"),
+        ),
+        ruleSet = RouteRuleSet(
+            tag = "ads-all",
+            type = RuleSetType.REMOTE,
+            url = "https://raw.githubusercontent.com/KaringX/karing-ruleset/release/ACL4SSR/BanAD.srs",
+        ),
+    ),
+    RuleTemplate(
+        name = "BitTorrent 走代理",
+        summary = "protocol:bittorrent → 代理",
+        rule = RouteRule(
+            name = "BitTorrent 走代理",
+            action = RuleAction.ROUTE_PROXY,
+            protocols = listOf("bittorrent"),
+        ),
+    ),
 )
 
 /**
