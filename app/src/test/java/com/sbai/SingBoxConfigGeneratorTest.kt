@@ -1945,6 +1945,46 @@ class SingBoxConfigGeneratorTest {
         }
     }
 
+    /** route-options 的 UDP 字段必须按内核字段名下发 */
+    @Test
+    fun `route-options udp fields are emitted`() {
+        val cfg = parse(
+            AppState(
+                routeRules = listOf(
+                    RouteRule(
+                        name = "udp",
+                        action = RuleAction.ROUTE_OPTIONS,
+                        domains = listOf("a.com"),
+                        udpConnect = true,
+                        udpTimeout = "5m",
+                        udpDisableDomainUnmapping = true,
+                    ),
+                ),
+            ),
+        )
+        val rule = routeRules(cfg).first {
+            it.jsonObject["action"]?.jsonPrimitive?.content == "route-options"
+        }.jsonObject
+        assertEquals(true, rule["udp_connect"]?.jsonPrimitive?.content?.toBoolean())
+        assertEquals("5m", rule["udp_timeout"]?.jsonPrimitive?.content)
+        assertEquals(
+            true,
+            rule["udp_disable_domain_unmapping"]?.jsonPrimitive?.content?.toBoolean(),
+        )
+    }
+
+    /** 只填 UDP 字段的 route-options 规则不得被当空规则丢弃 */
+    @Test
+    fun `route-options with only udp fields survives`() {
+        val rule = RouteRule(
+            name = "u",
+            action = RuleAction.ROUTE_OPTIONS,
+            domains = listOf("a.com"),
+            udpConnect = true,
+        )
+        assertTrue("只填 udp_connect 的 route-options 被丢弃", rule.hasRouteOptionsFields)
+    }
+
     /** reject_method：内核枚举 default / drop / reply，default 时不下发该字段 */
     @Test
     fun `reject method matches kernel enum`() {

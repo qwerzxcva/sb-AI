@@ -902,6 +902,10 @@ object SingBoxConfigGenerator {
                 }
                 if (rule.overrideAddress.isNotBlank()) put("override_address", rule.overrideAddress)
                 if (rule.overridePort > 0) put("override_port", rule.overridePort)
+                // UDP 系列（RouteActionOptions.UDP*）
+                if (rule.udpConnect) put("udp_connect", true)
+                if (rule.udpTimeout.isNotBlank()) put("udp_timeout", rule.udpTimeout)
+                if (rule.udpDisableDomainUnmapping) put("udp_disable_domain_unmapping", true)
             }
         }
     }

@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -62,6 +63,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.sbai.ui.components.BottomBarController
 import com.sbai.data.RouteRule
@@ -81,6 +83,7 @@ import com.sbai.ui.components.SbBadge
 import com.sbai.ui.components.RestoreBottomBarOnDispose
 import com.sbai.ui.components.SbGroup
 import com.sbai.ui.components.SbItem
+import com.sbai.ui.components.SbSwitchItem
 import com.sbai.ui.theme.LocalSbStyleTokens
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
@@ -643,6 +646,15 @@ private fun RouteRuleEditorDialog(
     var ipIsPrivate by remember { mutableStateOf(initial.ipIsPrivate) }
     var networkIsExpensive by remember { mutableStateOf(initial.networkIsExpensive) }
     var rejectMethod by remember { mutableStateOf(initial.rejectMethod) }
+    // route-options 专属字段
+    var overrideAddress by remember { mutableStateOf(initial.overrideAddress) }
+    var overridePortText by remember { mutableStateOf(if (initial.overridePort > 0) initial.overridePort.toString() else "") }
+    var udpConnect by remember { mutableStateOf(initial.udpConnect) }
+    var udpTimeout by remember { mutableStateOf(initial.udpTimeout) }
+    var udpDisableDomainUnmapping by remember { mutableStateOf(initial.udpDisableDomainUnmapping) }
+    var tlsFragment by remember { mutableStateOf(initial.tlsFragment) }
+    var tlsRecordFragment by remember { mutableStateOf(initial.tlsRecordFragment) }
+    var tlsFragmentFallbackDelay by remember { mutableStateOf(initial.tlsFragmentFallbackDelay) }
     var logic by remember { mutableStateOf(initial.logic) }
     var invert by remember { mutableStateOf(initial.invert) }
     var ipv4 by remember { mutableStateOf(initial.ipv4) }
@@ -712,6 +724,14 @@ private fun RouteRuleEditorDialog(
                 ipIsPrivate = ipIsPrivate,
                 networkIsExpensive = networkIsExpensive,
                 rejectMethod = rejectMethod,
+                overrideAddress = overrideAddress.trim(),
+                overridePort = overridePortText.trim().toIntOrNull() ?: 0,
+                udpConnect = udpConnect,
+                udpTimeout = udpTimeout.trim(),
+                udpDisableDomainUnmapping = udpDisableDomainUnmapping,
+                tlsFragment = tlsFragment,
+                tlsRecordFragment = tlsRecordFragment,
+                tlsFragmentFallbackDelay = tlsFragmentFallbackDelay.trim(),
                 logic = logic,
                 invert = invert,
                 ipv4 = ipv4,
@@ -934,6 +954,68 @@ private fun RouteRuleEditorDialog(
                     }
                     MultiLineField("目标端口（一行一个）", ports) { ports = it }
                     MultiLineField("目标端口段（一行一条，如 8000:9000）", portRanges) { portRanges = it }
+                }
+
+                // route-options 专属字段：只在选该动作时出现
+                if (action == RuleAction.ROUTE_OPTIONS) {
+                    EditorSection("覆盖目标") {
+                        OutlinedTextField(
+                            value = overrideAddress, onValueChange = { overrideAddress = it },
+                            label = { Text("override_address（覆盖目标地址，留空=不覆盖）") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        OutlinedTextField(
+                            value = overridePortText,
+                            onValueChange = { overridePortText = it },
+                            label = { Text("override_port（覆盖目标端口，0=不覆盖）") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                    EditorSection("UDP") {
+                        SbSwitchItem(
+                            title = "UDP connect",
+                            subtitle = "先建立 UDP 会话再转发，缓解运营商 UDP 阻断",
+                            checked = udpConnect,
+                            onCheckedChange = { udpConnect = it },
+                        )
+                        OutlinedTextField(
+                            value = udpTimeout, onValueChange = { udpTimeout = it.trim() },
+                            label = { Text("udp_timeout（duration，如 5m；留空=内核默认）") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        SbSwitchItem(
+                            title = "关闭 UDP 域名映射",
+                            subtitle = "响应回原始地址而非映射域名（兼容 Surge 类客户端）",
+                            checked = udpDisableDomainUnmapping,
+                            onCheckedChange = { udpDisableDomainUnmapping = it },
+                        )
+                    }
+                    EditorSection("TLS 分片") {
+                        SbSwitchItem(
+                            title = "TLS 分片",
+                            subtitle = "把 ClientHello 拆成小 TCP 段绕过 DPI",
+                            checked = tlsFragment,
+                            onCheckedChange = { tlsFragment = it },
+                        )
+                        SbSwitchItem(
+                            title = "TLS 记录分片",
+                            subtitle = "把握手拆成多个 TLS record（推荐先试这个）",
+                            checked = tlsRecordFragment,
+                            onCheckedChange = { tlsRecordFragment = it },
+                        )
+                        OutlinedTextField(
+                            value = tlsFragmentFallbackDelay,
+                            onValueChange = { tlsFragmentFallbackDelay = it.trim() },
+                            label = { Text("分片回退延迟（duration，如 500ms）") },
+                            singleLine = true,
+                            enabled = tlsFragment,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
                 }
 
                 EditorSection("应用 / 进程") {

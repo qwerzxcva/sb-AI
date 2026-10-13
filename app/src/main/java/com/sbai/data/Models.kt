@@ -105,6 +105,12 @@ data class RouteRule(
     val tlsRecordFragment: Boolean = false,
     /** TLS 分片回退延迟（duration 字符串） */
     val tlsFragmentFallbackDelay: String = "",
+    /** UDP connect：先建立 UDP 会话再转发，解决部分运营商 UDP 阻断 */
+    val udpConnect: Boolean = false,
+    /** UDP 超时（duration 字符串，如 "5m"）；空 = 内核默认 */
+    val udpTimeout: String = "",
+    /** 关闭 UDP 域名映射：响应里回原始地址而非映射域名（兼容 Surge 类客户端） */
+    val udpDisableDomainUnmapping: Boolean = false,
 
     val logic: RuleLogic = RuleLogic.AND,
     val invert: Boolean = false,                      // 逻辑运算 invert
@@ -149,7 +155,8 @@ data class RouteRule(
     /** ROUTE_OPTIONS 是否填了至少一个内核认可的字段（空 route-options 会被拒绝启动） */
     val hasRouteOptionsFields: Boolean
         get() = overrideAddress.isNotBlank() || overridePort > 0 ||
-                tlsFragment || tlsRecordFragment
+                tlsFragment || tlsRecordFragment ||
+                udpConnect || udpTimeout.isNotBlank() || udpDisableDomainUnmapping
 }
 
 /** 路由规则集（可勾选 IPv4 / IPv6，默认全选） */
