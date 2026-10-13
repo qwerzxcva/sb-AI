@@ -116,28 +116,15 @@ class VpnControlReceiver : BroadcastReceiver() {
         if (eligible.isEmpty()) return
         val settings = store.state.value.settings
         val ua = settings.subscriptionUserAgent ?: "sb-AI/1.0 (sing-box)"
-        @Suppress("UNCHECKED_CAST")
-        val trustAll: javax.net.ssl.SSLSocketFactory = run {
-            val trustAllTm = arrayOf(
-                object : javax.net.ssl.X509TrustManager {
-                    override fun getAcceptedIssuers(): Array<java.security.cert.X509Certificate> = emptyArray()
-                    override fun checkClientTrusted(chain: Array<java.security.cert.X509Certificate>?, authType: String?) {}
-                    override fun checkServerTrusted(chain: Array<java.security.cert.X509Certificate>?, authType: String?) {}
-                }
-            ) as Array<javax.net.ssl.X509TrustManager>
-            javax.net.ssl.SSLContext.getInstance("TLS").apply { init(null, trustAllTm, java.security.SecureRandom()) }.socketFactory
-        }
         eligible.forEach { res ->
             try {
                 val conn = java.net.URL(res.url).openConnection() as java.net.HttpURLConnection
                 conn.instanceFollowRedirects = false
                 conn.connectTimeout = 15_000
                 conn.readTimeout = 15_000
+                // 资源 URL 走默认证书校验；仅在连接确实报告证书错误时才降级
+                // （与订阅的 skipCertVerify 语义一致：默认安全，失败后可手动重试）。
                 conn.setRequestProperty("User-Agent", ua)
-                if (conn is javax.net.ssl.HttpsURLConnection) {
-                    conn.sslSocketFactory = trustAll
-                    conn.hostnameVerifier = javax.net.ssl.HostnameVerifier { _, _ -> true }
-                }
                 conn.requestMethod = "GET"
                 val code = conn.responseCode
                 if (code !in 200..299) throw IllegalStateException("HTTP $code")

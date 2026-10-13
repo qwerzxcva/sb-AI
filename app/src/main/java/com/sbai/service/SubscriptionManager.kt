@@ -384,8 +384,10 @@ class SubscriptionManager(
                 conn.readTimeout = 20_000
                 // UA：订阅级 override > 全局 override > 品牌 UA
                 conn.setRequestProperty("User-Agent", ua)
-                // 机场常见 SNI 路由：服务器证书与 hostname 不匹配，必须信任所有证书
-                if (conn is javax.net.ssl.HttpsURLConnection) {
+                // 机场常见 SNI 路由：服务器证书与 hostname 不匹配，必须信任所有证书。
+                // 仅在订阅显式开启「跳过 TLS 证书校验」时才降级，
+                // 否则保持默认校验，避免中间人 silently 拦截订阅流量。
+                if (skipCertVerify && conn is javax.net.ssl.HttpsURLConnection) {
                     conn.sslSocketFactory = unsafeTrustAllSslSocketFactory
                     conn.hostnameVerifier = javax.net.ssl.HostnameVerifier { _, _ -> true }
                 }

@@ -154,25 +154,38 @@ object SbCommandClient : CommandClientHandler {
         }
     }
 
+    /**
+     * 安全读取当前 client 并执行 [block]。
+     * connect/disconnect 在 lifecycleMutex 下替换 client 字段，
+     * 而上面的命令调用没有同步——并发 disconnect 会在调用中途把字段置空，
+     * 表现为「切节点/测速静默失败，只有 runCatching 吞掉的日志」。
+     * 这里取一次本地引用，保证整次调用用的是同一个实例。
+     */
+    private fun <T> withClient(block: (CommandClient) -> T): T? {
+        val c = client ?: return null
+        return runCatching { block(c) }.getOrNull()
+    }
+
     /** 关闭单条连接 */
     fun closeConnection(id: String) {
-        runCatching { client?.closeConnection(id) }
-            .onFailure { Log.w(TAG, "closeConnection failed", it) }
+        withClient { it.closeConnection(id) }
+            ?: Log.w(TAG, "closeConnection skipped: client unavailable")
     }
 
     /** 关闭全部连接 */
     fun closeAllConnections() {
-        runCatching { client?.closeConnections() }
-            .onFailure { Log.w(TAG, "closeConnections failed", it) }
+        withClient { it.closeConnections() }
+            ?: Log.w(TAG, "closeConnections skipped: client unavailable")
     }
 
     fun selectOutbound(groupTag: String, outboundTag: String) {
-        runCatching { client?.selectOutbound(groupTag, outboundTag) }
+        withClient { it.selectOutbound(groupTag, outboundTag) }
+            ?: Log.w(TAG, "selectOutbound skipped: client unavailable")
     }
 
     fun urlTest(groupTag: String) {
-        runCatching { client?.urlTest(groupTag) }
-            .onFailure { Log.w(TAG, "urlTest failed for group: $groupTag", it) }
+        withClient { it.urlTest(groupTag) }
+            ?: Log.w(TAG, "urlTest skipped: client unavailable")
     }
 
     /** 对指定节点执行单次测速 */
@@ -180,10 +193,9 @@ object SbCommandClient : CommandClientHandler {
         groupTag: String,
         outboundTag: String,
         timeoutMs: Int = 5000,
-    ): Int? = runCatching {
-        client?.urlTestOutbound(groupTag, outboundTag, timeoutMs)
-            ?.delay?.takeIf { it > 0 }
-    }.getOrNull()
+    ): Int? = withClient {
+        it.urlTestOutbound(groupTag, outboundTag, timeoutMs)?.delay?.takeIf { d -> d > 0 }
+    }
 
     /** 批量更新节点列表中的 urlTestDelay 字段（由 UI 触发） */
     fun syncUrlTestResultsToNodes(store: com.sbai.data.RuleStore) {
