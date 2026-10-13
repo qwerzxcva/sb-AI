@@ -236,7 +236,10 @@ fun HomeScreen(onOpenSettingsLoadBalance: () -> Unit = {}) {
 
     // 节点过滤结果缓存：避免在 LazyListScope 里每次重组都重新解析全部节点 JSON（卡顿主因）
     // 同时缓存「订阅→节点」分组，避免每次重组都 O(订阅数 × 节点数) 全量 filter
-    val nodesBySubscription by remember(state.proxyNodes) {
+    // 按 (id, subscriptionId) 结构做 key：节点延迟/启停字段变化不重建分组，
+    // 只有增删节点或改订阅归属才重新 groupBy（否则每次测速回填都全量重建）。
+    val nodeGroupKey = state.proxyNodes.map { it.id to it.subscriptionId }
+    val nodesBySubscription by remember(nodeGroupKey) {
         derivedStateOf {
             state.proxyNodes.groupBy { it.subscriptionId }
         }
@@ -247,8 +250,14 @@ fun HomeScreen(onOpenSettingsLoadBalance: () -> Unit = {}) {
             state.subscriptions.associate { it.id to it.name.ifBlank { "未命名订阅" } }
         }
     }
+    // 过滤 key 只依赖 (name, outboundJson, urlTestDelay, subscriptionId, enabled)：
+    // 节点对象的其它字段变化不触发全量 filter+sort。protoHit 需要对 outboundJson
+    // 做字符串扫描，节点多时是主要开销，因此仅在真的填了协议过滤时才计算。
+    val filterKey = state.proxyNodes.map {
+        FilterKey(it.name, it.outboundJson, it.urlTestDelay, it.subscriptionId, it.enabled)
+    }
     val filteredNodes by remember(
-        state.proxyNodes, nodeFilterQuery, nodeFilterProtocol, nodeFilterRegion, nodeFilterNoDelay, nodeSortMode,
+        filterKey, nodeFilterQuery, nodeFilterProtocol, nodeFilterRegion, nodeFilterNoDelay, nodeSortMode,
     ) {
         derivedStateOf {
             val q = nodeFilterQuery.trim()
@@ -1530,4 +1539,17 @@ enum class NodeSortMode { NAME_ASC, LATENCY_ASC }
 private suspend fun withContextMain(block: () -> Unit) {
     kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) { block() }
 }
+
+/**
+ * 节点过滤的依赖投影：只挑出过滤/排序真正会用到的字段。
+ * 直接用 `state.proxyNodes` 做 remember key 会让任何字段变化（如 disabledReason）
+ * 都触发全量 filter+sort；投影后只有这些字段变化才重算。
+ */
+private data class FilterKey(
+    val name: String,
+    val outboundJson: String,
+    val urlTestDelay: Int,
+    val subscriptionId: String?,
+    val enabled: Boolean,
+)
 
