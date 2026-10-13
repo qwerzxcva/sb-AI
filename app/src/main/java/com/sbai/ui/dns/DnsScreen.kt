@@ -1042,17 +1042,10 @@ private fun DnsAdvancedTab(
                         Text("geoip 检测", style = MaterialTheme.typography.labelLarge)
                         Spacer(Modifier.height(4.dp))
                         SbSwitchItem(
-                            title = "启用 GeoIP 污染检测",
-                            subtitle = "非 ${settings.dnsFallbackGeoipCode} IP 被认为污染（参考 Clash fallback-filter.geoip）",
+                            title = "GeoIP 污染判定",
+                            subtitle = "解析结果命中 China IP 资源内的国内段时保留主 DNS，否则按下面规则切 fallback（需先在资源管理配置 China IP）",
                             checked = settings.dnsFallbackGeoip,
                         ) { onSave(settings.copy(dnsFallbackGeoip = it)) }
-                        Spacer(Modifier.height(4.dp))
-                        Text("GeoIP 代码", style = MaterialTheme.typography.labelSmall)
-                        OutlinedTextField(
-                            value = settings.dnsFallbackGeoipCode,
-                            onValueChange = { onSave(settings.copy(dnsFallbackGeoipCode = it.trim().uppercase())) },
-                            singleLine = true, modifier = Modifier.fillMaxWidth(),
-                        )
                         Spacer(Modifier.height(8.dp))
                         Text("命中这些 geosite 时只走 fallback（如 gfw）", style = MaterialTheme.typography.labelSmall)
                         var geositeText by remember { mutableStateOf(settings.dnsFallbackGeosite.joinToString("\n")) }
@@ -1094,10 +1087,10 @@ private fun DnsAdvancedTab(
                         }) { Text("保存 domain") }
                         Spacer(Modifier.height(8.dp))
                         SbSwitchItem(
-                            title = "Lazy Query",
-                            subtitle = "先判断 nameserver 结果是否满足 filter，再决定是否发 fallback 查询",
-                            checked = settings.dnsFallbackLazyQuery,
-                        ) { onSave(settings.copy(dnsFallbackLazyQuery = it)) }
+                            title = "GeoIP 污染判定",
+                            subtitle = "解析结果落在国内 IP 段时保留主 DNS；否则按上面的过滤规则切 fallback（需先配置 China IP 资源）",
+                            checked = settings.dnsFallbackGeoip,
+                        ) { onSave(settings.copy(dnsFallbackGeoip = it)) }
                     }
                 }
             }

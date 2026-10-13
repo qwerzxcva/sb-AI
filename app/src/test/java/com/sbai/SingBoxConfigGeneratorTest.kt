@@ -1188,6 +1188,50 @@ class SingBoxConfigGeneratorTest {
     }
 
     @Test
+    fun `geoip fallback uses china ip resource as domestic whitelist`() {
+        val res = com.sbai.data.Resource(
+            id = "chinaip001",
+            name = "China IP",
+            resType = com.sbai.data.ResourceType.CHINA_IP,
+            content = "36.33.64.0/20\n114.114.114.0/24",
+        )
+        val cfg = parse(
+            AppState(
+                settings = com.sbai.data.AppSettings(
+                    dnsFallbackServers = listOf("tls://8.8.8.8"),
+                    dnsFallbackGeoip = true,
+                    resources = listOf(res),
+                ),
+            ),
+        )
+        val dns = cfg["dns"]!!.jsonObject
+        val fallbackTag = dns["servers"]!!.jsonArray.map { it.jsonObject }
+            .first { it["type"]?.jsonPrimitive?.content == "tls" }["tag"]!!.jsonPrimitive.content
+        val rule = dnsRules(cfg).firstOrNull {
+            it.jsonObject["server"]?.jsonPrimitive?.content == fallbackTag &&
+                it.jsonObject["invert"]?.jsonPrimitive?.content == "true"
+        }?.jsonObject
+        assertNotNull("geoip 开关必须生成国内段白名单规则", rule)
+        assertTrue(
+            rule!!["ip_cidr"]!!.jsonArray.any { it.jsonPrimitive.content == "36.33.64.0/20" },
+        )
+    }
+
+    @Test
+    fun `geoip fallback emits nothing without china ip resource`() {
+        // 没有 China IP 资源时无法构造国内段白名单，不应生成空规则
+        val cfg = parse(
+            AppState(
+                settings = com.sbai.data.AppSettings(
+                    dnsFallbackServers = listOf("tls://8.8.8.8"),
+                    dnsFallbackGeoip = true,
+                ),
+            ),
+        )
+        assertTrue(dnsRules(cfg).none { it.jsonObject["invert"]?.jsonPrimitive?.content == "true" })
+    }
+
+    @Test
     fun `zero condition route rule is skipped not emitted as catch-all`() {
         // 空条件规则 = 匹配全部流量，会遮蔽 final 与后续规则
         val cfg = parse(

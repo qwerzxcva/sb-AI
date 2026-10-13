@@ -47,6 +47,10 @@ private typealias JB = kotlinx.serialization.json.JsonObjectBuilder
  */
 object SingBoxConfigGenerator {
 
+    /** geoip 污染判定最多写入的 CIDR 条数：China IP 列表通常上万条，
+     *  全部写进一条 dns rule 会让配置体积失控，取前 N 条覆盖主要段。 */
+    private const val MAX_GEOIP_CIDRS = 2000
+
     private val json = Json {
         ignoreUnknownKeys = true
         prettyPrint = true
@@ -600,6 +604,29 @@ object SingBoxConfigGenerator {
                     put("match_response", true)
                     putJsonArray("domain") { fallbackDomains.forEach(::add) }
                 })
+            }
+            // 1d) geoip 污染判定（参考 Clash fallback-filter.geoip）：
+            //     sing-box 没有 geoip 字段，等价做法是把「国内 IP 段」作为
+            //     ip_cidr 白名单——命中说明解析结果落在国内，不切 fallback；
+            //     未命中（海外/污染）则交给上面的 ipcidr 规则处理。
+            //     国内 IP 段取自启用的 China IP 资源内容。
+            if (settings.dnsFallbackGeoip) {
+                val chinaCidrs = settings.resources
+                    .filter { it.enabled && it.resType == com.sbai.data.ResourceType.CHINA_IP && it.content.isNotBlank() }
+                    .flatMap { it.content.lines() }
+                    .map { it.trim() }
+                    .filter { it.isNotEmpty() && !it.startsWith("#") && it.contains("/") }
+                    .take(MAX_GEOIP_CIDRS)
+                if (chinaCidrs.isNotEmpty()) {
+                    rules.add(buildJsonObject {
+                        put("action", "route")
+                        put("server", fallbackTag)
+                        put("match_response", true)
+                        // invert：命中这些国内段时「不」走 fallback（保留主 DNS 结果）
+                        put("invert", true)
+                        putJsonArray("ip_cidr") { chinaCidrs.forEach(::add) }
+                    })
+                }
             }
         }
 

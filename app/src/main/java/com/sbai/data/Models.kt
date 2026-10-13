@@ -576,18 +576,17 @@ data class AppSettings(
     // ---- DNS 高级功能（参考 FlClash/Bettbox/mihomo） ----
     /** DNS fallback 列表：当 nameserver 返回结果不满足 fallback-filter 时使用的备用 DNS */
     val dnsFallbackServers: List<String> = emptyList(),
-    /** fallback-filter：geoip=true 时，非 CN IP 被认为污染 */
+    /**
+     * GeoIP 污染判定：开启时把「启用的 China IP 资源内容」作为国内段白名单，
+     * 解析结果命中则不切 fallback。sing-box 没有 Clash 的 geoip 字段，这是等价实现。
+     */
     val dnsFallbackGeoip: Boolean = true,
-    /** fallback-filter：geoip-code */
-    val dnsFallbackGeoipCode: String = "CN",
     /** fallback-filter：命中这些 geosite 时只用 fallback（如 gfw） */
     val dnsFallbackGeosite: List<String> = emptyList(),
     /** fallback-filter：命中这些 IP 段时认为污染（如 240.0.0.0/4） */
     val dnsFallbackIpcidr: List<String> = emptyList(),
     /** fallback-filter：命中这些域名时认为污染（如 +.google.com） */
     val dnsFallbackDomain: List<String> = emptyList(),
-    /** lazy-query：先判断 nameserver 结果是否满足 filter，再决定是否发 fallback 查询 */
-    val dnsFallbackLazyQuery: Boolean = false,
 
     /** fakeIP 排除域名列表（这些域名不走 fakeIP，直接返回真实 IP） */
     val dnsFakeipFilter: List<String> = emptyList(),

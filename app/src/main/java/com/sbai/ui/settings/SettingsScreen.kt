@@ -459,21 +459,6 @@ fun SettingsScreen() {
                         Column(Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
                             Text("Fallback Filter", style = MaterialTheme.typography.labelLarge)
                             Spacer(Modifier.height(4.dp))
-                            SbSwitchItem(
-                                title = "启用 GeoIP 污染检测",
-                                subtitle = "非 ${settings.dnsFallbackGeoipCode} IP 被认为污染（参考 Clash fallback-filter.geoip）",
-                                checked = settings.dnsFallbackGeoip,
-                            ) { store.updateSettings(settings.copy(dnsFallbackGeoip = it)) }
-                            // geoip-code 输入
-                            Column(Modifier.padding(horizontal = 12.dp)) {
-                                OutlinedTextField(
-                                    value = settings.dnsFallbackGeoipCode, onValueChange = {
-                                        store.updateSettings(settings.copy(dnsFallbackGeoipCode = it.trim().uppercase()))
-                                    },
-                                    label = { Text("GeoIP 代码（如 CN）") },
-                                    singleLine = true, modifier = Modifier.fillMaxWidth(),
-                                )
-                            }
                             // geosite 列表
                             Column(Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
                                 Text("命中这些 geosite 时只用 fallback（如 gfw）", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -528,12 +513,12 @@ fun SettingsScreen() {
                                     },
                                 ) { Text("保存 domain") }
                             }
-                            // lazy-query
+                            // geoip 污染判定：用启用的 China IP 资源作为「国内段」白名单
                             SbSwitchItem(
-                                title = "Lazy Query",
-                                subtitle = "先判断 nameserver 结果是否满足 filter，再决定是否发 fallback 查询",
-                                checked = settings.dnsFallbackLazyQuery,
-                            ) { store.updateSettings(settings.copy(dnsFallbackLazyQuery = it)) }
+                                title = "GeoIP 污染判定",
+                                subtitle = "解析结果落在国内 IP 段时保留主 DNS；否则按上面的过滤规则切 fallback（需先在资源管理里配置 China IP 列表）",
+                                checked = settings.dnsFallbackGeoip,
+                            ) { store.updateSettings(settings.copy(dnsFallbackGeoip = it)) }
                         }
                     }
                     // fakeIP filter
