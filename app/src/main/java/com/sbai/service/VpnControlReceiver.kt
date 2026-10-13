@@ -167,8 +167,11 @@ class VpnControlReceiver : BroadcastReceiver() {
 
     private fun stopVpn(context: Context) {
         Log.i(TAG, "STOP_VPN")
+        // 停止不需要满足 startForegroundService 的 5 秒提前台约束：
+        // 服务没在跑时用 startForegroundService 会白白拉起一个实例再 stopSelf。
         val service = Intent(context, SbAiVpnService::class.java).setAction(SbAiVpnService.ACTION_STOP)
-        ContextCompat.startForegroundService(context, service)
+        runCatching { context.startService(service) }
+            .onFailure { Log.w(TAG, "stopService failed (service not running?)", it) }
     }
 
     private fun triggerSubUpdate(context: Context) {
