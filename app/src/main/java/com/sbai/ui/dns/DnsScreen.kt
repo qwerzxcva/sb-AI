@@ -1036,7 +1036,7 @@ private fun DnsAdvancedTab(
 
         // ---- fallback-filter ----
         item {
-            SbGroup(title = "Fallback Filter（$MAX_FALLBACK_SERVERS 条）") {
+            SbGroup(title = "Fallback Filter") {
                 item {
                     Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
                         Text("geoip 检测", style = MaterialTheme.typography.labelLarge)
@@ -1085,12 +1085,6 @@ private fun DnsAdvancedTab(
                             val domains = domainText.lines().map { it.trim() }.filter { it.isNotEmpty() }
                             onSave(settings.copy(dnsFallbackDomain = domains))
                         }) { Text("保存 domain") }
-                        Spacer(Modifier.height(8.dp))
-                        SbSwitchItem(
-                            title = "GeoIP 污染判定",
-                            subtitle = "解析结果落在国内 IP 段时保留主 DNS；否则按上面的过滤规则切 fallback（需先配置 China IP 资源）",
-                            checked = settings.dnsFallbackGeoip,
-                        ) { onSave(settings.copy(dnsFallbackGeoip = it)) }
                     }
                 }
             }
