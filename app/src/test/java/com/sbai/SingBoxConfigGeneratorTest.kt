@@ -1945,6 +1945,31 @@ class SingBoxConfigGeneratorTest {
         }
     }
 
+    /** reject_method：内核枚举 default / drop / reply，default 时不下发该字段 */
+    @Test
+    fun `reject method matches kernel enum`() {
+        fun rejectMethodOf(method: String): String? {
+            val cfg = parse(
+                AppState(
+                    routeRules = listOf(
+                        RouteRule(
+                            name = "r",
+                            action = RuleAction.REJECT,
+                            domains = listOf("a.com"),
+                            rejectMethod = method,
+                        ),
+                    ),
+                ),
+            )
+            return routeRules(cfg)
+                .firstOrNull { it.jsonObject["action"]?.jsonPrimitive?.content == "reject" }
+                ?.jsonObject?.get("reject_method")?.jsonPrimitive?.content
+        }
+        assertNull("default 时不得输出 reject_method", rejectMethodOf("default"))
+        assertEquals("drop", rejectMethodOf("drop"))
+        assertEquals("reply", rejectMethodOf("reply"))
+    }
+
     // 与 RouteRulesScreen 的快速模板保持一致；改名时两处都要改
     private fun ruleTemplate(name: String): RouteRule = when (name) {
         "国内站点直连" -> RouteRule(

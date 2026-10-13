@@ -801,10 +801,22 @@ private fun RouteRuleEditorDialog(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("拦截方式：", style = MaterialTheme.typography.labelLarge)
                         Spacer(Modifier.size(8.dp))
+                        // 内核 RejectActionOptions.Method 枚举：default / drop / reply
                         FilterChip(selected = rejectMethod == "default", onClick = { rejectMethod = "default" }, label = { Text("拒绝") })
                         Spacer(Modifier.size(6.dp))
                         FilterChip(selected = rejectMethod == "drop", onClick = { rejectMethod = "drop" }, label = { Text("丢弃") })
+                        Spacer(Modifier.size(6.dp))
+                        FilterChip(selected = rejectMethod == "reply", onClick = { rejectMethod = "reply" }, label = { Text("应答") })
                     }
+                    Text(
+                        when (rejectMethod) {
+                            "drop" -> "丢弃：直接静默丢包，客户端要等超时（最隐蔽，但可能让应用卡住）"
+                            "reply" -> "应答：回一个空的成功响应，比拒绝更快断开（适合 HTTP 类）"
+                            else -> "拒绝：TCP 回 RST / UDP 回 ICMP，客户端立刻知道被拒绝"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
 
                 // 路由目标 (outbound tag)：proxy/direct 动作下可选特定出口，留空则跟随默认

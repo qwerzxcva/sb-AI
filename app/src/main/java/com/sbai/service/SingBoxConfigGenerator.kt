@@ -877,7 +877,11 @@ object SingBoxConfigGenerator {
             RuleAction.ROUTE_DIRECT -> put("outbound", rule.outboundTag.ifBlank { "direct" })
             RuleAction.REJECT -> {
                 put("action", "reject")
-                if (rule.rejectMethod == "drop") put("reject_method", "drop")
+                // 内核 RejectActionOptions.Method 枚举：default / drop / reply
+                // default 时不输出该字段（MarshalJSON 会把 default 归一成空串）
+                if (rule.rejectMethod == "drop" || rule.rejectMethod == "reply") {
+                    put("reject_method", rule.rejectMethod)
+                }
             }
             RuleAction.SNIFF -> put("action", "sniff")
             RuleAction.RESOLVE -> put("action", "resolve")
