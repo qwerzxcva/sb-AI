@@ -1353,18 +1353,27 @@ private fun ResourceEditorDialog(
                 )
                 
                 // 资源类型选择
+                // 只有 CHINA_IP 会被配置生成器消费（注入 direct 路由 + geoip 白名单），
+                // 其余类型此前的 UI 选项是死配置：建了/更新了但完全不参与配置生成。
+                // 这里只暴露真正生效的类型，避免用户误配。
                 Column {
                     Text("资源类型", style = MaterialTheme.typography.labelLarge)
                     Spacer(Modifier.height(4.dp))
                     SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                        com.sbai.data.ResourceType.entries.forEachIndexed { i, type ->
+                        listOf(com.sbai.data.ResourceType.CHINA_IP).forEachIndexed { i, type ->
                             SegmentedButton(
                                 selected = resType == type,
                                 onClick = { resType = type },
-                                shape = SegmentedButtonDefaults.itemShape(index = i, count = com.sbai.data.ResourceType.entries.size),
+                                shape = SegmentedButtonDefaults.itemShape(index = i, count = 1),
                             ) { Text(type.displayName) }
                         }
                     }
+                    Text(
+                        "China IP 列表生效后：① 命中这些 IP 的连接走直连；" +
+                            "② 开启 GeoIP 污染判定时作为国内段白名单。一行一条 CIDR。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
                 
                 OutlinedTextField(
