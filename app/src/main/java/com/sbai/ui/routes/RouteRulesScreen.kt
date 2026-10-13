@@ -965,8 +965,9 @@ private fun RouteRuleEditorDialog(
                     MultiLineField("目标端口段（一行一条，如 8000:9000）", portRanges) { portRanges = it }
                 }
 
-                // route-options 专属字段：只在选该动作时出现
-                if (action == RuleAction.ROUTE_OPTIONS) {
+                // route-options 字段：官方允许 route action 继承这些字段，
+                // 因此代理/直连规则也能带 TLS 分片 / UDP 覆写（不必拆两条规则）
+                if (action in setOf(RuleAction.ROUTE_OPTIONS, RuleAction.ROUTE_PROXY, RuleAction.ROUTE_DIRECT)) {
                     EditorSection("覆盖目标") {
                         OutlinedTextField(
                             value = overrideAddress, onValueChange = { overrideAddress = it },

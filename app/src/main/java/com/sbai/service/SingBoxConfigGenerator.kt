@@ -870,7 +870,7 @@ object SingBoxConfigGenerator {
         }
     }
 
-    /** 输出 action 或 outbound（sing-box 完整动作集） */
+    /** 输出 action 或 outbound（sing-box 完整动作集），并附上 route-options 字段 */
     private fun JB.putActionOrOutbound(rule: RouteRule, entryTag: String) {
         when (rule.action) {
             RuleAction.ROUTE_PROXY -> put("outbound", rule.outboundTag.ifBlank { entryTag })
@@ -886,28 +886,28 @@ object SingBoxConfigGenerator {
             RuleAction.SNIFF -> put("action", "sniff")
             RuleAction.RESOLVE -> put("action", "resolve")
             RuleAction.HIJACK_DNS -> put("action", "hijack-dns")
-            RuleAction.ROUTE_OPTIONS -> {
-                put("action", "route-options")
-                // route-options 至少要有一个 override/网络策略字段，否则内核拒绝配置
-                // （见 option/rule_action.go 的 RouteOptionsActionOptions）。
-                // 路由规则里用户可填 tls_fragment 系列；此处无字段可填时用
-                // override_port=0 兜底会改变语义，因此直接跳过该动作的生成
-                // —— 由调用方在 buildRouteRule 里过滤掉空 route-options 规则。
-                if (rule.tlsFragment || rule.tlsRecordFragment) {
-                    if (rule.tlsRecordFragment) put("tls_record_fragment", true)
-                    if (rule.tlsFragment) put("tls_fragment", true)
-                    if (rule.tlsFragmentFallbackDelay.isNotBlank()) {
-                        put("tls_fragment_fallback_delay", rule.tlsFragmentFallbackDelay)
-                    }
-                }
-                if (rule.overrideAddress.isNotBlank()) put("override_address", rule.overrideAddress)
-                if (rule.overridePort > 0) put("override_port", rule.overridePort)
-                // UDP 系列（RouteActionOptions.UDP*）
-                if (rule.udpConnect) put("udp_connect", true)
-                if (rule.udpTimeout.isNotBlank()) put("udp_timeout", rule.udpTimeout)
-                if (rule.udpDisableDomainUnmapping) put("udp_disable_domain_unmapping", true)
+            RuleAction.ROUTE_OPTIONS -> put("action", "route-options")
+        }
+        // 官方文档明确 route action 也可继承全部 route-options 字段
+        // （docs/configuration/route/rule_action.md 的 route → route-options Fields），
+        // 因此代理/直连规则也能直接带 TLS 分片 / UDP 覆写，不必拆成两条规则。
+        putRouteOptionsFields(rule)
+    }
+
+    /** route-options 字段集：任何动作都可携带（官方 route action 允许继承这些字段） */
+    private fun JB.putRouteOptionsFields(rule: RouteRule) {
+        if (rule.tlsFragment || rule.tlsRecordFragment) {
+            if (rule.tlsRecordFragment) put("tls_record_fragment", true)
+            if (rule.tlsFragment) put("tls_fragment", true)
+            if (rule.tlsFragmentFallbackDelay.isNotBlank()) {
+                put("tls_fragment_fallback_delay", rule.tlsFragmentFallbackDelay)
             }
         }
+        if (rule.overrideAddress.isNotBlank()) put("override_address", rule.overrideAddress)
+        if (rule.overridePort > 0) put("override_port", rule.overridePort)
+        if (rule.udpConnect) put("udp_connect", true)
+        if (rule.udpTimeout.isNotBlank()) put("udp_timeout", rule.udpTimeout)
+        if (rule.udpDisableDomainUnmapping) put("udp_disable_domain_unmapping", true)
     }
 
     private enum class Cat { DOMAIN, IP, SOURCE, TRANSPORT, APP, NETENV }

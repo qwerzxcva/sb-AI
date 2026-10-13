@@ -1945,6 +1945,39 @@ class SingBoxConfigGeneratorTest {
         }
     }
 
+    /**
+     * 官方文档明确 route action 可继承 route-options 字段，因此代理/直连规则
+     * 也能直接带 TLS 分片，不必拆成「一条 route + 一条 route-options」。
+     */
+    @Test
+    fun `proxy rule can carry route-options fields`() {
+        val cfg = parse(
+            AppState(
+                proxyNodes = listOf(
+                    ProxyNode(
+                        name = "n1",
+                        outboundJson = """{"type":"vless","tag":"n1","server":"1.2.3.4","server_port":443,"uuid":"x"}"""
+                    ),
+                ),
+                routeRules = listOf(
+                    RouteRule(
+                        name = "proxy+frag",
+                        action = RuleAction.ROUTE_PROXY,
+                        domains = listOf("a.com"),
+                        tlsRecordFragment = true,
+                    ),
+                ),
+            ),
+        )
+        val rule = routeRules(cfg).first {
+            it.jsonObject["outbound"]?.jsonPrimitive?.content != null
+        }.jsonObject
+        assertEquals(
+            true,
+            rule["tls_record_fragment"]?.jsonPrimitive?.content?.toBoolean(),
+        )
+    }
+
     /** route-options 的 UDP 字段必须按内核字段名下发 */
     @Test
     fun `route-options udp fields are emitted`() {
