@@ -344,7 +344,7 @@ object ClashYamlParser {
      * Clash 规则行：`TYPE,ARG,POLICY[,no-resolve]`
      * 策略名 DIRECT/REJECT 映射为固定动作，其余（分组名）映射为代理。
      */
-    private fun parseRuleLine(line: String): RouteRule? {
+    internal fun parseRuleLine(line: String): RouteRule? {
         val parts = line.split(',').map { it.trim() }
         if (parts.size < 2) return null
 
@@ -364,7 +364,7 @@ object ClashYamlParser {
             else -> RuleAction.ROUTE_PROXY
         }
 
-        val arg = if (kind == "GEOIP") "" else parts.getOrNull(1).orEmpty()
+        val arg = parts.getOrNull(1).orEmpty()
 
         return when (kind) {
             "DOMAIN" -> RouteRule(name = line, action = action, domains = listOf(arg))
@@ -389,7 +389,9 @@ object ClashYamlParser {
             "NETWORK" -> RouteRule(name = line, action = action, networks = listOf(arg.lowercase()))
             "IN-PORT", "IN-TYPE" -> null   // sing-box 无直接对应，跳过
             "RULE-SET" -> RouteRule(name = line, action = action, ruleSetTags = listOf(arg))
-            "GEOIP" -> null   // 需要 GeoIP 数据库，跳过（避免生成无效规则）
+            // Clash 的 GEOSITE 直接映射到 sing-box 内置 geosite 字段（内核内置，无需下载）
+            "GEOSITE" -> RouteRule(name = line, action = action, geosites = listOf(arg))
+            "GEOIP" -> RouteRule(name = line, action = action, geoips = listOf(arg))
             else -> null
         }
     }
