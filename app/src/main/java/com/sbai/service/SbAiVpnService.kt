@@ -117,6 +117,11 @@ class SbAiVpnService : VpnService() {
                 val platform = SbPlatformInterface(this@SbAiVpnService)
                 Log.i(TAG, "startVpn: creating runtime")
                 val rt = LibboxServiceRuntime(platform) { stopVpn() }
+                // 先登记到字段再 start：rt.start 可能在建 TUN 之后失败，
+                // 若不先登记，catch 分支只 stopSelf() 而不释放 TUN fd 与
+                // CommandServer，sing-box 会变成继续转发的僵尸进程。
+                platformInterface = platform
+                runtime = rt
                 Log.i(TAG, "startVpn: starting runtime")
                 rt.start(config)
                 Log.i(TAG, "startVpn: runtime started successfully")
@@ -124,8 +129,6 @@ class SbAiVpnService : VpnService() {
                 runCatching { SbCommandClient.connect() }
                     .onFailure { Log.w(TAG, "command client unavailable", it) }
 
-                platformInterface = platform
-                runtime = rt
                 _status.value = ServiceStatus.Running
                 persistError(null)   // 启动成功，清除旧错误
                 updateNotification(getString(R.string.vpn_notification_title))
@@ -134,6 +137,15 @@ class SbAiVpnService : VpnService() {
                 Log.e(TAG, "failed to start vpn", t)
                 _status.value = ServiceStatus.Error(t.message ?: "unknown")
                 persistError(t.message ?: t.javaClass.simpleName)   // 跨进程传给 UI 显示
+                // 必须在这里释放已登记的 native 资源：rt.start 可能已经建了 TUN fd
+                // 并起了 CommandServer，直接 stopSelf() 会让 sing-box 继续转发流量
+                // （僵尸 VPN，表现为卡在「启动中」需强杀）。
+                runCatching { SbCommandClient.disconnect() }
+                    .onFailure { Log.w(TAG, "command client cleanup failed", it) }
+                runCatching { runtime?.stop() }
+                    .onFailure { Log.w(TAG, "runtime cleanup failed", it) }
+                runtime = null
+                platformInterface = null
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
             }

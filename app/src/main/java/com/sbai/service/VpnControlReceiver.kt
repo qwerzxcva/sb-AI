@@ -7,6 +7,10 @@ import android.net.VpnService
 import android.util.Log
 import androidx.core.content.ContextCompat
 import com.sbai.data.RuleStore
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 /**
  * ADB/广播控制入口（参考 sb-AI 广播控制）。
@@ -88,6 +92,17 @@ class VpnControlReceiver : BroadcastReceiver() {
 
     private fun triggerResourceUpdate(context: Context) {
         Log.i(TAG, "RESOURCE_UPDATE")
+        // 资源更新是网络 IO（最多 10 个 URL，每个 15s 超时），
+        // 在 BroadcastReceiver.onReceive 的主线程里跑会直接 ANR。
+        // 转到后台协程，onReceive 立即返回。
+        val appContext = context.applicationContext
+        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+            runCatching { updateResourcesBlocking(appContext) }
+                .onFailure { Log.w(TAG, "resource update failed", it) }
+        }
+    }
+
+    private fun updateResourcesBlocking(context: Context) {
         val store = RuleStore.get(context)
         val resources = store.state.value.settings.resources.filter { it.enabled && it.url.isNotEmpty() }
         if (resources.isEmpty()) return
