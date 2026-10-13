@@ -84,6 +84,10 @@ private fun MainScaffold() {
     // 由设置页触发：跳转到路由页后自动打开「规则集与资源」对话框
     var showRouteRuleSetManager by remember { mutableStateOf(false) }
     val items = listOf(Screen.Home, Screen.Routes, Screen.Monitor, Screen.Settings)
+    // navItems 提为 remember：否则每次重组都新建 list + SbNavItem 实例，
+    // SbGlassBottomBar 的参数永远不相等，底栏会跟着 VpnToggleButton 的
+    // 1 秒状态轮询一起重组。
+    val navItems = remember(items) { items.map { SbNavItem(it.route, it.title, it.icon) } }
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
 
@@ -171,7 +175,7 @@ private fun MainScaffold() {
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 SbGlassBottomBar(
-                    items = items.map { SbNavItem(it.route, it.title, it.icon) },
+                    items = navItems,
                     currentRoute = currentRoute,
                     onSelect = { route ->
                         navController.navigate(route) {
