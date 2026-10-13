@@ -42,6 +42,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Router
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Widgets
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -111,7 +112,7 @@ import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
-fun HomeScreen() {
+fun HomeScreen(onOpenLoadBalance: () -> Unit = {}) {
     val context = LocalContext.current
     val store = remember { RuleStore.get(context) }
     val state by store.state.collectAsState()
@@ -127,9 +128,6 @@ fun HomeScreen() {
     var editingNode by remember { mutableStateOf<ProxyNode?>(null) }
     var editingSub by remember { mutableStateOf<Subscription?>(null) }
     var showConfigPreview by remember { mutableStateOf(false) }
-    var showModeDialog by remember { mutableStateOf(false) }
-    var showNodesPicker by remember { mutableStateOf(false) }
-    var editingText by remember { mutableStateOf<Triple<String, String, (String) -> Unit>?>(null) }
     var importResult by remember { mutableStateOf<String?>(null) }
     // 批量测速进度：-1 = 未在测；0..100 = 已完成百分比
     var batchTestProgress by remember { mutableStateOf(-1) }
@@ -386,52 +384,24 @@ fun HomeScreen() {
                 }
             }
 
-            // ---- 代理出口（负载均衡内嵌；自动模式与负载均衡解耦，可单独开） ----
+            // ---- 负载均衡入口（参数已迁至「设置 → 负载均衡」）----
             item {
                 SbGroup(title = "代理出口") {
                     item {
                         SbSwitchItem(
                             title = "负载均衡",
-                            subtitle = if (lb.enabled) lb.mode.displayName else "关闭",
+                            subtitle = if (lb.enabled) "已开启 · ${lb.mode.displayName}" else "关闭",
                             icon = Icons.Filled.Balance,
                             checked = lb.enabled,
                             onCheckedChange = { store.updateLoadBalance(lb.copy(enabled = it)) },
                         )
                     }
-                    if (lb.enabled) {
-                        item {
-                            SbItem(
-                                title = "模式",
-                                subtitle = lb.mode.displayName,
-                                icon = Icons.Filled.Router,
-                                onClick = { showModeDialog = true },
-                            )
-                        }
-                        item {
-                            SbItem(
-                                title = "参与节点",
-                                subtitle = if (lb.outbounds.isEmpty()) "全部节点" else lb.outbounds.joinToString(),
-                                icon = Icons.Filled.Hub,
-                                onClick = { showNodesPicker = true },
-                            )
-                        }
-                    }
-                    // 自动模式独立于负载均衡：关掉负载均衡后仍可单独开启自动优选
-                    item {
-                        SbSwitchItem(
-                            title = "自动模式",
-                            subtitle = "自动优选延迟最低的出口（可与负载均衡搭配，也可单独使用）",
-                            icon = Icons.Filled.Sync,
-                            checked = lb.autoEnabled,
-                            onCheckedChange = { store.updateLoadBalance(lb.copy(autoEnabled = it)) },
-                        )
-                    }
                     item {
                         SbItem(
-                            title = "配置预览",
-                            subtitle = "查看生成的 sing-box 配置",
-                            icon = Icons.Filled.Code,
-                            onClick = { showConfigPreview = true },
+                            title = "负载均衡设置",
+                            subtitle = "模式 / 参与节点 / 测速间隔 / 节点池 / 粘性会话 / 配置预览",
+                            icon = Icons.Filled.Tune,
+                            onClick = onOpenLoadBalance,
                         )
                     }
                 }
@@ -483,129 +453,7 @@ fun HomeScreen() {
                 }
             }
 
-            // ---- 负载均衡高级参数（折叠） ----
-            if (lb.enabled) {
-                item {
-                    SbCollapsibleGroup(
-                        title = "负载均衡参数",
-                        summary = "测速间隔 ${lb.interval} · tolerance ${lb.toleranceMs}ms · 选点 ${lb.urltestMode.displayName}" +
-                            if (lb.urltestMode == UrltestMode.ROUND_ROBIN) " · 池 ${lb.pool} 节点" else "",
-                    ) {
-                        item {
-                            SbItem(title = "测速 URL", subtitle = lb.checkUrl, onClick = {
-                                editingText = Triple("测速 URL", lb.checkUrl) { v ->
-                                    store.updateLoadBalance(lb.copy(checkUrl = v.trim()))
-                                }
-                            })
-                        }
-                        item {
-                            SbItem(title = "测速间隔", subtitle = "${lb.interval}（sing-box duration，如 5m/15m/1h）", onClick = {
-                                editingText = Triple("测速间隔（如 15m）", lb.interval) { v ->
-                                    if (v.isNotBlank()) store.updateLoadBalance(lb.copy(interval = v.trim()))
-                                }
-                            })
-                        }
-                        item {
-                            SbItem(title = "tolerance（毫秒）", subtitle = lb.toleranceMs.toString(), onClick = {
-                                editingText = Triple("tolerance（毫秒）", lb.toleranceMs.toString()) { v ->
-                                    v.toIntOrNull()?.let { n -> store.updateLoadBalance(lb.copy(toleranceMs = n)) }
-                                }
-                            })
-                        }
-                        item {
-                            SbItem(title = "idle_timeout", subtitle = "${lb.idleTimeout}（如 30m）", onClick = {
-                                editingText = Triple("idle_timeout（如 30m）", lb.idleTimeout) { v ->
-                                    if (v.isNotBlank()) store.updateLoadBalance(lb.copy(idleTimeout = v.trim()))
-                                }
-                            })
-                        }
-                        // 选点模式（sb-AI §208）
-                        item {
-                            Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
-                                Text("选点模式", style = MaterialTheme.typography.labelLarge)
-                                Spacer(Modifier.height(4.dp))
-                                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                                    UrltestMode.entries.forEachIndexed { i, mode ->
-                                        SegmentedButton(
-                                            selected = lb.urltestMode == mode,
-                                            onClick = {
-                                                store.updateLoadBalance(lb.copy(urltestMode = mode))
-                                            },
-                                            shape = SegmentedButtonDefaults.itemShape(
-                                                index = i, count = UrltestMode.entries.size,
-                                            ),
-                                        ) { Text(mode.displayName) }
-                                }
-                                }
-                                Text(
-                                    if (lb.urltestMode == UrltestMode.LEAST_TEST) {
-                                        "始终选用延迟最低的一个节点（上游行为）"
-                                    } else {
-                                        "在下方「节点池」大小的节点集合内轮询分摊流量（fork 扩展）"
-                                    },
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                        }
-                        // 节点池大小 N（仅 round_robin 生效）
-                        if (lb.urltestMode == UrltestMode.ROUND_ROBIN) {
-                            item {
-                                SbItem(
-                                    title = "节点池大小（仅用 N 个节点）",
-                                    subtitle = "${lb.pool} 个节点参与负载均衡",
-                                    onClick = {
-                                        editingText = Triple("节点池大小 N", lb.pool.toString()) { v ->
-                                            v.toIntOrNull()?.takeIf { it >= 1 }
-                                                ?.let { n -> store.updateLoadBalance(lb.copy(pool = n)) }
-                                        }
-                                    },
-                                )
-                            }
-                            item {
-                                SbItem(
-                                    title = "pool_tolerance（毫秒）",
-                                    subtitle = "${lb.poolTolerance}（0 = 保持池内节点存活；>0 = 每轮按延迟选最优 N 个）",
-                                    onClick = {
-                                        editingText = Triple("pool_tolerance（毫秒）", lb.poolTolerance.toString()) { v ->
-                                            v.toIntOrNull()?.takeIf { it >= 0 }
-                                                ?.let { n -> store.updateLoadBalance(lb.copy(poolTolerance = n)) }
-                                        }
-                                    },
-                                )
-                            }
-                            item {
-                                Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
-                                    Text("粘性会话（sticky_hash）", style = MaterialTheme.typography.labelLarge)
-                                    Spacer(Modifier.height(4.dp))
-                                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        StickyHashKey.entries.forEach { key ->
-                                            val selected = key in lb.stickyHash
-                                            FilterChip(
-                                                selected = selected,
-                                                onClick = {
-                                                    val next = if (selected) lb.stickyHash - key
-                                                    else (lb.stickyHash - StickyHashKey.NONE) + key
-                                                    store.updateLoadBalance(lb.copy(stickyHash = next))
-                                                },
-                                                label = { Text(key.displayName) },
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        item {
-                            SbSwitchItem(
-                                title = "切换时中断已有连接",
-                                checked = lb.interruptExistConnections,
-                                onCheckedChange = { store.updateLoadBalance(lb.copy(interruptExistConnections = it)) },
-                            )
-                        }
-                    }
-                    SbSpacer()
-                }
-            }
+            // ---- 负载均衡高级参数已迁至「设置 → 负载均衡」----
 
             // ---- 节点源（订阅源 + 本地源合并；参考 Bettbox 节点源结构）----
             item {
@@ -837,42 +685,6 @@ fun HomeScreen() {
         )
     }
 
-    if (showModeDialog) {
-        AlertDialog(
-            onDismissRequest = { showModeDialog = false },
-            title = { Text("负载均衡模式") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    LoadBalanceMode.entries.forEach { mode ->
-                        Surface(
-                            onClick = {
-                                store.updateLoadBalance(lb.copy(mode = mode))
-                                showModeDialog = false
-                            },
-                            shape = RoundedCornerShape(16.dp),
-                            color = if (lb.mode == mode) MaterialTheme.colorScheme.primaryContainer
-                            else MaterialTheme.colorScheme.surfaceContainer,
-                        ) {
-                            Column(Modifier.padding(16.dp)) {
-                                Text(mode.displayName, style = MaterialTheme.typography.titleSmall)
-                                Text(
-                                    when (mode) {
-                                        LoadBalanceMode.LATENCY -> "urltest：始终选延迟最低的节点"
-                                        LoadBalanceMode.BALANCED -> "urltest+tolerance：在可接受延迟内分摊节点"
-                                        LoadBalanceMode.MANUAL -> "selector：手动切换出口"
-                                    },
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                        }
-                    }
-                }
-            },
-            confirmButton = { TextButton(onClick = { showModeDialog = false }) { Text("关闭") } },
-        )
-    }
-
     if (showWarpDialog) {
         var warpBusy by remember { mutableStateOf(false) }
         var warpError by remember { mutableStateOf<String?>(null) }
@@ -929,47 +741,6 @@ fun HomeScreen() {
             dismissButton = {
                 TextButton(enabled = !warpBusy, onClick = { showWarpDialog = false }) { Text("取消") }
             },
-        )
-    }
-
-    if (showNodesPicker) {
-        // 与生成器同口径解析节点 tag（避免显示名与配置 tag 不一致导致勾选无效）
-        val nodeTags = state.proxyNodes.filter { it.enabled }
-            .map { SingBoxConfigGenerator.nodeTagOf(it) }.distinct()
-        AlertDialog(
-            onDismissRequest = { showNodesPicker = false },
-            title = { Text("参与负载均衡的节点") },
-            text = {
-                Column(
-                    modifier = Modifier.verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Text("全部不选 = 使用全部启用节点", style = MaterialTheme.typography.bodySmall)
-                    nodeTags.forEach { tag ->
-                        FilterChip(
-                            selected = lb.outbounds.isEmpty() || tag in lb.outbounds,
-                            onClick = {
-                                val current = if (lb.outbounds.isEmpty()) nodeTags else lb.outbounds
-                                val next = if (tag in current) current - tag else current + tag
-                                store.updateLoadBalance(
-                                    lb.copy(outbounds = if (next.size == nodeTags.size) emptyList() else next),
-                                )
-                            },
-                            label = { Text(tag) },
-                        )
-                    }
-                }
-            },
-            confirmButton = { TextButton(onClick = { showNodesPicker = false }) { Text("完成") } },
-        )
-    }
-
-    editingText?.let { (title, initialValue, onDone) ->
-        TextEditDialog(
-            title = title,
-            initial = initialValue,
-            onDismiss = { editingText = null },
-            onDone = { onDone(it); editingText = null },
         )
     }
 }

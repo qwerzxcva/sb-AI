@@ -89,6 +89,17 @@ private const val MAX_NAMESERVER_POLICIES = 30
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DnsScreen() {
+    DnsScreenBody()
+}
+
+/**
+ * DNS 页主体：Tab（DNS 服务器 / 规则 / group / 高级）+ 各 Tab 的 FAB。
+ * 抽出来是为了让「路由」页以二级 Tab 的形式内嵌同一份 UI
+ * （底栏只保留「路由」一个入口，路由 / DNS 在同一页面滑动切换）。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun DnsScreenBody() {
     val context = LocalContext.current
     val store = remember { RuleStore.get(context) }
     val state by store.state.collectAsState()
@@ -99,7 +110,11 @@ fun DnsScreen() {
     var editingGroup by remember { mutableStateOf<DnsGroup?>(null) }
     var editingRule by remember { mutableStateOf<DnsRule?>(null) }
     // 路由规则自动推导的 DNS 规则（只读展示）
-    val autoRules = SingBoxConfigGenerator.autoDnsRules(state)
+    // 按推导依赖的字段缓存：autoDnsRules 遍历全部路由规则，state 任何字段
+    // 变化（含无关的节点延迟）都会触发，不缓存会反复重算。
+    val autoRules = remember(state.dnsServers, state.dnsGroups, state.routeRules) {
+        SingBoxConfigGenerator.autoDnsRules(state)
+    }
 
     // 编辑器全部为整页（二级页面），提前 return 覆盖列表页
     editingServer?.let { server ->

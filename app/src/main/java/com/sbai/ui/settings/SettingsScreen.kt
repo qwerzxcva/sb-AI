@@ -51,6 +51,7 @@ import androidx.compose.material.icons.filled.VpnKey
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Balance
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -105,6 +106,7 @@ fun SettingsScreen() {
 
     var showAppPicker by remember { mutableStateOf(false) }
     var showCustomConfigEditor by remember { mutableStateOf(false) }
+    var showLoadBalance by remember { mutableStateOf(false) }
     var showOverridePreview by remember { mutableStateOf(false) }
     var backupMessage by remember { mutableStateOf<String?>(null) }
     var editingText by remember { mutableStateOf<Triple<String, String, (String) -> Unit>?>(null) }
@@ -190,6 +192,25 @@ fun SettingsScreen() {
                             icon = Icons.Filled.Palette,
                             checked = settings.dynamicColor,
                         ) { store.updateSettings(settings.copy(dynamicColor = it)) }
+                    }
+                }
+                SbSpacer()
+            }
+
+            // ---- 负载均衡（全屏二级页）----
+            item {
+                SbGroup(title = "代理出口") {
+                    item {
+                        SbItem(
+                            title = "负载均衡",
+                            subtitle = if (state.loadBalance.enabled) {
+                                "已开启 · ${state.loadBalance.mode.displayName}"
+                            } else {
+                                "关闭"
+                            },
+                            icon = Icons.Filled.Balance,
+                            onClick = { showLoadBalance = true },
+                        )
                     }
                 }
                 SbSpacer()
@@ -1114,6 +1135,11 @@ fun SettingsScreen() {
                 showCustomConfigEditor = false
             },
         )
+    }
+
+    // 负载均衡全屏二级页（从首页迁出）
+    if (showLoadBalance) {
+ SettingsLoadBalanceScreen(onBack = { showLoadBalance = false })
     }
 
     if (showOverridePreview) {

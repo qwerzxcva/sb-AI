@@ -19,7 +19,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.MonitorHeart
 import androidx.compose.material.icons.filled.Settings
@@ -49,17 +48,14 @@ import com.sbai.ui.components.BottomBarController
 import com.sbai.ui.components.SbGlassBottomBar
 import com.sbai.ui.components.SbNavItem
 import com.sbai.ui.components.VpnToggleButton
-import com.sbai.ui.dns.DnsScreen
 import com.sbai.ui.home.HomeScreen
 import com.sbai.ui.monitor.MonitorScreen
 import com.sbai.ui.routes.RouteRulesScreen
 import com.sbai.ui.settings.SettingsScreen
 import com.sbai.ui.theme.SbAiTheme
-
 sealed class Screen(val route: String, val title: String, val icon: ImageVector) {
     data object Home : Screen("home", "首页", Icons.Filled.Home)
     data object Routes : Screen("routes", "路由", Icons.Filled.SwapHoriz)
-    data object Dns : Screen("dns", "DNS", Icons.Filled.Dns)
     data object Monitor : Screen("monitor", "监控", Icons.Filled.MonitorHeart)
     data object Settings : Screen("settings", "设置", Icons.Filled.Settings)
 }
@@ -84,7 +80,8 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun MainScaffold() {
     val navController = rememberNavController()
-    val items = listOf(Screen.Home, Screen.Routes, Screen.Dns, Screen.Monitor, Screen.Settings)
+    var showLoadBalancePage by remember { mutableStateOf(false) }
+    val items = listOf(Screen.Home, Screen.Routes, Screen.Monitor, Screen.Settings)
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
 
@@ -124,15 +121,13 @@ private fun MainScaffold() {
                 .fillMaxSize()
                 .layerBackdrop(pageBackdrop),
         ) {
-            composable(Screen.Home.route) { HomeScreen() }
+            composable(Screen.Home.route) { HomeScreen(onOpenLoadBalance = { showLoadBalancePage = true }) }
             composable(Screen.Routes.route) { RouteRulesScreen() }
-            composable(Screen.Dns.route) { DnsScreen() }
             composable(Screen.Monitor.route) { MonitorScreen() }
             composable(Screen.Settings.route) { SettingsScreen() }
         }
 
-        // FlClash 风格：底栏胶囊 + 右侧独立圆形 VPN 开关按钮
-        // 下滑隐藏时整行不参与绘制：layerBackdrop 会录制整个 NavHost 供底栏模糊采样，
+        // FlClash 风格：底栏胶囊 + 右侧独立圆形 VPN 开关按钮        // 下滑隐藏时整行不参与绘制：layerBackdrop 会录制整个 NavHost 供底栏模糊采样，
         // 隐藏后继续绘制等于每帧白录一层 + 跑一遍 blur，滑动时是纯浪费的 GPU 开销。
         // 用 barVisible（离散状态）而非 barOffset（动画中间值）判断，避免浮点比较。
         if (barVisible) {
@@ -164,6 +159,13 @@ private fun MainScaffold() {
                 // 与 NavigationBar 等高（80dp），上下平齐；圆形按钮直径 = 底栏高度
                 VpnToggleButton(size = 80.dp)
             }
+        }
+
+        // 负载均衡全屏二级页（首页「负载均衡设置」入口）
+        if (showLoadBalancePage) {
+            com.sbai.ui.settings.SettingsLoadBalanceScreen(
+                onBack = { showLoadBalancePage = false },
+            )
         }
     }
 }

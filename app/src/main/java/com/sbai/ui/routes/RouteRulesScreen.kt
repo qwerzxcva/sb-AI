@@ -4,6 +4,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
@@ -42,12 +43,15 @@ import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Switch
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -69,6 +73,7 @@ import com.sbai.ui.components.AppPickerDialog
 import com.sbai.ui.components.BottomBarClearance
 import com.sbai.ui.components.DragDropLazyColumn
 import com.sbai.ui.components.FabBottomBarClearance
+import com.sbai.ui.dns.DnsScreenBody
 import com.sbai.ui.components.SbBadge
 import com.sbai.ui.components.RestoreBottomBarOnDispose
 import com.sbai.ui.components.SbGroup
@@ -89,6 +94,24 @@ private val PROTOCOL_OPTIONS = listOf(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun RouteRulesScreen() {
+    // 路由 / DNS 合二为一：底栏只保留「路由」一个入口，页面内双 Tab 切换。
+    // 与早期 cf6e0c8 的结构一致（该结构后来被本机 sync 提交覆盖回旧版）。
+    var page by remember { mutableIntStateOf(0) }
+    Column(Modifier.fillMaxSize()) {
+        TabRow(selectedTabIndex = page) {
+            Tab(selected = page == 0, onClick = { page = 0 }, text = { Text("路由") })
+            Tab(selected = page == 1, onClick = { page = 1 }, text = { Text("DNS") })
+        }
+        when (page) {
+            0 -> RouteRulesPage()
+            else -> DnsScreenBody()
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun RouteRulesPage() {
     val context = LocalContext.current
     val store = remember { RuleStore.get(context) }
     val state by store.state.collectAsState()
@@ -104,7 +127,12 @@ fun RouteRulesScreen() {
             initial = rule,
             dnsOptions = state.dnsServers.filter { it.enabled }.map { it.tag } +
                     state.dnsGroups.map { it.name },
-            outboundOptions = collectOutboundOptions(state),
+            // 按节点列表缓存：collectOutboundOptions 会逐个 JSON 解析每个节点的
+            // outboundJson 取 tag，批量测速时 proxyNodes 频繁发射，不缓存会让
+            // 整个规则编辑器每次重组都全量解析一遍。
+            outboundOptions = remember(state.proxyNodes, state.loadBalance) {
+                collectOutboundOptions(state)
+            },
             ruleSetTags = state.routeRuleSets.filter { it.enabled }.map { it.tag },
             onDismiss = { editingRule = null },
             onSave = { store.upsertRouteRule(it); editingRule = null },
@@ -533,14 +561,30 @@ private fun RouteRuleEditorDialog(
             }
 
                 Text("动作", style = MaterialTheme.typography.labelLarge)
-                // 7 个动作放不下 segmented 按钮，改用 FlowRow 多选 chips（单选）
+                // 常用动作直接可选；内核级高级动作（嗅探/解析/劫持DNS/路由选项）
+                // 默认收起，展开后才出现——普通用户只需要 代理/直连/拦截。
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    RuleAction.entries.forEach { a ->
+                    RuleAction.entries.filter { it in PRIMARY_ACTIONS }.forEach { a ->
                         FilterChip(
                             selected = action == a,
                             onClick = { action = a },
                             label = { Text(a.displayName) },
                         )
+                    }
+                }
+                var advancedExpanded by remember { mutableStateOf(action !in PRIMARY_ACTIONS) }
+                TextButton(onClick = { advancedExpanded = !advancedExpanded }) {
+                    Text(if (advancedExpanded) "▾ 隐藏高级动作" else "▸ 高级动作（嗅探/解析/劫持DNS/路由选项）")
+                }
+                if (advancedExpanded) {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        RuleAction.entries.filter { it !in PRIMARY_ACTIONS }.forEach { a ->
+                            FilterChip(
+                                selected = action == a,
+                                onClick = { action = a },
+                                label = { Text(a.displayName) },
+                            )
+                        }
                     }
                 }
                 if (isBlock) {
@@ -1061,3 +1105,14 @@ private fun DnsDropdown(value: String, options: List<String>, onChange: (String)
 
 private fun String.toLines(): List<String> =
     lines().map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+
+/**
+ * 规则编辑器里默认可见的动作。
+ * 其余（嗅探 / 仅解析 / 劫持DNS / 路由选项）是内核级高级动作，
+ * 普通用户用不到，默认收起、展开后才出现。
+ */
+private val PRIMARY_ACTIONS = setOf(
+    com.sbai.data.RuleAction.ROUTE_PROXY,
+    com.sbai.data.RuleAction.ROUTE_DIRECT,
+    com.sbai.data.RuleAction.REJECT,
+)

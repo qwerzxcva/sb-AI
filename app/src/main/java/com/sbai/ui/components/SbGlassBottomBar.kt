@@ -76,7 +76,9 @@ fun SbGlassBottomBar(
                     selected = selected,
                     onClick = { onSelect(item.route) },
                     icon = { Icon(item.icon, contentDescription = item.label) },
-                    label = { Text(item.label, maxLines = 1) },
+                    // 底栏只保留图标，名称只作为无障碍 contentDescription，
+                    // 不占视觉宽度（五个入口时文字会被压扁或省略）。
+                    label = null,
                     alwaysShowLabel = true,
                     colors = NavigationBarItemDefaults.colors(
                         // Kototoro：无 indicator 背景，选中仅换强调色
