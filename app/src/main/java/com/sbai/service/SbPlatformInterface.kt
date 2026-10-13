@@ -383,6 +383,14 @@ internal fun StringIterator.toList(): List<String> = buildList {
 // 系统 DNS 传输（DnsResolver）
 // ---------------------------------------------------------------------------
 
+/**
+ * DNS 解析专用调度器：localDNSTransport 的回调必须同步完成，
+ * 若与普通 IO 抢 Dispatchers.IO，一次慢解析会拖住同池所有任务。
+ * 并发上限 4：移动端同时进行的域名解析通常只有个位数。
+ */
+private val dnsDispatcher: kotlinx.coroutines.CoroutineDispatcher =
+    kotlinx.coroutines.Dispatchers.IO.limitedParallelism(4)
+
 @Suppress("DEPRECATION")
 private class AndroidLocalDnsTransport(
     private val connectivityManager: ConnectivityManager,
@@ -394,7 +402,13 @@ private class AndroidLocalDnsTransport(
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
             error("android: raw DNS exchange requires Android 10")
         }
-        exchangeRaw(context, message)
+        // LocalDNSTransport 是同步 JNI 接口，且 gomobile 的 ExchangeContext
+        // 回调必须由附着到 Go runtime 的线程触发——不能改成纯异步返回。
+        // 但默认 Dispatchers.IO 是共享池，多个域名解析会互相排队；
+        // 这里固定到专用池，避免 DNS 阻塞拖慢同池里的其它 IO。
+        runBlocking(dnsDispatcher) {
+            exchangeRaw(context, message)
+        }
     }
 
     @androidx.annotation.RequiresApi(Build.VERSION_CODES.Q)
@@ -430,21 +444,22 @@ private class AndroidLocalDnsTransport(
         }
     }
 
-    override fun lookup(context: ExchangeContext, network: String, domain: String) = runBlocking {
-        val defaultNetwork = connectivityManager.activeNetwork
-            ?: error("android: default network is unavailable")
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            lookupWithResolver(context, defaultNetwork, network, domain)
-        } else {
-            val answer = try {
-                defaultNetwork.getAllByName(domain)
-            } catch (_: UnknownHostException) {
-                context.errorCode(3)
-                return@runBlocking
+    override fun lookup(context: ExchangeContext, network: String, domain: String) =
+        runBlocking(dnsDispatcher) {
+            val defaultNetwork = connectivityManager.activeNetwork
+                ?: error("android: default network is unavailable")
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                lookupWithResolver(context, defaultNetwork, network, domain)
+            } else {
+                val answer = try {
+                    defaultNetwork.getAllByName(domain)
+                } catch (_: UnknownHostException) {
+                    context.errorCode(3)
+                    return@runBlocking
+                }
+                context.success(answer.mapNotNull { it.hostAddress }.joinToString("\n"))
             }
-            context.success(answer.mapNotNull { it.hostAddress }.joinToString("\n"))
         }
-    }
 
     @androidx.annotation.RequiresApi(Build.VERSION_CODES.Q)
     private suspend fun lookupWithResolver(
