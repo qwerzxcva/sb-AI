@@ -618,7 +618,7 @@ data class AppSettings(
     /** 开机自动启动（需要 VPN 权限已授予） */
     val autoStartOnBoot: Boolean = false,
     /** 外观：主题模式 */
-    val themeMode: ThemeMode = ThemeMode.SYSTEM,
+    val themeMode: ThemeMode = ThemeMode.LIGHT,
     /** 外观：Material You 动态取色（Android 12+） */
     val dynamicColor: Boolean = true,
     /** TUN IPv4 地址段 */

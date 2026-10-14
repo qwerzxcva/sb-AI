@@ -142,6 +142,8 @@ fun HomeScreen(onOpenSettingsLoadBalance: () -> Unit = {}) {
     var expandedSubs by remember { mutableStateOf<Set<String>>(emptySet()) }
     // 本地源展开状态（节点源内的本地源区块，默认收起：订阅才是主要入口）
     var localNodesExpanded by remember { mutableStateOf(false) }
+    // 订阅展开后每页显示的节点数（懒展开，避免一次渲染上百节点卡死首页）
+    var expandedNodePages by remember { mutableStateOf(mapOf<String, Int>()) }
     // 正在单节点测速的节点 id（显示转圈）
     var testingNodeId by remember { mutableStateOf<String?>(null) }
     // WARP 注册对话框
@@ -793,7 +795,12 @@ fun HomeScreen(onOpenSettingsLoadBalance: () -> Unit = {}) {
                             )
                         }
                         if (subExpanded) {
-                            for (node in subNodes) {
+                            // 懒展开：默认只渲染前 N 个节点，其余按需加载。
+                            // 一次渲染全部节点会让首页卡死（订阅动辄上百节点）。
+                            val shownCount = expandedNodePages[sub.id] ?: NODES_PER_PAGE
+                            val visible = subNodes.take(shownCount)
+                            val rest = subNodes.size - visible.size
+                            for (node in visible) {
                                 item(key = "sub-${sub.id}-node-${node.id}") {
                                     NodeRow(
                                         node = node,
@@ -802,6 +809,20 @@ fun HomeScreen(onOpenSettingsLoadBalance: () -> Unit = {}) {
                                         onTest = { testSingleNode(node) },
                                         onClick = { editingNode = node },
                                         onDelete = { store.deleteProxyNode(node.id) },
+                                    )
+                                }
+                            }
+                            if (rest > 0) {
+                                item(key = "sub-page-${sub.id}") {
+                                    SbItem(
+                                        title = "加载更多（还有 $rest 个）",
+                                        subtitle = "点此再显示 $NODES_PER_PAGE 个",
+                                        icon = Icons.Filled.ExpandMore,
+                                        onClick = {
+                                            expandedNodePages = expandedNodePages + (
+                                                sub.id to (shownCount + NODES_PER_PAGE)
+                                                )
+                                        },
                                     )
                                 }
                             }
@@ -1562,3 +1583,10 @@ private data class FilterKey(
     val enabled: Boolean,
 )
 
+
+/**
+ * 订阅展开后每页渲染的节点数。
+ * 订阅动辄上百节点，一次全渲染会让首页卡死（每个 NodeRow 都带
+ * nodeSummary 字符串处理 + remember 缓存命中前的重组）。
+ */
+private const val NODES_PER_PAGE = 20

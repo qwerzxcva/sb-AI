@@ -181,8 +181,9 @@ fun SettingsScreen(onOpenDnsAdvanced: () -> Unit = {}, onOpenRouteResources: () 
             onOpenRouteResources = onOpenRouteResources,
         )
     } else {
+        val page = settingsPage!!
         SettingsDetailPage(
-            title = SETTINGS_PAGE_TITLES[settingsPage] ?: "设置",
+            title = SETTINGS_PAGE_TITLES[page] ?: "设置",
             onBack = { settingsPage = null },
         ) { padding ->
             LazyColumn(
@@ -192,6 +193,7 @@ fun SettingsScreen(onOpenDnsAdvanced: () -> Unit = {}, onOpenRouteResources: () 
                     .padding(horizontal = tokens.screenHorizontalPadding),
             ) {
 
+            if (page == "all" || page == "appearance") {
             // ---- 外观 ----
             item {
                 SbGroup(title = "外观") {
@@ -221,7 +223,9 @@ fun SettingsScreen(onOpenDnsAdvanced: () -> Unit = {}, onOpenRouteResources: () 
                 }
                 SbSpacer()
             }
+            }
 
+            if (page == "all" || page == "proxy") {
             // ---- 负载均衡（全屏二级页）----
             item {
                 SbGroup(title = "代理出口") {
@@ -240,7 +244,9 @@ fun SettingsScreen(onOpenDnsAdvanced: () -> Unit = {}, onOpenRouteResources: () 
                 }
                 SbSpacer()
             }
+            }
 
+            if (page == "all" || page == "kernel") {
             // ---- 内核 ----
             item {
                 SbGroup(title = "内核") {
@@ -443,7 +449,9 @@ fun SettingsScreen(onOpenDnsAdvanced: () -> Unit = {}, onOpenRouteResources: () 
                 }
                 SbSpacer()
             }
+            }
 
+            if (page == "all" || page == "dns") {
             // ---- DNS 高级：已并入「路由 → DNS → 高级」，这里只留跳转入口 ----
             item {
                 SbGroup(title = "DNS 高级") {
@@ -458,6 +466,8 @@ fun SettingsScreen(onOpenDnsAdvanced: () -> Unit = {}, onOpenRouteResources: () 
                 }
                 SbSpacer()
             }
+            }
+            if (page == "all" || page == "dpi") {
             // ---- DPI 硬化：TLS 分片（参考 LxBox 016）----
             item {
                 SbGroup(title = "DPI 硬化") {
@@ -492,7 +502,9 @@ fun SettingsScreen(onOpenDnsAdvanced: () -> Unit = {}, onOpenRouteResources: () 
                 }
                 SbSpacer()
             }
+            }
 
+            if (page == "all" || page == "log") {
             // ---- 日志 ----
             item {
                 SbGroup(title = "日志") {
@@ -515,7 +527,9 @@ fun SettingsScreen(onOpenDnsAdvanced: () -> Unit = {}, onOpenRouteResources: () 
                 }
                 SbSpacer()
             }
+            }
 
+            if (page == "all" || page == "perapp") {
             // ---- 分应用代理 ----
             item {
                 SbGroup(title = "分应用代理") {
@@ -558,7 +572,9 @@ fun SettingsScreen(onOpenDnsAdvanced: () -> Unit = {}, onOpenRouteResources: () 
                 }
                 SbSpacer()
             }
+            }
 
+            if (page == "all" || page == "chinaip") {
             // ---- China IP 资源：已并入「路由 → 规则集」管理，这里只留跳转入口 ----
             item {
                 SbGroup(title = "China IP 资源") {
@@ -573,7 +589,9 @@ fun SettingsScreen(onOpenDnsAdvanced: () -> Unit = {}, onOpenRouteResources: () 
                 }
                 SbSpacer()
             }
+            }
 
+            if (page == "all" || page == "override") {
             // ---- 配置覆盖 ----
             item {
                 SbGroup(title = "配置覆盖") {
@@ -671,7 +689,9 @@ fun SettingsScreen(onOpenDnsAdvanced: () -> Unit = {}, onOpenRouteResources: () 
                 }
                 SbSpacer()
             }
+            }
 
+            if (page == "all" || page == "profiles") {
             // ---- 多配置 Profiles（多配置基准） ----
             item {
                 SbGroup(title = "配置快照（${state.profiles.size}）") {
@@ -750,7 +770,9 @@ fun SettingsScreen(onOpenDnsAdvanced: () -> Unit = {}, onOpenRouteResources: () 
                 }
                 SbSpacer()
             }
+            }
 
+            if (page == "all" || page == "subid") {
             // ---- 订阅身份（sb-AI SubscriptionIdentity 基准） ----
             item {
                 SbGroup(title = "订阅身份") {
@@ -824,7 +846,9 @@ fun SettingsScreen(onOpenDnsAdvanced: () -> Unit = {}, onOpenRouteResources: () 
                 }
                 SbSpacer()
             }
+            }
 
+            if (page == "all" || page == "backup") {
             // ---- 备份与恢复 ----
             item {
                 SbGroup(title = "备份与恢复") {
@@ -850,7 +874,9 @@ fun SettingsScreen(onOpenDnsAdvanced: () -> Unit = {}, onOpenRouteResources: () 
                 }
                 SbSpacer()
             }
+            }
 
+            if (page == "all" || page == "boot") {
             // ---- 启动 ----
             item {
                 SbGroup(title = "启动") {
@@ -865,7 +891,9 @@ fun SettingsScreen(onOpenDnsAdvanced: () -> Unit = {}, onOpenRouteResources: () 
                 }
                 SbSpacer()
             }
+            }
 
+            if (page == "all" || page == "about") {
             // ---- 关于 ----
             item {
                 SbGroup(title = "关于") {
@@ -885,6 +913,7 @@ fun SettingsScreen(onOpenDnsAdvanced: () -> Unit = {}, onOpenRouteResources: () 
                     }
                 }
                 Spacer(Modifier.height(120.dp))
+            }
             }
             }
         }
