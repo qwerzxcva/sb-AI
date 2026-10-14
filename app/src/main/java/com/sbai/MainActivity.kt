@@ -83,6 +83,8 @@ private fun MainScaffold() {
     var routesInitialTab by remember { mutableIntStateOf(0) }
     // 由设置页触发：跳转到路由页后自动打开「规则集与资源」对话框
     var showRouteRuleSetManager by remember { mutableStateOf(false) }
+    // 首页跳转到设置页时要求落地的分类 key（null = 设置索引页）
+    var settingsInitialPage by remember { mutableStateOf<String?>(null) }
     val items = listOf(Screen.Home, Screen.Routes, Screen.Monitor, Screen.Settings)
     // navItems 提为 remember：否则每次重组都新建 list + SbNavItem 实例，
     // SbGlassBottomBar 的参数永远不相等，底栏会跟着 VpnToggleButton 的
@@ -124,6 +126,7 @@ private fun MainScaffold() {
         ) {
             composable(Screen.Home.route) {
                 HomeScreen(onOpenSettingsLoadBalance = {
+                    settingsInitialPage = "proxy"
                     navController.navigate(Screen.Settings.route) {
                         popUpTo(navController.graph.findStartDestination().id) { saveState = true }
                         launchSingleTop = true
@@ -140,6 +143,8 @@ private fun MainScaffold() {
             composable(Screen.Monitor.route) { MonitorScreen() }
             composable(Screen.Settings.route) {
                 SettingsScreen(
+                    // 首页「更多负载均衡参数」要求直达：跳到设置时落到「代理出口」分类
+                    initialPage = settingsInitialPage,
                     onOpenDnsAdvanced = {
                         routesInitialTab = 1
                         navController.navigate(Screen.Routes.route) {
@@ -178,6 +183,8 @@ private fun MainScaffold() {
                     items = navItems,
                     currentRoute = currentRoute,
                     onSelect = { route ->
+                        // 离开设置页时清掉直达分类，下次进入回到索引页
+                        if (route != Screen.Settings.route) settingsInitialPage = null
                         navController.navigate(route) {
                             popUpTo(navController.graph.findStartDestination().id) { saveState = true }
                             launchSingleTop = true

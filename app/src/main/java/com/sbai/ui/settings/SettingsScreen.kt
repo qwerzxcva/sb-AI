@@ -109,7 +109,12 @@ import kotlinx.serialization.json.Json
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
-fun SettingsScreen(onOpenDnsAdvanced: () -> Unit = {}, onOpenRouteResources: () -> Unit = {}) {
+fun SettingsScreen(
+    onOpenDnsAdvanced: () -> Unit = {},
+    onOpenRouteResources: () -> Unit = {},
+    /** 外部指定初始落地的分类 key（如首页「更多负载均衡参数」直接落到 proxy） */
+    initialPage: String? = null,
+) {
     val context = LocalContext.current
     val store = remember { RuleStore.get(context) }
     val state by store.state.collectAsState()
@@ -172,7 +177,7 @@ fun SettingsScreen(onOpenDnsAdvanced: () -> Unit = {}, onOpenRouteResources: () 
 
     // 设置二级页：索引页只列分类，详情页承载原有全部分组。
     // 索引页是新增的薄层，详情页内容与原 LazyColumn 完全一致（零行为变更）。
-    var settingsPage by remember { mutableStateOf<String?>(null) }
+    var settingsPage by remember { mutableStateOf(initialPage) }
 
     if (settingsPage == null) {
         SettingsIndexPage(

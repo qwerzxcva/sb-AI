@@ -788,7 +788,13 @@ fun HomeScreen(onOpenSettingsLoadBalance: () -> Unit = {}) {
                                 onClick = { editingSub = sub },
                                 onToggleEnabled = { store.upsertSubscription(sub.copy(enabled = !sub.enabled)) },
                                 onToggleExpand = {
-                                    expandedSubs = if (subExpanded) expandedSubs - sub.id else expandedSubs + sub.id
+                                    if (subExpanded) {
+                                        // 收起时清掉该订阅的分页进度，下次展开重新从第一页开始
+                                        expandedNodePages = expandedNodePages - sub.id
+                                        expandedSubs = expandedSubs - sub.id
+                                    } else {
+                                        expandedSubs = expandedSubs + sub.id
+                                    }
                                 },
                                 expanded = subExpanded,
                                 nodeCount = subNodes.size,
