@@ -47,17 +47,29 @@ import kotlinx.coroutines.withContext
  * 轮询间隔 1s：状态文件极小（一次 read 几十字节），开销可忽略；
  * 断开/不可读时回退到 [fallback]，不阻塞 UI。
  */
+/**
+ * 跨进程 VPN 运行态轮询。
+ *
+ * 由 :core 进程写文件、UI 进程读。仅在遥测通道（CommandClient）未连上时
+ * 才有意义——连上时 coreConnected 就是真源，不需要再读文件。
+ * 因此这里 2s 轮询一次（不是 1s），且 fallback 变化时才重启协程。
+ */
 @Composable
 fun rememberVpnRunning(fallback: Boolean): Boolean {
     val context = LocalContext.current
+    // fallback 为 true（已连上内核）时不需要读文件，直接用 fallback
     var running by remember { mutableStateOf(fallback) }
-    LaunchedEffect(Unit) {
+    LaunchedEffect(fallback) {
+        if (fallback) {
+            running = true
+            return@LaunchedEffect
+        }
         while (true) {
             val snap = withContext(Dispatchers.IO) { VpnRuntimeState.read(context) }
             // 文件缺失（从未启动过）时用 fallback；有文件就以文件为准
             running = snap?.phase == VpnRuntimeState.Phase.RUNNING ||
                 (snap == null && fallback)
-            kotlinx.coroutines.delay(1_000L)
+            kotlinx.coroutines.delay(2_000L)
         }
     }
     return running

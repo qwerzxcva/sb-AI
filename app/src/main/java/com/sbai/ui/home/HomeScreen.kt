@@ -117,7 +117,12 @@ fun HomeScreen(onOpenSettingsLoadBalance: () -> Unit = {}) {
     val context = LocalContext.current
     val store = remember { RuleStore.get(context) }
     val state by store.state.collectAsState()
-    val status by SbAiVpnService.status.collectAsState()
+    // 顶层不 collect SbCommandClient.status：它是 1 秒发射一次的高频流
+    // （VPN 运行时 uplink/downlink 每秒都在变），顶层 collect 会让整个
+    // HomeScreen（1598 行、含全部订阅卡片与节点行）每秒全量重组——
+    // 这是「首页特别卡」的主因。
+    // status 只用于：a) toggleVpn 的日志 b) 顶部的启动中/错误文案，
+    // 两者都不需要实时；实时流量由 HomeTrafficCard 内部独立 collect。
     val proxyGroups by SbCommandClient.groups.collectAsState()
     val coreConnected by SbCommandClient.connectedToService.collectAsState()
     // 跨进程运行态：遥测通道未握手成功时也能正确显示 VPN 是否在跑
@@ -170,7 +175,7 @@ fun HomeScreen(onOpenSettingsLoadBalance: () -> Unit = {}) {
     // UI 进程读到的恒为 Stopped。因此这里不能依赖 status 判断，
     // 必须以 CommandClient 是否连上 CommandServer（coreConnected）为真源。
     fun toggleVpn() {
-        android.util.Log.i("SbAI_VPN", "toggleVpn: coreConnected=$coreConnected, status=$status")
+        android.util.Log.i("SbAI_VPN", "toggleVpn: coreConnected=$coreConnected, status=${SbAiVpnService.status.value}")
         if (coreConnected) {
             // 已连上内核 → 停止
             android.util.Log.i("SbAI_VPN", "stopping VPN")
@@ -377,17 +382,12 @@ fun HomeScreen(onOpenSettingsLoadBalance: () -> Unit = {}) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text("sb-AI", style = MaterialTheme.typography.headlineLarge)
-                        Text(
-                            // 跨进程真源：:core 进程的服务状态 UI 进程读不到，
-                            // 以 CommandClient 是否连上 CommandServer（coreConnected）为准
-                            displayStatus(coreRunning, status),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = when {
-                                status is SbAiVpnService.ServiceStatus.Error -> MaterialTheme.colorScheme.error
-                                coreConnected -> MaterialTheme.colorScheme.primary
-                                else -> MaterialTheme.colorScheme.onSurfaceVariant
-                            },
-                        )
+                        // 跨进程真源：:core 进程的服务状态 UI 进程读不到，
+                        // 以 CommandClient 是否连上 CommandServer（coreConnected）为准。
+                        // 状态文字独立成 composable：它订阅低频的 ServiceStatus
+                        // （进程内 StateFlow，只在启动/停止/出错时变），
+                        // 不连累首页其他部分跟着重组。
+                        VpnStatusText(coreRunning = coreRunning)
                     }
                     // 右上角启动按钮已删除：底栏旁 VpnToggleButton 承担启停（避免双入口状态不一致）
                 }
@@ -1076,6 +1076,26 @@ private fun displayStatus(
     is SbAiVpnService.ServiceStatus.Stopping -> "停止中…"
     is SbAiVpnService.ServiceStatus.Error -> "错误: ${status.message}"
     else -> if (coreConnected) "运行中" else "已停止"
+}
+
+/**
+ * 首页顶部状态文字。独立成 composable 是为了把 ServiceStatus 的订阅
+ * 局限在这里——它在 :core 进程内，只在启动/停止/出错时变，频率低；
+ * 而 SbCommandClient.status 是 1 秒一次的高频流，顶层订阅它会让整个
+ * HomeScreen 每秒全量重组（首页卡顿主因）。
+ */
+@Composable
+private fun VpnStatusText(coreRunning: Boolean) {
+    val status by SbAiVpnService.status.collectAsState()
+    Text(
+        displayStatus(coreRunning, status),
+        style = MaterialTheme.typography.bodyMedium,
+        color = when {
+            status is SbAiVpnService.ServiceStatus.Error -> MaterialTheme.colorScheme.error
+            coreRunning -> MaterialTheme.colorScheme.primary
+            else -> MaterialTheme.colorScheme.onSurfaceVariant
+        },
+    )
 }
 
 private fun formatTime(epoch: Long): String =
