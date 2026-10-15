@@ -327,7 +327,11 @@ private fun RouteRulesPage(externalOpenRuleSetManager: Boolean = false, onExtern
                     }
                 }
                 // fakeIP 联动：DNS 服务器创建 fakeIP 时，路由页显示自动生成的 fakeIP 段规则
-                val autoRules = SingBoxConfigGenerator.autoRouteRules(state)
+                // 按依赖字段缓存：autoRouteRules 每次调用都全量扫 dnsServers 并构建对象，
+                // 不缓存会让拖动排序时的高频重组反复触发（与 DnsScreenBody 的缓存口径一致）
+                val autoRules = remember(state.dnsServers) {
+                    SingBoxConfigGenerator.autoRouteRules(state)
+                }
                 if (autoRules.isNotEmpty()) {
                     Spacer(Modifier.height(16.dp))
                     Text(
