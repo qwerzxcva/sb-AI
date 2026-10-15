@@ -37,6 +37,7 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Hub
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Router
@@ -390,6 +391,21 @@ fun HomeScreen(onOpenSettingsLoadBalance: () -> Unit = {}) {
                         VpnStatusText(coreRunning = coreRunning)
                     }
                     // 右上角启动按钮已删除：底栏旁 VpnToggleButton 承担启停（避免双入口状态不一致）
+                }
+                // 全局提示（导入结果 / 测速失败 / 需先启动 VPN）：
+                // 放在顶层而不是本地源区块内——本地源默认收起，
+                // 提示藏在里面用户根本看不到。
+                importResult?.let { msg ->
+                    SbGroup(title = "") {
+                        item {
+                            SbItem(
+                                title = "提示",
+                                subtitle = msg,
+                                icon = Icons.Filled.Info,
+                                onClick = { importResult = null },
+                            )
+                        }
+                    }
                 }
                 SbSpacer()
             }
@@ -766,9 +782,6 @@ fun HomeScreen(onOpenSettingsLoadBalance: () -> Unit = {}) {
                                 },
                             )
                         }
-                        importResult?.let { msg ->
-                            item { SbItem(title = "导入结果", subtitle = msg) }
-                        }
                     }
                     // 订阅源
                     state.subscriptions.forEach { sub ->
@@ -859,7 +872,14 @@ fun HomeScreen(onOpenSettingsLoadBalance: () -> Unit = {}) {
                                     icon = Icons.Filled.Bolt,
                                     onClick = {
                                         scope.launch {
-                                            SbCommandClient.urlTest("lb")
+                                            // 组 tag 由生成器按模式决定：MANUAL → lb-selector，
+                                            // 其余 → lb。硬编码 "lb" 在手动模式下会静默失效。
+                                            val lbTag = if (lb.mode == LoadBalanceMode.MANUAL) {
+                                                "lb-selector"
+                                            } else {
+                                                "lb"
+                                            }
+                                            SbCommandClient.urlTest(lbTag)
                                             delay(3000)
                                             SbCommandClient.syncUrlTestResultsToNodes(store)
                                         }
