@@ -271,8 +271,10 @@ fun SbCollapsibleGroup(
             }
             AnimatedVisibility(visible = expanded, enter = expandVertically(), exit = shrinkVertically()) {
                 Column(Modifier.fillMaxWidth()) {
-                    scope.items.forEach { (itemKey, itemContent) ->
-                        androidx.compose.runtime.key(itemKey) { itemContent() }
+                    // itemKey 可能为 null（无 key 的 item{} 重载），key(null) 会抛
+                    // IllegalArgumentException 崩掉整个页面。用下标兜底，与 SbGroup 一致。
+                    scope.items.forEachIndexed { index, (itemKey, itemContent) ->
+                        androidx.compose.runtime.key(itemKey ?: index) { itemContent() }
                     }
                 }
             }
